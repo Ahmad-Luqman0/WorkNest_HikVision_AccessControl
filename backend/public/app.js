@@ -55,85 +55,25 @@ function showLogin() {
 async function changePasswordModal() {
   const me = await api.get('/auth/me');
   if (!me.ok) return; // 401 already showed the login overlay
-  const isAdmin = me.role === 'admin';
-
-  // Admin extras: create accounts (with role) + manage the account list.
-  const adminSection = isAdmin ? `
-    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
-    <p class="hint" style="margin:0 0 6px"><b>Add dashboard user</b> — admins manage everything; users can operate the dashboard but not manage accounts.</p>
-    <div class="two-col">
-      <div class="field"><label>New username</label><input id="nu_user" autocomplete="off" placeholder="e.g. frontdesk"></div>
-      <div class="field"><label>Password <small class="hint">(min 6 chars)</small></label><input id="nu_pass" type="password" autocomplete="new-password"></div>
-    </div>
-    <div class="field"><label>Role</label>
-      <select id="nu_role"><option value="user">User (dashboard access)</option><option value="admin">Admin (can manage accounts)</option></select>
-    </div>
-    <div class="modal-actions" style="margin-top:10px">
-      <button class="btn primary" id="nu_add">Add user</button>
-    </div>
-    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
-    <p class="hint" style="margin:0 0 6px"><b>Accounts</b></p>
-    <div class="field" id="acct_list"><span class="muted">Loading…</span></div>` : '';
-
   openModal(`
-    <h2>Account <small class="hint">${esc(me.username)} · ${esc(me.role)}</small></h2>
-    <p class="hint" style="margin:0 0 6px"><b>Change password</b>${isAdmin ? ' — pick any account; your own needs its current password.' : ''}</p>
-    <div class="two-col">
-      <div class="field"><label>Username</label><input id="cp_user" value="${esc(me.username)}" ${isAdmin ? '' : 'readonly'} autocomplete="username"></div>
-      <div class="field"><label>Current password <small class="hint">(own account only)</small></label><input id="cp_cur" type="password" autocomplete="current-password"></div>
-    </div>
+    <h2>Change password <small class="hint">${esc(me.username)} \u00b7 ${esc(me.role)}</small></h2>
+    <div class="field"><label>Current password</label><input id="cp_cur" type="password" autocomplete="current-password"></div>
     <div class="two-col">
       <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="cp_new" type="password" autocomplete="new-password"></div>
       <div class="field"><label>Repeat new password</label><input id="cp_new2" type="password" autocomplete="new-password"></div>
     </div>
-    <div class="modal-actions" style="margin-top:10px">
-      <button class="btn" id="cp_cancel">Close</button>
+    ${me.role === 'admin' ? '<p class="hint">Managing other accounts moved to <b>Dashboard Users</b> in the sidebar.</p>' : ''}
+    <div class="modal-actions">
+      <button class="btn" id="cp_cancel">Cancel</button>
       <button class="btn primary" id="cp_save">Change password</button>
-    </div>
-    ${adminSection}`);
-
+    </div>`);
   $('#cp_cancel').addEventListener('click', closeModal);
   $('#cp_save').addEventListener('click', async () => {
     const next = $('#cp_new').value;
     if (next.length < 6) { toast('New password must be at least 6 characters', 'err'); return; }
     if (next !== $('#cp_new2').value) { toast('New passwords do not match', 'err'); return; }
-    const r = await api.post('/auth/change-password', {
-      username: $('#cp_user').value.trim() || me.username,
-      current: $('#cp_cur').value,
-      next,
-    });
+    const r = await api.post('/auth/change-password', { username: me.username, current: $('#cp_cur').value, next });
     if (r.ok) { closeModal(); toast('Password changed', 'ok'); }
-    else if (!r.__auth) toast(r.error || 'Failed', 'err');
-  });
-
-  if (!isAdmin) return;
-
-  async function loadAccounts() {
-    const r = await api.get('/auth/users');
-    const holder = $('#acct_list');
-    if (!holder) return;
-    holder.innerHTML = (r.users || []).map((u) => `
-      <div class="list-row slim">
-        <div class="list-main"><b>${esc(u.username)}</b><small class="hint">created ${esc(String(u.created_at || '').replace('T', ' ').slice(0, 16))}</small></div>
-        <span class="badge ${u.role === 'admin' ? 'admin' : ''}">${esc(u.role)}</span>
-        ${u.username === me.username ? '<small class="hint">you</small>' : `<button class="btn sm danger" data-deluser="${esc(u.username)}">Delete</button>`}
-      </div>`).join('') || '<span class="muted">No accounts</span>';
-    holder.querySelectorAll('[data-deluser]').forEach((b) => b.addEventListener('click', async () => {
-      if (!confirm(`Delete dashboard login "${b.dataset.deluser}"? They can no longer sign in.`)) return;
-      const rr = await api.del(`/auth/users/${encodeURIComponent(b.dataset.deluser)}`);
-      if (rr.ok) { toast('Account deleted', 'ok'); loadAccounts(); }
-      else if (!rr.__auth) toast(rr.error || 'Failed', 'err');
-    }));
-  }
-  loadAccounts();
-
-  $('#nu_add').addEventListener('click', async () => {
-    const username = $('#nu_user').value.trim();
-    const password = $('#nu_pass').value;
-    if (!username) { toast('Username required', 'err'); return; }
-    if (password.length < 6) { toast('Password must be at least 6 characters', 'err'); return; }
-    const r = await api.post('/auth/users', { username, password, role: $('#nu_role').value });
-    if (r.ok) { toast(`User "${username}" (${r.role}) can now sign in`, 'ok'); $('#nu_user').value = ''; $('#nu_pass').value = ''; loadAccounts(); }
     else if (!r.__auth) toast(r.error || 'Failed', 'err');
   });
 }
@@ -223,7 +163,7 @@ function wireGroupSelect(items, checkboxClass) {
 }
 
 // ---- Router ----
-const views = { dashboard, devices, users, cards, logs };
+const views = { dashboard, devices, users, cards, logs, dashusers };
 let current = 'dashboard';
 let _autoTimer = null; // live-refresh timer for dashboard / activity views
 document.querySelectorAll('nav a').forEach((a) =>
@@ -233,7 +173,7 @@ document.querySelectorAll('nav a').forEach((a) =>
 function go(view) {
   current = view;
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
-  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log' };
+  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', dashusers: 'Dashboard Users' };
   const title = names[view] || 'Dashboard';
   $('#viewTitle').textContent = title;
   const breadcrumb = $('#viewBreadcrumb');
@@ -318,6 +258,7 @@ async function dashboard() {
   const [s, devs, logsList, expiring] = await Promise.all([
     api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
   ]);
+  if (current !== 'dashboard') return; // view changed while loading
   content.innerHTML = '';
 
   const kpi = (icon, label, value, cls = '', sub = '') => `
@@ -452,6 +393,7 @@ async function devices() {
     if (current === 'devices' && $('#modalBackdrop').hidden) devices();
   }, 30000);
   const list = await api.get('/devices');
+  if (current !== 'devices') return; // view changed while loading
   $('#viewActions').innerHTML = list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '';
   const unlockAllBtn = $('#unlockAll');
   if (unlockAllBtn) unlockAllBtn.addEventListener('click', async () => {
@@ -651,6 +593,7 @@ function deviceModal(d = null, all = []) {
 let _usersDevId = 'all';
 async function users() {
   const devs = await api.get('/devices');
+  if (current !== 'users') return; // view changed while loading
   $('#viewActions').innerHTML = '';
   content.innerHTML = '';
   if (!devs.length) { content.appendChild(el('<div class="empty">No machines yet. Provision a machine in the database first.</div>')); return; }
@@ -1289,6 +1232,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
 // ---- Cards ---- 
 async function cards() {
   const [list, devs] = await Promise.all([api.get('/cards'), api.get('/devices')]);
+  if (current !== 'cards') return; // view changed while loading
   $('#viewActions').innerHTML = '<button class="btn primary" id="addCard">+ Add card</button>';
   $('#addCard').addEventListener('click', () => cardModal(null, devs));
   content.innerHTML = '';
@@ -1599,5 +1543,102 @@ async function loadLogTable() {
 // datetime helpers: DB stores "YYYY-MM-DDTHH:mm:ss", input needs "YYYY-MM-DDTHH:mm"
 function toLocalInput(v) { return v ? v.slice(0, 16) : ''; }
 function fromLocalInput(v) { return v ? (v.length === 16 ? v + ':00' : v) : null; }
+
+// ---- Dashboard Users (login accounts — admin only) ----
+async function dashusers() {
+  const me = await api.get('/auth/me');
+  if (me.__auth) return;
+  if (me.role !== 'admin') {
+    $('#viewActions').innerHTML = '';
+    content.innerHTML = '<div class="empty">Admin role required to manage dashboard users.</div>';
+    return;
+  }
+  $('#viewActions').innerHTML = '<button class="btn primary" id="du_add">+ Add user</button>';
+  $('#du_add').addEventListener('click', () => addDashUserModal());
+  content.innerHTML = '<div class="muted">Loading accounts…</div>';
+  const r = await api.get('/auth/users');
+  if (current !== 'dashusers') return; // view changed while loading
+  if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">${esc(r.error || 'Failed to load accounts')}</div>`; return; }
+  const rows = (r.users || []).map((u) => `
+    <tr>
+      <td><b>${esc(u.username)}</b> ${u.username === me.username ? '<small class="hint">(you)</small>' : ''}</td>
+      <td><span class="badge ${u.role === 'admin' ? 'admin' : ''}">${esc(u.role)}</span></td>
+      <td class="nowrap"><small class="hint">${esc(String(u.created_at || '—').replace('T', ' ').slice(0, 16))}</small></td>
+      <td class="nowrap"><small class="hint">${esc(String(u.updated_at || '—').replace('T', ' ').slice(0, 16))}</small></td>
+      <td class="row-actions">
+        <button class="btn sm" data-reset="${esc(u.username)}">Reset password</button>
+        ${u.username === me.username ? '' : `<button class="btn sm danger" data-deluser="${esc(u.username)}">Delete</button>`}
+      </td>
+    </tr>`).join('');
+  content.innerHTML = `<div class="table-wrapper"><table><thead><tr>
+      <th>Username</th><th>Role</th><th>Created</th><th>Updated</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="hint" style="margin-top:14px">Admins manage machines, people and these accounts. Users can operate the dashboard but cannot manage accounts.</p>`;
+  content.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => resetDashPasswordModal(b.dataset.reset, me)));
+  content.querySelectorAll('[data-deluser]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm(`Delete dashboard login "${b.dataset.deluser}"? They can no longer sign in.`)) return;
+    const rr = await api.del(`/auth/users/${encodeURIComponent(b.dataset.deluser)}`);
+    if (rr.ok) { toast('Account deleted', 'ok'); dashusers(); }
+    else if (!rr.__auth) toast(rr.error || 'Failed', 'err');
+  }));
+}
+
+function addDashUserModal() {
+  openModal(`
+    <h2>Add dashboard user</h2>
+    <div class="two-col">
+      <div class="field"><label>Username</label><input id="du_user" autocomplete="off" placeholder="e.g. frontdesk"></div>
+      <div class="field"><label>Password <small class="hint">(min 6 chars)</small></label><input id="du_pass" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="field"><label>Role</label>
+      <select id="du_role"><option value="user">User (dashboard access)</option><option value="admin">Admin (can manage accounts)</option></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="du_cancel">Cancel</button>
+      <button class="btn primary" id="du_save">Add user</button>
+    </div>`);
+  $('#du_cancel').addEventListener('click', closeModal);
+  $('#du_save').addEventListener('click', async () => {
+    const username = $('#du_user').value.trim();
+    const password = $('#du_pass').value;
+    if (!username) { toast('Username required', 'err'); return; }
+    if (password.length < 6) { toast('Password must be at least 6 characters', 'err'); return; }
+    const r = await api.post('/auth/users', { username, password, role: $('#du_role').value });
+    if (r.ok) { closeModal(); toast(`User "${username}" (${r.role}) can now sign in`, 'ok'); dashusers(); }
+    else if (!r.__auth) toast(r.error || 'Failed', 'err');
+  });
+}
+
+function resetDashPasswordModal(username, me) {
+  const isSelf = username === me.username;
+  openModal(`
+    <h2>Reset password <small class="hint">${esc(username)}</small></h2>
+    ${isSelf ? '<div class="field"><label>Current password</label><input id="rp_cur" type="password" autocomplete="current-password"></div>' : '<p class="hint">Admin reset — no current password needed.</p>'}
+    <div class="two-col">
+      <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="rp_new" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>Repeat new password</label><input id="rp_new2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="rp_cancel">Cancel</button>
+      <button class="btn primary" id="rp_save">Set password</button>
+    </div>`);
+  $('#rp_cancel').addEventListener('click', closeModal);
+  $('#rp_save').addEventListener('click', async () => {
+    const next = $('#rp_new').value;
+    if (next.length < 6) { toast('New password must be at least 6 characters', 'err'); return; }
+    if (next !== $('#rp_new2').value) { toast('New passwords do not match', 'err'); return; }
+    const r = await api.post('/auth/change-password', { username, current: isSelf ? $('#rp_cur').value : undefined, next });
+    if (r.ok) { closeModal(); toast('Password changed', 'ok'); }
+    else if (!r.__auth) toast(r.error || 'Failed', 'err');
+  });
+}
+
+// Reveal the Dashboard Users nav item for admins (server enforces regardless).
+(async () => {
+  try {
+    const me = await api.get('/auth/me');
+    if (me.ok && me.role === 'admin') $('#navDashUsers').style.display = '';
+  } catch { /* not signed in yet — login overlay handles it */ }
+})();
 
 go('dashboard');
