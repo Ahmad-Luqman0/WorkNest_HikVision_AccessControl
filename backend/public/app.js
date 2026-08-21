@@ -1,0 +1,1474 @@
+// No-build SPA for the Hik co-working dashboard.
+const api = {
+  async get(p) { return (await fetch('/api' + p)).json(); },
+  async post(p, body) {
+    return (await fetch('/api' + p, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    })).json();
+  },
+  async put(p, body) {
+    return (await fetch('/api' + p, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json();
+  },
+  async del(p) { return (await fetch('/api' + p, { method: 'DELETE' })).json(); },
+  async upload(p, formData) { return (await fetch('/api' + p, { method: 'POST', body: formData })).json(); },
+};
+
+const $ = (s) => document.querySelector(s);
+const content = $('#content');
+const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function toast(msg, kind = '') {
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'toast ' + kind; t.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 3200);
+}
+
+function openModal(html) {
+  $('#modal').innerHTML = html;
+  $('#modalBackdrop').hidden = false;
+}
+
+function closeModal() { $('#modalBackdrop').hidden = true; }
+$('#modalBackdrop').addEventListener('click', (e) => { if (e.target.id === 'modalBackdrop') closeModal(); });
+
+// ---- Theme Controller ----
+function initTheme() {
+  const saved = localStorage.getItem('worknest_theme') || 'dark';
+  document.documentElement.dataset.theme = saved;
+  const toggleBtn = $('#themeToggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem('worknest_theme', next);
+      toast(`Theme set to ${next} mode`, 'ok');
+    });
+  }
+}
+initTheme();
+
+// ---- Floating row menu (one shared instance, fixed-positioned so table
+// overflow can't clip it) ----
+let _rowMenu = null;
+function closeRowMenu() {
+  if (_rowMenu) { _rowMenu.remove(); _rowMenu = null; document.removeEventListener('click', _onMenuOutside); }
+}
+function _onMenuOutside(ev) { if (_rowMenu && !_rowMenu.contains(ev.target)) closeRowMenu(); }
+function showRowMenu(anchor, items) {
+  if (_rowMenu && _rowMenu._anchor === anchor) { closeRowMenu(); return; } // toggle
+  closeRowMenu();
+  const menu = document.createElement('div');
+  menu.className = 'row-menu';
+  menu._anchor = anchor;
+  for (const [label, fn, danger] of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    if (danger) b.classList.add('danger');
+    b.addEventListener('click', () => { closeRowMenu(); fn(); });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8)}px`;
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  _rowMenu = menu;
+  setTimeout(() => document.addEventListener('click', _onMenuOutside), 0);
+}
+content.addEventListener('scroll', closeRowMenu);
+
+// ---- Machine groups: one-click select of a whole group (e.g. "Entrances")
+// in any machine checklist. items = [{id, grp}], checkboxClass = checklist class.
+function groupSelectHtml(items) {
+  const groups = [...new Set(items.map((x) => String(x.grp || '').trim()).filter(Boolean))];
+  if (!groups.length) return '';
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
+    <small class="hint">Groups:</small>
+    ${groups.map((g) => `<button type="button" class="btn sm" data-grpsel="${esc(g)}">${esc(g)}</button>`).join('')}
+  </div>`;
+}
+function wireGroupSelect(items, checkboxClass) {
+  document.querySelectorAll('[data-grpsel]').forEach((b) => b.addEventListener('click', () => {
+    const ids = new Set(items.filter((x) => String(x.grp || '').trim() === b.dataset.grpsel).map((x) => String(x.id)));
+    const boxes = [...document.querySelectorAll(`.${checkboxClass}`)].filter((c) => ids.has(String(c.value)) && !c.disabled);
+    const all = boxes.length && boxes.every((c) => c.checked);
+    boxes.forEach((c) => { c.checked = !all; c.dispatchEvent(new Event('change')); });
+  }));
+}
+
+// ---- Router ----
+const views = { dashboard, devices, users, cards, logs };
+let current = 'dashboard';
+let _autoTimer = null; // live-refresh timer for dashboard / activity views
+document.querySelectorAll('nav a').forEach((a) =>
+  a.addEventListener('click', () => go(a.dataset.view))
+);
+
+function go(view) {
+  current = view;
+  document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log' };
+  const title = names[view] || 'Dashboard';
+  $('#viewTitle').textContent = title;
+  const breadcrumb = $('#viewBreadcrumb');
+  if (breadcrumb) breadcrumb.textContent = title;
+  $('#viewActions').innerHTML = '';
+  
+  const searchContainer = $('#globalSearchContainer');
+  if (searchContainer) {
+    searchContainer.hidden = (view === 'dashboard');
+    const searchInput = $('#globalSearch');
+    if (searchInput) searchInput.value = '';
+  }
+  clearInterval(_autoTimer);
+  closeRowMenu();
+  views[view]();
+}
+
+const searchInput = $('#globalSearch');
+if (searchInput) {
+  searchInput.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    const rows = document.querySelectorAll('#content table tbody tr, #content .list-row');
+    rows.forEach((row) => {
+      const text = row.textContent.toLowerCase();
+      row.style.display = text.includes(q) ? '' : 'none';
+    });
+  });
+}
+
+$('#syncAll').addEventListener('click', async () => {
+  toast('Syncing all pending changes…');
+  const r = await api.post('/sync');
+  toast(r.ok ? 'Sync complete!' : 'Sync failed', r.ok ? 'ok' : 'err');
+  views[current]();
+});
+
+// ---- Dashboard ----
+const ICONS = {
+  machine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><circle cx="12" cy="9" r="2.6"/><path d="M8.5 17h7"/></svg>',
+  online: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.2 15.7a5.5 5.5 0 0 1 7.6 0"/><circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  card: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 14.5h4"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.5 3.6-5.5 7-5.5s6.2 2 7 5.5"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8a8 8 0 0 0-14.5-2M4 16a8 8 0 0 0 14.5 2"/><path d="M20 3v5h-5M4 21v-5h5"/></svg>',
+  unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.8-1.3"/></svg>',
+};
+
+const ACTION_LABELS = {
+  'door:open': 'Door unlocked', 'door:close': 'Door closed',
+  'door:alwaysOpen': 'Door set always-open', 'door:alwaysClose': 'Door set always-closed',
+  test: 'Connection test', 'add-user': 'User added', 'delete-user': 'User deleted',
+  'capture-fingerprint': 'Fingerprint captured', 'store-fingerprint': 'Fingerprint enrolled',
+  'capture-card': 'Card read', 'store-card': 'Card attached', 'delete-card': 'Card removed',
+  'capture-face': 'Face captured', 'store-face': 'Face enrolled', 'card-expiry': 'Card expiry applied',
+  'time-sync': 'Clock synced', online: 'Machine back online', offline: 'Machine went offline',
+  'sync-fingerprint': 'Fingerprint auto-synced', 'sync-card': 'Card auto-synced', 'sync-face': 'Face auto-synced',
+  'edit-user': 'User edited', 'delete-face': 'Face removed',
+  expire: 'Access expired', 'auto-delete': 'Auto-removed after expiry', extend: 'Access extended',
+  booking: 'Slot booked', 'booking-update': 'Booking rescheduled', 'booking-cancel': 'Booking cancelled',
+  'copy-person': 'User copied', 'copy-card': 'Card copied', 'copy-fingerprint': 'Fingerprint copied',
+  'access-grant': 'Access granted', 'access-revoke': 'Access revoked',
+  'set-role:admin': 'Made admin', 'set-role:user': 'Made user',
+  person: 'Person synced', card: 'Card synced', face: 'Face synced',
+  fingerprint: 'Fingerprint synced', delete: 'Removed from machine',
+};
+const prettyAction = (a) => ACTION_LABELS[a] || a;
+
+async function dashboard() {
+  // Live view: refresh every 30s while the dashboard is open (not over modals).
+  clearInterval(_autoTimer);
+  _autoTimer = setInterval(() => {
+    if (current === 'dashboard' && $('#modalBackdrop').hidden) dashboard();
+  }, 30000);
+  const [s, devs, logsList, expiring] = await Promise.all([
+    api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
+  ]);
+  content.innerHTML = '';
+
+  const kpi = (icon, label, value, cls = '', sub = '') => `
+    <div class="stat ${cls}">
+      <div class="stat-head"><span class="stat-icon">${ICONS[icon]}</span><span class="label">${label}</span></div>
+      <div class="value">${value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
+    </div>`;
+
+  const machineRows = devs.length ? devs.map((d) => `
+    <div class="list-row">
+      <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
+      <div class="list-main">
+        <b>${esc(d.name)}</b>
+        <small class="hint">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
+      </div>
+      <span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span>
+      <button class="btn sm" data-dash-unlock="${d.id}">Unlock</button>
+    </div>`).join('')
+    : '<div class="list-empty">No machines provisioned yet.</div>';
+
+  const expItems = expiring.ok ? expiring.items : [];
+  const expRows = expItems.length ? expItems.map((it) => `
+    <div class="list-row">
+      <span class="status-dot ${it.status === 'expired' ? 'off' : 'on'}"></span>
+      <div class="list-main">
+        <b>${esc(it.name || 'User ' + it.employeeNo)}</b>
+        <small class="hint">#${esc(it.employeeNo)} · ${esc(it.on.map((x) => x.device).join(', '))}</small>
+      </div>
+      <span class="badge ${it.status === 'expired' ? 'expired' : 'pending'}">${it.status === 'expired' ? 'expired' : 'ends ' + esc(String(it.minEnd).replace('T', ' ').slice(0, 16))}</span>
+      <button class="btn sm" data-extend="${esc(it.employeeNo)}" data-ename="${esc(it.name || '')}">Extend 30 days</button>
+    </div>`).join('')
+    : '<div class="list-empty">No memberships expiring in the next 7 days.</div>';
+
+  const actIcon = (l) => (l.ok ? '<span class="act-dot ok"></span>' : '<span class="act-dot fail"></span>');
+  const actRows = logsList.length ? logsList.slice(0, 8).map((l) => `
+    <div class="list-row slim">
+      ${actIcon(l)}
+      <div class="list-main">
+        <span>${esc(prettyAction(l.action))}${l.device_name ? ` · <span class="muted">${esc(l.device_name)}</span>` : ''}</span>
+        <small class="hint">${esc(l.ts)}</small>
+      </div>
+      <span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'ok' : 'fail'}</span>
+    </div>`).join('')
+    : '<div class="list-empty">No activity yet.</div>';
+
+  const offline = devs.filter((d) => !d.online);
+  const offlineBanner = offline.length
+    ? `<div class="offline-banner">Machine${offline.length === 1 ? '' : 's'} offline: <b>${esc(offline.map((d) => d.name).join(', '))}</b> — check power and network. Entries and changes for ${offline.length === 1 ? 'it' : 'them'} won't apply until ${offline.length === 1 ? 'it is' : 'they are'} back.</div>`
+    : '';
+
+  content.appendChild(el(`<div>
+    ${offlineBanner}
+    <div class="stat-grid">
+      ${kpi('machine', 'Machines', s.devices)}
+      ${kpi('online', 'Online', s.devicesOnline, s.devicesOnline === s.devices && s.devices ? 'good' : s.devices ? 'warn' : '')}
+      ${kpi('card', 'Cards', s.cards ?? 0)}
+      ${kpi('user', 'Active', s.active, 'good')}
+      ${kpi('clock', 'Expired', s.expired, s.expired ? 'warn' : '')}
+      ${kpi('sync', 'Pending sync', s.pendingSync, s.pendingSync ? 'bad' : '')}
+    </div>
+
+    <div class="panel-grid">
+      <section class="panel">
+        <header>
+          <h3>Machines</h3>
+          <div class="panel-actions">
+            ${devs.length ? '<button class="btn sm" id="dashUnlockAll">Unlock all</button>' : ''}
+            <button class="btn sm" id="dashGoMachines">Manage →</button>
+          </div>
+        </header>
+        <div class="panel-body">${machineRows}</div>
+      </section>
+
+      <section class="panel">
+        <header>
+          <h3>Recent activity</h3>
+          <div class="panel-actions"><button class="btn sm" id="dashGoLogs">View all →</button></div>
+        </header>
+        <div class="panel-body">${actRows}</div>
+      </section>
+    </div>
+
+    <section class="panel" style="margin-top:16px; height:auto; max-height:320px">
+      <header>
+        <h3>Expiring soon (next ${expiring.horizonDays || 7} days)</h3>
+        <div class="panel-actions"><button class="btn sm" id="dashGoUsers">Users →</button></div>
+      </header>
+      <div class="panel-body">${expRows}</div>
+    </section>
+
+    <p class="hint" style="margin-top:20px">
+      Machines enforce each person's valid period on their own — access is blocked at the door after expiry even if this dashboard is offline.
+    </p>
+  </div>`));
+
+  $('#dashGoMachines').addEventListener('click', () => go('devices'));
+  $('#dashGoLogs').addEventListener('click', () => go('logs'));
+  $('#dashGoUsers').addEventListener('click', () => go('users'));
+  content.querySelectorAll('[data-extend]').forEach((b) => b.addEventListener('click', async () => {
+    const who = b.dataset.ename || 'user ' + b.dataset.extend;
+    if (!confirm(`Extend “${who}” (#${b.dataset.extend}) by 30 days on all their machines?`)) return;
+    toast('Extending access…');
+    const r = await api.post('/expiring/extend', { employeeNo: b.dataset.extend, name: b.dataset.ename || undefined, days: 30 });
+    const fails = (r.results || []).filter((x) => !x.ok);
+    toast(r.ok
+      ? (fails.length ? `Extended, but failed on ${fails.map((f) => f.device).join(', ')}` : `Extended to ${(r.newEnd || '').replace('T', ' ').slice(0, 16)}`)
+      : `Failed: ${r.error || 'error'}`, r.ok && !fails.length ? 'ok' : 'err');
+    dashboard();
+  }));
+  const ua = $('#dashUnlockAll');
+  if (ua) ua.addEventListener('click', async () => {
+    if (!confirm(`Unlock the door on ALL ${devs.length} machine${devs.length === 1 ? '' : 's'} now?`)) return;
+    toast('Unlocking all doors…');
+    const r = await api.post('/devices/door', { cmd: 'open' });
+    const failed = (r.results || []).filter((x) => !x.ok);
+    toast(failed.length ? `Unlocked ${r.okCount}/${r.total}` : `Unlocked all ${r.okCount}`, failed.length ? 'err' : 'ok');
+  });
+  content.querySelectorAll('[data-dash-unlock]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Unlock the door on this machine now?')) return;
+    toast('Unlocking…');
+    const r = await api.post(`/devices/${b.dataset.dashUnlock}/door`, { cmd: 'open' });
+    toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+  }));
+}
+
+// ---- Devices ----
+async function devices() {
+  // Live view: machine online/offline status refreshes on its own.
+  clearInterval(_autoTimer);
+  _autoTimer = setInterval(() => {
+    if (current === 'devices' && $('#modalBackdrop').hidden) devices();
+  }, 30000);
+  const list = await api.get('/devices');
+  $('#viewActions').innerHTML = list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '';
+  const unlockAllBtn = $('#unlockAll');
+  if (unlockAllBtn) unlockAllBtn.addEventListener('click', async () => {
+    if (!confirm(`Unlock the door on ALL ${list.length} machine${list.length === 1 ? '' : 's'} now?`)) return;
+    toast('Unlocking all doors…');
+    const r = await api.post('/devices/door', { cmd: 'open' });
+    const failed = (r.results || []).filter((x) => !x.ok);
+    toast(
+      failed.length ? `Unlocked ${r.okCount}/${r.total} — failed: ${failed.map((f) => f.device).join(', ')}` : `Unlocked all ${r.okCount} door${r.okCount === 1 ? '' : 's'}`,
+      failed.length ? (r.okCount ? '' : 'err') : 'ok'
+    );
+  });
+  content.innerHTML = '';
+  if (!list.length) { content.appendChild(el('<div class="empty">No machines. Machines are provisioned in the database — add them via <code>data/machines.json</code> or a direct INSERT into <code>devices</code>, then restart.</div>')); return; }
+  const rows = list.map((d) => `
+    <tr>
+      <td><b>${esc(d.name)}</b> ${d.grp ? `<span class="badge">${esc(d.grp)}</span>` : ''}<br><small class="hint">${esc(d.location || '')}</small></td>
+      <td>${esc(d.host)}:${d.port}${d.use_https ? ' <small class="hint">https</small>' : ''}</td>
+      <td>${esc(d.model || '—')}<br><small class="hint">${esc(d.serial || '')}</small></td>
+      <td><span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span></td>
+      <td class="row-actions">
+        <button class="btn sm" data-book="${d.id}">Book slot</button>
+        <button class="btn sm" data-open="${d.id}">Unlock</button>
+        <button class="btn sm" data-users="${d.id}" data-name="${esc(d.name)}">Users</button>
+        <button class="btn sm" data-test="${d.id}">Test</button>
+        <button class="btn sm" data-edit="${d.id}">Edit</button>
+        <button class="btn sm danger" data-del="${d.id}">Delete</button>
+      </td>
+    </tr>`).join('');
+  content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
+      <th>Name</th><th>Address</th><th>Model</th><th>Status</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`));
+
+  content.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', async () => {
+    toast('Testing connection…');
+    const r = await api.post(`/devices/${b.dataset.test}/test`);
+    toast(r.ok ? `Connected: ${r.info.model || 'ok'}` : `Failed: ${r.error}`, r.ok ? 'ok' : 'err');
+    devices();
+  }));
+  content.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Unlock the door on this machine now?')) return;
+    toast('Unlocking…');
+    const r = await api.post(`/devices/${b.dataset.open}/door`, { cmd: 'open' });
+    toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+  }));
+  content.querySelectorAll('[data-users]').forEach((b) => b.addEventListener('click', async () => {
+    toast('Fetching users from machine…');
+    const r = await api.get(`/devices/${b.dataset.users}/users`);
+    if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
+    toast(`${r.total} user${r.total === 1 ? '' : 's'} on device`, 'ok');
+    usersModal(list.find((d) => d.id == b.dataset.users), r.users, list);
+  }));
+  content.querySelectorAll('[data-book]').forEach((b) =>
+    b.addEventListener('click', () => bookSlotModal(list.find((d) => d.id == b.dataset.book), list)));
+  content.querySelectorAll('[data-edit]').forEach((b) =>
+    b.addEventListener('click', () => deviceModal(list.find((d) => d.id == b.dataset.edit), list)));
+  content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Delete this machine?')) return;
+    await api.del(`/devices/${b.dataset.del}`); devices();
+  }));
+}
+
+// Live list of persons enrolled on a device (pulled straight from the terminal).
+function usersModal(srcDev, users, devs = []) {
+  const rows = users.length
+    ? users.map((u) => {
+        const creds = [];
+        if (u.numOfCard) creds.push(`${u.numOfCard} card`);
+        if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
+        if (u.numOfFace) creds.push(`${u.numOfFace} face`);
+        const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
+        return `<tr>
+          <td>${esc(u.employeeNo)}</td>
+          <td><b>${esc(u.name || '—')}</b></td>
+          <td class="nowrap"><small class="hint">${esc(end)}</small></td>
+          <td><small class="hint">${esc(creds.join(' · ') || 'no credentials')}</small></td>
+          <td class="row-actions">
+            <button class="btn sm" data-copy="${esc(u.employeeNo)}" data-uname="${esc(u.name || '')}">Copy →</button>
+            <button class="btn sm danger" data-del="${esc(u.employeeNo)}" data-uname="${esc(u.name || '')}">Delete</button>
+          </td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" class="muted">No users enrolled on this device.</td></tr>';
+  openModal(`
+    <h2>Users on ${esc(srcDev.name)}</h2>
+    <p class="hint">${users.length} enrolled — read live from the machine. <b>Copy →</b> re-enrols a user on another machine with an access deadline.</p>
+    <div style="max-height:52vh; overflow:auto">
+      <table><thead><tr><th>Emp #</th><th>Name</th><th>Valid until</th><th>Credentials</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>
+    <div class="modal-actions"><button class="btn primary" id="u_close">Close</button></div>`);
+  $('#u_close').addEventListener('click', closeModal);
+  $('#modal').querySelectorAll('[data-copy]').forEach((b) =>
+    b.addEventListener('click', () => copyUserModal(srcDev, b.dataset.copy, b.dataset.uname, devs, users)));
+  $('#modal').querySelectorAll('[data-del]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm(`Delete “${b.dataset.uname || 'user ' + b.dataset.del}” from ${srcDev.name}?`)) return;
+      toast('Deleting user…');
+      const r = await api.del(`/devices/${srcDev.id}/users/${encodeURIComponent(b.dataset.del)}`);
+      toast(r.ok ? 'User deleted' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+      closeModal();
+    }));
+}
+
+// Copy a user from srcDev to one or more other machines, with an access deadline.
+function copyUserModal(srcDev, employeeNo, name, devs, users) {
+  const targets = devs.filter((d) => d.id !== srcDev.id);
+  const targetChecks = targets.length
+    ? targets.map((d) => `<label><input type="checkbox" class="copy-target" value="${d.id}"> ${esc(d.name)} <small class="hint">${esc(d.host)}</small></label>`).join('')
+    : '<span class="muted">No other machines yet. Provision a second machine in the database to copy to.</span>';
+  openModal(`
+    <h2>Copy “${esc(name || 'User ' + employeeNo)}” → machine(s)</h2>
+    <p class="hint">From ${esc(srcDev.name)}. Copies identity, fingerprints and cards. Face photos can't be exported from a device.</p>
+    <div class="field">
+      <label>Access until <small class="hint">(deadline enforced by the machine)</small></label>
+      <input id="copy_end" type="datetime-local">
+    </div>
+    <div class="field">
+      <label>Target machines</label>
+      <div class="device-checklist">${targetChecks}</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="copy_cancel">Cancel</button>
+      <button class="btn primary" id="copy_go" ${targets.length ? '' : 'disabled'}>Copy</button>
+    </div>`);
+  $('#copy_cancel').addEventListener('click', closeModal);
+  if (!targets.length) return;
+  $('#copy_go').addEventListener('click', async () => {
+    const ids = [...document.querySelectorAll('.copy-target:checked')].map((x) => Number(x.value));
+    if (!ids.length) { toast('Pick at least one target machine', 'err'); return; }
+    const valid_end = fromLocalInput($('#copy_end').value);
+    toast('Copying to machine(s)…');
+    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/copy`, {
+      target_device_ids: ids, valid_end,
+    });
+    if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
+    const bad = (r.results || []).filter((x) => x.state === 'error');
+    const okCount = (r.results || []).length - bad.length;
+    toast(bad.length ? `Copied to ${okCount}, ${bad.length} failed` : `Copied to ${okCount} machine(s)`, bad.length ? 'err' : 'ok');
+    closeModal();
+  });
+}
+
+function deviceModal(d = null, all = []) {
+  const groups = [...new Set(all.map((x) => String(x.grp || '').trim()).filter(Boolean))].sort();
+  openModal(`
+    <h2>${d ? 'Edit machine' : 'Add machine'}</h2>
+    <div class="field"><label>Name</label><input id="d_name" value="${esc(d?.name || '')}" placeholder="Front door machine"></div>
+    <div class="two-col">
+      <div class="field"><label>IP / host</label><input id="d_host" value="${esc(d?.host || '')}" placeholder="192.168.1.64"></div>
+      <div class="field"><label>Port</label><input id="d_port" type="number" value="${d?.port || 80}"></div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Username</label><input id="d_user" value="${esc(d?.username || 'admin')}"></div>
+      <div class="field"><label>Password</label><input id="d_pass" type="password" value="" placeholder="${d ? '•••• (unchanged)' : ''}"></div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Location</label><input id="d_loc" value="${esc(d?.location || '')}" placeholder="Reception"></div>
+      <div class="field"><label>Group</label>
+        <select id="d_grp_sel">
+          <option value="">No group</option>
+          ${groups.map((g) => `<option value="${esc(g)}" ${(d?.grp || '') === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+          <option value="__new">+ New group…</option>
+        </select>
+        <input id="d_grp_new" placeholder="New group name, e.g. Entrances" style="margin-top:8px; display:none">
+      </div>
+    </div>
+    <div class="field check"><input id="d_https" type="checkbox" ${d?.use_https ? 'checked' : ''}><label>Use HTTPS</label></div>
+    <div class="modal-actions">
+      <button class="btn" id="d_cancel">Cancel</button>
+      <button class="btn primary" id="d_save">${d ? 'Save' : 'Add'}</button>
+    </div>`);
+  $('#d_grp_sel').addEventListener('change', () => {
+    const isNew = $('#d_grp_sel').value === '__new';
+    $('#d_grp_new').style.display = isNew ? '' : 'none';
+    if (isNew) $('#d_grp_new').focus();
+  });
+  $('#d_cancel').addEventListener('click', closeModal);
+  $('#d_save').addEventListener('click', async () => {
+    const grpSel = $('#d_grp_sel').value;
+    const body = {
+      name: $('#d_name').value.trim(), host: $('#d_host').value.trim(),
+      port: Number($('#d_port').value), username: $('#d_user').value.trim(),
+      location: $('#d_loc').value.trim(), use_https: $('#d_https').checked,
+      grp: grpSel === '__new' ? ($('#d_grp_new').value.trim() || null) : (grpSel || null),
+    };
+    const pass = $('#d_pass').value;
+    if (pass) body.password = pass;
+    if (!body.name || !body.host || !body.username || (!d && !pass)) { toast('Fill name, host, user, password', 'err'); return; }
+    const r = d ? await api.put(`/devices/${d.id}`, body) : await api.post('/devices', body);
+    if (r.error) { toast(r.error, 'err'); return; }
+    closeModal(); toast('Saved', 'ok'); devices();
+  });
+}
+
+// ---- Users (enrolled ON the machines) ----
+let _usersDevId = 'all';
+async function users() {
+  const devs = await api.get('/devices');
+  $('#viewActions').innerHTML = '';
+  content.innerHTML = '';
+  if (!devs.length) { content.appendChild(el('<div class="empty">No machines yet. Provision a machine in the database first.</div>')); return; }
+  if (_usersDevId !== 'all' && !devs.find((d) => d.id == _usersDevId)) _usersDevId = 'all';
+  content.appendChild(el(`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+      <label class="hint">Machine</label>
+      <select id="u_dev">
+        <option value="all" ${_usersDevId === 'all' ? 'selected' : ''}>All machines</option>
+        ${devs.map((d) => `<option value="${d.id}" ${d.id == _usersDevId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+      </select>
+      <button class="btn primary" id="u_add">+ Add user</button>
+      <button class="btn" id="u_daypass">+ Day pass</button>
+      <button class="btn" id="u_refresh">Refresh</button>
+    </div>`));
+  content.appendChild(el('<div id="u_table"></div>'));
+  $('#u_dev').addEventListener('change', (e) => { _usersDevId = e.target.value === 'all' ? 'all' : Number(e.target.value); loadUsersTable(devs); });
+  $('#u_refresh').addEventListener('click', () => loadUsersTable(devs));
+  $('#u_add').addEventListener('click', () => addUserModal(_usersDevId === 'all' ? devs[0] : devs.find((d) => d.id == _usersDevId), devs, _usersDevId === 'all'));
+  $('#u_daypass').addEventListener('click', () => dayPassModal(devs));
+  loadUsersTable(devs);
+}
+
+async function loadUsersTable(devs) {
+  const holder = $('#u_table');
+  if (!holder) return;
+  const all = _usersDevId === 'all';
+  holder.innerHTML = '<div class="muted">Loading users…</div>';
+
+  // entries: one row per person — u = device record, on = machines they exist on
+  let entries = [];
+  const unreachable = [];
+  if (all) {
+    const results = await Promise.all(devs.map(async (d) => ({ d, r: await api.get(`/devices/${d.id}/users`) })));
+    const map = new Map();
+    for (const { d, r } of results) {
+      if (!r.ok) { unreachable.push(d.name); continue; }
+      for (const u of r.users) {
+        // Same person = same employee # AND same name. "#1 TEST" and
+        // "#1 Ahmad" on different machines stay separate rows.
+        const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+        if (!map.has(key)) map.set(key, { u, on: [] });
+        map.get(key).on.push(d);
+      }
+    }
+    entries = [...map.values()].sort((a, b) =>
+      ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
+      String(a.u.name || '').localeCompare(String(b.u.name || '')));
+  } else {
+    const srcDev = devs.find((d) => d.id == _usersDevId);
+    const r = await api.get(`/devices/${_usersDevId}/users`);
+    if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't reach ${esc(srcDev.name)}: ${esc(r.error || 'error')}</div>`; return; }
+    entries = r.users.map((u) => ({ u, on: [srcDev] }));
+  }
+
+  const note = unreachable.length ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(unreachable.join(', '))} — their users are not shown.</p>` : '';
+  if (!entries.length) { holder.innerHTML = `${note}<div class="empty">No users found. Click <b>+ Add user</b>.</div>`; return; }
+
+  const rows = entries.map(({ u, on }, i) => {
+    const creds = [];
+    if (u.numOfCard) creds.push(`${u.numOfCard} card`);
+    if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
+    if (u.numOfFace) creds.push(`${u.numOfFace} face`);
+    const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
+    const blocked = u.Valid?.enable === false;
+    const admin = !!u.localUIRight;
+    return `<tr class="clickable-row" data-rowidx="${i}" title="View full profile">
+      <td>${esc(u.employeeNo)}</td>
+      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
+      <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
+      ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
+      <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
+      <td><small class="hint">${u.numOfCard ? `<a class="link" data-cards="${i}">${esc(creds.join(' · '))}</a>` : esc(creds.join(' · ') || 'no credentials')}</small></td>
+      <td class="row-actions">
+        <button class="btn sm" data-menu="${i}">Actions ▾</button>
+      </td></tr>`;
+  }).join('');
+  holder.innerHTML = `${note}<div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  holder.querySelectorAll('[data-profile]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userProfileModal(entries[Number(b.dataset.profile)]); }));
+  // Whole row opens the profile — except clicks on buttons/links/inputs inside it.
+  holder.querySelectorAll('tr[data-rowidx]').forEach((tr) => tr.addEventListener('click', (ev) => {
+    if (ev.target.closest('button, a, input, select, label')) return;
+    userProfileModal(entries[Number(tr.dataset.rowidx)]);
+  }));
+  // One "Actions" dropdown per row instead of a strip of buttons.
+  holder.querySelectorAll('[data-menu]').forEach((b) => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const e = entries[Number(b.dataset.menu)];
+    const admin = !!e.u.localUIRight;
+    showRowMenu(b, [
+      ['View profile', () => userProfileModal(e)],
+      ['Edit name / #', () => editUserModal(e, devs)],
+      ['Machine access', () => accessModal(e.on[0], e.u.employeeNo, e.u.name || '', devs)],
+      [admin ? 'Make user' : 'Make admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)],
+      ['Tag card', () => tagCard(e, devs)],
+      ['Capture fingerprint', () => captureFpModal(e, devs)],
+      e.u.numOfFace ? ['Delete face', () => deleteFaceAction(e, devs), true] : ['Enroll face', () => enrollFace(e, devs)],
+      ['Copy to machine…', () => copyUserModal(e.on[0], e.u.employeeNo, e.u.name || '', devs, entries.map((x) => x.u))],
+      ['Delete user', () => deleteUser(e.on, e.u.employeeNo, e.u.name || '', devs), true],
+    ]);
+  }));
+  holder.querySelectorAll('[data-cards]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userCardsModal(entries[Number(b.dataset.cards)], devs); }));
+}
+
+async function deleteFaceAction(e, devs) {
+  const where = e.on.map((d) => d.name).join(', ');
+  if (!confirm(`Delete the face of “${e.u.name || 'user ' + e.u.employeeNo}” from: ${where}?\n\nTheir fingerprints, cards and profile stay — only face recognition stops working.`)) return;
+  toast('Deleting face…');
+  const r = await api.post(`/devices/${e.on[0].id}/users/${encodeURIComponent(e.u.employeeNo)}/delete-face`, {
+    device_ids: e.on.map((d) => d.id),
+  });
+  const fails = (r.results || []).filter((x) => !x.ok);
+  toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}` : `Face deleted from ${e.on.length} machine${e.on.length === 1 ? '' : 's'}`, fails.length ? 'err' : 'ok');
+  if ($('#u_table')) loadUsersTable(devs);
+}
+
+async function deleteUser(devsOn, employeeNo, name, devs) {
+  const where = devsOn.map((d) => d.name).join(', ');
+  if (!confirm(`Delete “${name || 'user ' + employeeNo}” (#${employeeNo}) from: ${where}? This removes them from the machine${devsOn.length > 1 ? 's' : ''}.`)) return;
+  toast('Deleting user…');
+  const fails = [];
+  for (const d of devsOn) {
+    const r = await api.del(`/devices/${d.id}/users/${encodeURIComponent(employeeNo)}`);
+    if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
+  }
+  toast(fails.length ? `Failed on ${fails.length} machine(s): ${fails[0]}` : `User deleted from ${devsOn.length} machine${devsOn.length > 1 ? 's' : ''}`, fails.length ? 'err' : 'ok');
+  if ($('#u_table')) loadUsersTable(devs);
+}
+
+// Book a time slot on one machine (meeting room style): an existing member or
+// a walk-in visitor gets door access only between slot start and slot end.
+function bookSlotModal(dev, devs) {
+  const p2 = (n) => String(n).padStart(2, '0');
+  const d0 = new Date();
+  const dstr = `${d0.getFullYear()}-${p2(d0.getMonth() + 1)}-${p2(d0.getDate())}`;
+  openModal(`
+    <h2>Book slot — ${esc(dev.name)}</h2>
+    <div class="field"><label>Who</label>
+      <select id="bk_user"><option value="">Loading users…</option></select>
+    </div>
+    <div id="bk_visitor" hidden>
+      <div class="two-col">
+        <div class="field"><label>Visitor name</label><input id="bk_vname" placeholder="e.g. Meeting guest"></div>
+        <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="bk_vcard" placeholder="or Tag card later"></div>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Slot start</label><input id="bk_begin" type="datetime-local" value="${dstr}T13:00"></div>
+      <div class="field"><label>Slot end</label><input id="bk_end" type="datetime-local" value="${dstr}T15:00"></div>
+    </div>
+    <p class="hint">The machine only opens for them inside the slot — enforced by the machine itself. Members keep their fingerprints/cards (copied over if they're not on this machine yet); visitors are auto-removed after the slot ends.</p>
+    <div class="modal-actions">
+      <button class="btn" id="bk_cancel">Cancel</button>
+      <button class="btn primary" id="bk_save">Book slot</button>
+    </div>`);
+  (async () => {
+    const results = await Promise.all(devs.map(async (d) => ({ d, r: await api.get(`/devices/${d.id}/users`) })));
+    const seen = new Map();
+    for (const { r } of results) {
+      if (!r.ok) continue;
+      for (const u of r.users || []) {
+        const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+        if (!seen.has(key)) seen.set(key, u);
+      }
+    }
+    const opts = [...seen.values()]
+      .sort((a, b) => ((Number(a.employeeNo) || 0) - (Number(b.employeeNo) || 0)))
+      .map((u) => `<option value="${esc(u.employeeNo)}|${esc(u.name || '')}">${esc(u.name || 'User')} — #${esc(u.employeeNo)}</option>`)
+      .join('');
+    const sel = $('#bk_user');
+    if (sel) sel.innerHTML = opts + '<option value="__visitor">New visitor (with card)</option>';
+  })();
+  $('#bk_user').addEventListener('change', () => { $('#bk_visitor').hidden = $('#bk_user').value !== '__visitor'; });
+  $('#bk_cancel').addEventListener('click', closeModal);
+  $('#bk_save').addEventListener('click', async () => {
+    const begin = fromLocalInput($('#bk_begin').value);
+    const end = fromLocalInput($('#bk_end').value);
+    if (!begin || !end) { toast('Pick slot start and end', 'err'); return; }
+    if (end <= begin) { toast('Slot end must be after slot start', 'err'); return; }
+    const who = $('#bk_user').value;
+    if (!who) { toast('Pick a person', 'err'); return; }
+    toast('Booking slot…');
+    if (who === '__visitor') {
+      const name = $('#bk_vname').value.trim();
+      if (!name) { toast('Visitor name required', 'err'); return; }
+      const r = await api.post('/visitors', {
+        name,
+        card_no: $('#bk_vcard').value.trim() || undefined,
+        valid_begin: begin,
+        valid_end: end,
+        device_ids: [dev.id],
+      });
+      if (!r.ok && r.error) { toast(`Failed: ${r.error}`, 'err'); return; }
+      const bad = (r.results || []).filter((x) => x.state === 'error');
+      closeModal();
+      toast(bad.length ? `Visitor created but failed on ${bad.map((b) => b.device).join(', ')}`
+        : `Slot booked — visitor #${r.employeeNo}, ${begin.replace('T', ' ').slice(0, 16)} → ${end.replace('T', ' ').slice(11, 16)}`, bad.length ? 'err' : 'ok');
+    } else {
+      const [employeeNo, uname] = who.split('|');
+      const r = await api.post('/bookings', { device_id: dev.id, employeeNo, name: uname || undefined, begin, end });
+      if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
+      closeModal();
+      toast(`Slot booked — ${r.name} on ${dev.name}, ${begin.replace('T', ' ').slice(0, 16)} → ${end.replace('T', ' ').slice(11, 16)}`, 'ok');
+    }
+  });
+}
+
+// One-click visitor: valid until tonight by default, pushed to the selected
+// machines now, auto-deleted from them after expiry.
+function dayPassModal(devs) {
+  const p = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  const tonight = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T23:59`;
+  const checks = devs.map((x) =>
+    `<label><input type="checkbox" class="dp-dev" value="${x.id}" checked> ${esc(x.name)} <small class="hint">${esc(x.host)}</small></label>`
+  ).join('');
+  openModal(`
+    <h2>Day pass</h2>
+    <div class="two-col">
+      <div class="field"><label>Visitor name</label><input id="dp_name" placeholder="e.g. Sara (visitor)"></div>
+      <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="dp_card" placeholder="or Tag card later"></div>
+    </div>
+    <div class="field"><label>Valid until</label><input id="dp_end" type="datetime-local" value="${tonight}"></div>
+    <div class="field"><label>Machines</label>
+      ${groupSelectHtml(devs)}
+      <div class="device-checklist">${checks}</div>
+    </div>
+    <p class="hint">The visitor can enter until the deadline, then the machines block them and the dashboard <b>auto-deletes them from the machines</b>. Fingerprint or face can be added from their Users row after creating.</p>
+    <div class="modal-actions">
+      <button class="btn" id="dp_cancel">Cancel</button>
+      <button class="btn primary" id="dp_save">Create day pass</button>
+    </div>`);
+  wireGroupSelect(devs, 'dp-dev');
+  $('#dp_cancel').addEventListener('click', closeModal);
+  $('#dp_save').addEventListener('click', async () => {
+    const name = $('#dp_name').value.trim();
+    if (!name) { toast('Name required', 'err'); return; }
+    const deviceIds = [...document.querySelectorAll('.dp-dev:checked')].map((c) => Number(c.value));
+    if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
+    toast('Creating day pass…');
+    const r = await api.post('/visitors', {
+      name,
+      card_no: $('#dp_card').value.trim() || undefined,
+      valid_end: fromLocalInput($('#dp_end').value),
+      device_ids: deviceIds,
+    });
+    if (!r.ok && r.error) { toast(`Failed: ${r.error}`, 'err'); return; }
+    const bad = (r.results || []).filter((x) => x.state === 'error');
+    closeModal();
+    toast(bad.length
+      ? `Visitor #${r.employeeNo} created, but failed on ${bad.map((b) => b.device).join(', ')}`
+      : `Day pass created — visitor #${r.employeeNo}, valid until ${(r.valid_end || '').replace('T', ' ')}`,
+      bad.length ? 'err' : 'ok');
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+}
+
+// Row entry point: pick which machine's camera captures the face, then the
+// face is copied to the user's other machines automatically.
+function enrollFace(entry, devs) {
+  const { u, on } = entry;
+  const opts = on.map((d, i) => `<option value="${d.id}" ${i === 0 ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  openModal(`
+    <h2>Enroll face — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field"><label>Capture at this machine</label><select id="ef_dev">${opts}</select></div>
+    <p class="hint">Click <b>Start capture</b> — the chosen machine shows its face screen and the person stands in front of the camera (about 30s).${on.length > 1 ? ' The face is then copied to their other machines automatically.' : ''}</p>
+    <div class="modal-actions">
+      <button class="btn" id="ef_cancel">Cancel</button>
+      <button class="btn primary" id="ef_start">Start capture</button>
+    </div>`);
+  $('#ef_cancel').addEventListener('click', closeModal);
+  $('#ef_start').addEventListener('click', async () => {
+    if (captureBusy) { toast('A capture is already in progress — wait for it to finish.', 'err'); return; }
+    const dev = on.find((d) => d.id === Number($('#ef_dev').value)) || on[0];
+    captureBusy = true;
+    closeModal();
+    toast(`Waiting for a face at ${dev.name}…`);
+    try {
+      const r = await api.post(`/devices/${dev.id}/users/${encodeURIComponent(u.employeeNo)}/capture-face`, {
+        replicate_device_ids: on.map((d) => d.id),
+      });
+      const repBad = (r.replicated || []).filter((x) => !x.ok);
+      const repOk = (r.replicated || []).filter((x) => x.ok);
+      if (!r.ok) toast(`Failed: ${r.error || 'no face captured'}`, 'err');
+      else if (repBad.length) toast(`Enrolled on ${dev.name}, but copy failed on ${repBad.map((x) => x.device).join(', ')}`, 'err');
+      else toast(`Face enrolled${repOk.length ? ` on ${1 + repOk.length} machines` : ''}`, 'ok');
+      if ($('#u_table')) loadUsersTable(devs);
+    } finally { captureBusy = false; }
+  });
+}
+
+// Row entry point: pick which machine's sensor reads the finger.
+function captureFpModal(entry, devs) {
+  const { u, on } = entry;
+  const opts = on.map((d, i) => `<option value="${d.id}" ${i === 0 ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  openModal(`
+    <h2>Capture fingerprint — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="two-col">
+      <div class="field"><label>Capture at this machine</label><select id="cf_dev">${opts}</select></div>
+      <div class="field"><label>Finger slot <small class="hint">(up to 10 per user)</small></label>
+        <select id="cf_slot">${Array.from({ length: 10 }, (_, n) => `<option value="${n + 1}">Finger ${n + 1}${u.numOfFP && n < u.numOfFP ? ' (enrolled — will be replaced)' : ''}</option>`).join('')}</select>
+      </div>
+    </div>
+    <p class="hint">Click <b>Start capture</b> — the chosen machine prompts the person to press their finger. Each slot is one finger; capture again with a different slot to add more fingers.${on.length > 1 ? ' Fingerprints are copied to their other machines automatically.' : ''}</p>
+    <div class="modal-actions">
+      <button class="btn" id="cf_cancel">Cancel</button>
+      <button class="btn primary" id="cf_start">Start capture</button>
+    </div>`);
+  // Default to the next free slot so a second capture ADDS a finger
+  // instead of replacing finger 1.
+  $('#cf_slot').value = String(Math.min((Number(u.numOfFP) || 0) + 1, 10));
+  $('#cf_cancel').addEventListener('click', closeModal);
+  $('#cf_start').addEventListener('click', async () => {
+    const dev = on.find((d) => d.id === Number($('#cf_dev').value)) || on[0];
+    const slot = Number($('#cf_slot').value) || 1;
+    closeModal();
+    await captureFp(dev, u.employeeNo, devs, on.map((d) => d.id), slot);
+  });
+}
+
+async function captureFp(srcDev, employeeNo, devs, replicateIds = [], fingerNo = 1) {
+  if (captureBusy) { toast('A capture is already in progress — wait for it to finish.', 'err'); return; }
+  const extra = replicateIds.filter((id) => id !== srcDev.id);
+  captureBusy = true;
+  toast(`Waiting for finger at the machine… (slot ${fingerNo})`);
+  try {
+    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/capture-fingerprint`, { replicate_device_ids: extra, fingerNo });
+    const repBad = (r.replicated || []).filter((x) => !x.ok);
+    const repOk = (r.replicated || []).filter((x) => x.ok);
+    if (!r.ok) toast(`Failed: ${r.error || 'no finger / timeout'}`, 'err');
+    else if (repBad.length) toast(`Enrolled on ${srcDev.name}, but copy failed on ${repBad.map((x) => x.device).join(', ')}: ${repBad[0].error || ''}`, 'err');
+    else toast(`Fingerprint enrolled${repOk.length ? ` on ${1 + repOk.length} machines` : ''}${r.quality ? ` (quality ${r.quality})` : ''}`, 'ok');
+    if (devs && $('#u_table')) loadUsersTable(devs);
+  } finally { captureBusy = false; }
+}
+
+// Full profile popup: per-machine access state, validity window, role and
+// every credential (fingerprint/face counts, actual card numbers).
+async function userProfileModal(entry) {
+  const { u } = entry;
+  openModal(`
+    <h2>${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field" id="up_body"><span class="muted">Loading profile from machines…</span></div>
+    <div class="modal-actions"><button class="btn" id="up_close">Close</button></div>`);
+  $('#up_close').addEventListener('click', closeModal);
+  const r = await api.get(`/profile?employeeNo=${encodeURIComponent(u.employeeNo)}&name=${encodeURIComponent(u.name || '')}`);
+  const body = $('#up_body');
+  if (!body) return;
+  if (!r.ok) { body.innerHTML = `<span class="muted">Failed: ${esc(r.error || 'error')}</span>`; return; }
+  const rows = r.machines.map((m) => {
+    if (m.present === null) {
+      return `<div class="list-row"><span class="status-dot off"></span>
+        <div class="list-main"><b>${esc(m.device)}</b><small class="hint">${esc(m.host)}</small></div>
+        <span class="badge offline">unreachable</span></div>`;
+    }
+    if (!m.present) {
+      return `<div class="list-row"><span class="status-dot off"></span>
+        <div class="list-main"><b>${esc(m.device)}</b><small class="hint">${esc(m.host)}</small></div>
+        <span class="badge">no access</span></div>`;
+    }
+    const creds = [
+      `${m.numOfFP} fingerprint${m.numOfFP === 1 ? '' : 's'}`,
+      `${m.numOfFace} face`,
+      m.cards.length ? `card${m.cards.length === 1 ? '' : 's'}: ${m.cards.join(', ')}` : 'no card',
+    ];
+    return `<div class="list-row">
+      <span class="status-dot ${m.enabled ? 'on' : 'off'}"></span>
+      <div class="list-main">
+        <b>${esc(m.device)}</b>
+        <small class="hint">valid ${esc((m.validBegin || '—').replace('T', ' '))} → ${esc((m.validEnd || '—').replace('T', ' '))}</small>
+        <small class="hint">${esc(creds.join(' · '))}</small>
+      </div>
+      ${m.admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}
+      ${m.enabled ? '<span class="badge synced">has access</span>' : '<span class="badge blocked">blocked</span>'}
+    </div>`;
+  }).join('');
+  body.innerHTML = `<div class="device-checklist" style="max-height:340px">${rows}</div>`;
+}
+
+// Edit a user's name / employee # across every machine they exist on.
+function editUserModal(entry, devs) {
+  const { u, on } = entry;
+  openModal(`
+    <h2>Edit user <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <p class="hint">Applies on: <b>${esc(on.map((d) => d.name).join(', '))}</b>. Changing the employee # re-creates the user under the new number with all credentials (fingerprints, cards, face), then removes the old record.</p>
+    <div class="two-col">
+      <div class="field"><label>Name</label><input id="eu_name" value="${esc(u.name || '')}"></div>
+      <div class="field"><label>Employee #</label><input id="eu_no" value="${esc(u.employeeNo)}"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="eu_cancel">Cancel</button>
+      <button class="btn primary" id="eu_save">Save</button>
+    </div>`);
+  $('#eu_cancel').addEventListener('click', closeModal);
+  $('#eu_save').addEventListener('click', async () => {
+    const name = $('#eu_name').value.trim();
+    const newNo = $('#eu_no').value.trim();
+    if (!name || !newNo) { toast('Name and employee # are required', 'err'); return; }
+    toast('Updating user…');
+    const r = await api.post(`/devices/${on[0].id}/users/${encodeURIComponent(u.employeeNo)}/update`, {
+      name,
+      newEmployeeNo: newNo,
+      device_ids: on.map((d) => d.id),
+    });
+    const fails = (r.results || []).filter((x) => !x.ok);
+    closeModal();
+    toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}` : 'User updated', fails.length ? 'err' : 'ok');
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+}
+
+// Popup listing the cards attached to a user, with per-card removal.
+async function userCardsModal(entry, devs) {
+  const { u, on } = entry;
+  const srcDev = on[0];
+  openModal(`
+    <h2>Cards — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <p class="hint">Cards attached to this user on ${esc(on.map((d) => d.name).join(', '))}. Removing a card detaches it from every machine this user is on — their fingerprints and profile stay.</p>
+    <div class="field" id="uc_list"><span class="muted">Loading cards…</span></div>
+    <div class="modal-actions"><button class="btn" id="uc_close">Close</button></div>`);
+  $('#uc_close').addEventListener('click', closeModal);
+  async function load() {
+    const r = await api.get(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/cards`);
+    const cardsList = r.ok ? r.cards : [];
+    $('#uc_list').innerHTML = cardsList.length
+      ? `<div class="device-checklist">${cardsList.map((c) => `
+          <label style="justify-content:space-between;cursor:default">
+            <span><b>${esc(c)}</b></span>
+            <button class="btn sm danger" data-rmcard="${esc(c)}">Remove</button>
+          </label>`).join('')}</div>`
+      : `<span class="muted">${r.ok ? 'No cards attached to this user.' : `Couldn't read cards: ${esc(r.error || 'error')}`}</span>`;
+    $('#uc_list').querySelectorAll('[data-rmcard]').forEach((b) => b.addEventListener('click', async () => {
+      const cardNo = b.dataset.rmcard;
+      if (!confirm(`Remove card ${cardNo} from ${u.name || 'this user'}?\n\nIt is detached on: ${on.map((d) => d.name).join(', ')}.`)) return;
+      toast('Removing card…');
+      const rr = await api.post('/devices/card/delete', { card_no: cardNo, device_ids: on.map((d) => d.id) });
+      const fails = (rr.results || []).filter((x) => !x.ok);
+      toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}` : 'Card removed', fails.length ? 'err' : 'ok');
+      load();
+      if ($('#u_table')) loadUsersTable(devs);
+    }));
+  }
+  load();
+}
+
+// Show + edit which machines a user has access to. Checked = enrolled.
+async function accessModal(srcDev, employeeNo, name, devs) {
+  toast('Checking machines…');
+  const r = await api.get(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`);
+  if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
+  const checks = r.machines.map((m) => {
+    const hasAccess = m.present && m.enabled !== false;
+    const state = m.present === null
+      ? '<span class="badge offline">unreachable</span>'
+      : hasAccess ? '<span class="badge synced">has access</span>'
+        : m.present ? '<span class="badge blocked">blocked</span>'
+          : '<span class="badge">no access</span>';
+    return `<label>
+      <input type="checkbox" class="acc-check" value="${m.device_id}" ${hasAccess ? 'checked' : ''} ${m.present === null ? 'disabled' : ''}>
+      <span style="flex:1;min-width:0">${esc(m.name)} <small class="hint">${esc(m.host)}</small> ${state}</span>
+      <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
+      <button type="button" class="btn sm acc-today" data-dev="${m.device_id}" ${m.present === null ? 'disabled' : ''} title="Access until tonight 23:59">Today</button>
+    </label>`;
+  }).join('');
+  openModal(`
+    <h2>Machine access — ${esc(r.name || name || 'user ' + employeeNo)} <small class="hint">#${esc(employeeNo)}</small></h2>
+    <p class="hint">Checked machines allow entry, and each machine has its own <b>access-until</b> deadline. Unchecking <b>blocks</b> the user there but keeps their fingerprints and cards enrolled — re-checking restores access instantly. Use Delete to fully remove a user.</p>
+    <div class="field">
+      ${groupSelectHtml(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })))}
+      <div class="device-checklist">${checks}</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="acc_cancel">Cancel</button>
+      <button class="btn primary" id="acc_save">Apply</button>
+    </div>`);
+  wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
+  // "Today" preset: access until tonight 23:59 on that machine.
+  document.querySelectorAll('.acc-today').forEach((b) => b.addEventListener('click', () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    const inp = document.querySelector(`.acc-end[data-dev="${b.dataset.dev}"]`);
+    if (inp) inp.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T23:59`;
+  }));
+  $('#acc_cancel').addEventListener('click', closeModal);
+  $('#acc_save').addEventListener('click', async () => {
+    const ids = [...document.querySelectorAll('.acc-check:checked')].map((x) => Number(x.value));
+    const validEnds = {};
+    document.querySelectorAll('.acc-end').forEach((inp) => {
+      const v = fromLocalInput(inp.value);
+      if (v) validEnds[inp.dataset.dev] = v;
+    });
+    toast('Applying machine access…');
+    const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
+      device_ids: ids,
+      valid_ends: validEnds,
+    });
+    if (!rr.ok) { toast(`Failed: ${rr.error || 'error'}`, 'err'); return; }
+    const errs = (rr.results || []).filter((x) => x.state === 'error');
+    const changed = (rr.results || []).filter((x) => ['granted', 'revoked', 'updated'].includes(x.state)).length;
+    toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})`, errs.length ? 'err' : 'ok');
+    closeModal();
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+}
+
+// Only one device-capture (card or fingerprint) may run at a time — the
+// terminal rejects overlapping capture sessions with "Device Busy".
+let captureBusy = false;
+
+async function setRole(devsOn, employeeNo, role, devs) {
+  const targets = Array.isArray(devsOn) ? devsOn : [devsOn];
+  toast(`Setting ${role === 'admin' ? 'Admin' : 'User'} access…`);
+  const fails = [];
+  for (const d of targets) {
+    const r = await api.post(`/devices/${d.id}/users/${encodeURIComponent(employeeNo)}/role`, { role });
+    if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
+  }
+  toast(
+    fails.length ? `Failed on ${fails.length} machine(s): ${fails[0]}`
+      : `Now ${role === 'admin' ? 'Admin' : 'User'}${targets.length > 1 ? ` on ${targets.length} machines` : ''}`,
+    fails.length ? 'err' : 'ok'
+  );
+  if (devs && $('#u_table')) loadUsersTable(devs);
+}
+
+function tagCard(entry, devs) {
+  const { u, on } = entry;
+  const opts = on.map((d, i) => `<option value="${d.id}" ${i === 0 ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  openModal(`
+    <h2>Tag card — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field"><label>Read the card at this machine</label><select id="tc_dev">${opts}</select></div>
+    <p class="hint">Click <b>Start reading</b>, then tap the card on the chosen machine's reader (about 30s). The card is attached to this user${on.length > 1 ? ' and copied to their other machines automatically' : ''}.</p>
+    <div class="modal-actions">
+      <button class="btn" id="tc_cancel">Cancel</button>
+      <button class="btn primary" id="tc_start">Start reading</button>
+    </div>`);
+  $('#tc_cancel').addEventListener('click', closeModal);
+  $('#tc_start').addEventListener('click', async () => {
+    if (captureBusy) { toast('A capture is already in progress — wait for it to finish.', 'err'); return; }
+    const dev = on.find((d) => d.id === Number($('#tc_dev').value)) || on[0];
+    captureBusy = true;
+    closeModal();
+    toast(`Waiting for a card at ${dev.name}… tap it now`);
+    try {
+      const r = await api.post(`/devices/${dev.id}/users/${encodeURIComponent(u.employeeNo)}/capture-card`, {
+        replicate_device_ids: on.map((d) => d.id),
+      });
+      const repBad = (r.replicated || []).filter((x) => !x.ok);
+      if (!r.ok) toast(`Failed: ${r.error || 'no card'}`, 'err');
+      else if (repBad.length) toast(`Card ${r.cardNo} attached on ${dev.name}, but copy failed on ${repBad.map((x) => x.device).join(', ')}`, 'err');
+      else toast(`Card ${r.cardNo} attached${on.length > 1 ? ` on ${on.length} machines` : ''}`, 'ok');
+      if ($('#u_table')) loadUsersTable(devs);
+    } finally { captureBusy = false; }
+  });
+}
+
+function addUserModal(srcDev, devs, checkAll = false) {
+  const checks = devs.map((d) =>
+    `<label><input type="checkbox" class="au-dev" value="${d.id}" ${checkAll || d.id === srcDev.id ? 'checked' : ''}> ${esc(d.name)} <small class="hint">${esc(d.host)}</small></label>`
+  ).join('');
+  openModal(`
+    <h2>Add user</h2>
+    <div class="two-col">
+      <div class="field"><label>Name</label><input id="au_name" placeholder="Full name"></div>
+      <div class="field"><label>Employee # <small class="hint">(auto if blank)</small></label><input id="au_no" placeholder="e.g. 1005"></div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>RFID card # <small class="hint">(optional — typed, no tap needed)</small></label><input id="au_card" placeholder="e.g. 0012345678"></div>
+      <div class="field"><label>Access level</label>
+        <select id="au_role"><option value="user">User (door access only)</option><option value="admin">Admin (can enter the machine menu)</option></select>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Access from</label><input id="au_begin" type="datetime-local"></div>
+      <div class="field"><label>Access until</label><input id="au_end" type="datetime-local"></div>
+    </div>
+    <div class="field"><label>Create on machines <small class="hint">(pick one or more)</small></label>
+      ${groupSelectHtml(devs)}
+      <div class="device-checklist">${checks}</div>
+    </div>
+    <div class="field"><label>Fingerprint machine <small class="hint">(after creating, this machine prompts for the finger)</small></label>
+      <select id="au_fpdev"></select>
+    </div>
+    <p class="hint">The same employee # is used on every selected machine. You can also tag a card later by tapping it (Tag card), or capture fingerprints any time.</p>
+    <div class="modal-actions">
+      <button class="btn" id="au_cancel">Cancel</button>
+      <button class="btn primary" id="au_save">Add user</button>
+    </div>`);
+  wireGroupSelect(devs, 'au-dev');
+  // Fingerprint-capture machine list mirrors whichever machines are ticked.
+  function refreshFpOptions() {
+    const sel = $('#au_fpdev');
+    const prev = sel.value;
+    const checked = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
+    sel.innerHTML = devs.filter((d) => checked.includes(d.id))
+      .map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  }
+  document.querySelectorAll('.au-dev').forEach((c) => c.addEventListener('change', refreshFpOptions));
+  refreshFpOptions();
+
+  $('#au_cancel').addEventListener('click', closeModal);
+  $('#au_save').addEventListener('click', async () => {
+    const name = $('#au_name').value.trim();
+    if (!name) { toast('Name required', 'err'); return; }
+    const deviceIds = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
+    if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
+    const body = {
+      device_ids: deviceIds,
+      employeeNo: $('#au_no').value.trim() || undefined,
+      name,
+      role: $('#au_role').value,
+      card_no: $('#au_card').value.trim() || undefined,
+      valid_begin: fromLocalInput($('#au_begin').value),
+      valid_end: fromLocalInput($('#au_end').value),
+    };
+    const fpDevId = Number($('#au_fpdev').value) || null;
+    toast(`Creating user on ${deviceIds.length} machine${deviceIds.length === 1 ? '' : 's'}…`);
+    const r = await api.post('/devices/users', body);
+    if (!r.ok) {
+      const firstErr = r.error || (r.results || []).map((x) => x.error).filter(Boolean)[0] || 'error';
+      toast(`Failed: ${firstErr}`, 'err'); return;
+    }
+    closeModal();
+    const bad = (r.results || []).filter((x) => !x.ok);
+    const cardBad = (r.results || []).filter((x) => x.ok && x.cardError);
+    if (bad.length) toast(`User ${r.employeeNo} added, but failed on ${bad.map((b) => b.device).join(', ')}: ${bad[0].error}`, 'err');
+    else if (cardBad.length) toast(`User ${r.employeeNo} added; card failed on ${cardBad.map((b) => b.device).join(', ')}: ${cardBad[0].cardError}`, 'err');
+    else toast(`User ${r.employeeNo}${body.card_no ? ' + card' : ''} added on ${r.results.length} machine${r.results.length === 1 ? '' : 's'}`, 'ok');
+    const fpDev = fpDevId && deviceIds.includes(fpDevId) ? devs.find((d) => d.id === fpDevId) : null;
+    if (fpDev) await captureFp(fpDev, r.employeeNo, devs, deviceIds);
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+}
+
+// ---- Cards ---- 
+async function cards() {
+  const [list, devs] = await Promise.all([api.get('/cards'), api.get('/devices')]);
+  $('#viewActions').innerHTML = '<button class="btn primary" id="addCard">+ Add card</button>';
+  $('#addCard').addEventListener('click', () => cardModal(null, devs));
+  content.innerHTML = '';
+  if (!list.length) { content.appendChild(el('<div class="empty">No cards yet. Click <b>+ Add card</b> to register a card, then <b>Edit</b> it to set access and machines.</div>')); return; }
+
+  const rows = list.map((c) => {
+    const active = c.grants.filter((g) => g.sync_state !== 'removing');
+    const nDev = active.length;
+    const nBad = active.filter((g) => g.sync_state !== 'synced').length;
+    // Assigned to: live holders of this card number (real users on the machines)
+    const byEmp = new Map();
+    for (const h of c.assigned || []) {
+      if (!byEmp.has(h.employeeNo)) byEmp.set(h.employeeNo, { name: h.name, devs: [] });
+      byEmp.get(h.employeeNo).devs.push(h.device);
+    }
+    const assignedHtml = byEmp.size
+      ? [...byEmp.entries()].map(([no, x]) =>
+          `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)} · ${esc(x.devs.join(', '))}</small>`
+        ).join('<br>')
+      : nDev
+        ? `standalone on ${nDev} machine${nDev === 1 ? '' : 's'} ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
+        : '<span class="muted">not assigned</span>';
+    return `<tr>
+      <td><b>${esc(c.card_no || '—')}</b></td>
+      <td>${esc(c.name)}</td>
+      <td class="nowrap">${c.valid_end ? esc(c.valid_end.replace('T', ' ')) : '<span class="muted">no expiry</span>'}</td>
+      <td>${assignedHtml}</td>
+      <td class="row-actions">
+        <button class="btn sm" data-assign="${c.id}">Assign to user</button>
+        <button class="btn sm" data-unassign="${c.id}">Unassign</button>
+        <button class="btn sm" data-sync="${c.id}">Sync</button>
+        <button class="btn sm" data-edit="${c.id}">Edit</button>
+        <button class="btn sm danger" data-del="${c.id}">Remove</button>
+      </td>
+    </tr>`;
+  }).join('');
+  content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
+      <th>Card #</th><th>Label</th><th>Access until</th><th>Assigned to</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`));
+
+  content.querySelectorAll('[data-assign]').forEach((b) => b.addEventListener('click', () =>
+    assignCardModal(list.find((c) => c.id == b.dataset.assign), devs)));
+  content.querySelectorAll('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
+    const c = list.find((x) => x.id == b.dataset.unassign);
+    if (!c || !c.card_no) { toast('This entry has no card number', 'err'); return; }
+    if (!confirm(`Remove card ${c.card_no} from every machine?\n\nWhoever holds it loses card access — their user profile stays.`)) return;
+    toast('Removing card from machines…');
+    const r = await api.post('/devices/card/delete', { card_no: c.card_no });
+    const fails = (r.results || []).filter((x) => !x.ok);
+    toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}`
+      : 'Card removed from all machines', fails.length ? 'err' : 'ok');
+  }));
+  content.querySelectorAll('[data-sync]').forEach((b) => b.addEventListener('click', async () => {
+    toast('Pushing to machines…');
+    const r = await api.post(`/cards/${b.dataset.sync}/sync`);
+    const bad = (r.results || []).filter((x) => x.state === 'error');
+    toast(bad.length ? `Errors on ${bad.length} machine(s)` : 'Synced', bad.length ? 'err' : 'ok');
+    cards();
+  }));
+  content.querySelectorAll('[data-edit]').forEach((b) =>
+    b.addEventListener('click', () => cardModal(list.find((c) => c.id == b.dataset.edit), devs)));
+  content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    const c = list.find((x) => x.id == b.dataset.del);
+    if (!confirm(`Delete card ${c?.card_no || ''}?\n\nIt is removed from every machine and detached from any user holding it — all access linked to this card stops working.`)) return;
+    toast('Removing card everywhere…');
+    const r = await api.del(`/cards/${b.dataset.del}`);
+    const badDetach = (r.detached || []).filter((x) => !x.ok);
+    toast(r.ok ? (badDetach.length ? `Removed, but detach failed on ${badDetach.map((x) => x.device).join(', ')}` : 'Card removed — all linked access blocked')
+      : (r.error || 'Failed'), r.ok && !badDetach.length ? 'ok' : 'err');
+    cards();
+  }));
+}
+
+// Assign a registered card to an existing machine user (typed attach, no tap).
+function assignCardModal(card, devs) {
+  if (!card || !card.card_no) { toast('This entry has no card number', 'err'); return; }
+  const devOpts = ['<option value="all">All machines</option>']
+    .concat(devs.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`)).join('');
+  openModal(`
+    <h2>Assign card ${esc(card.card_no)} to a user</h2>
+    <div class="two-col">
+      <div class="field"><label>Machine</label><select id="ac_dev">${devOpts}</select></div>
+      <div class="field"><label>User</label><select id="ac_user"><option value="">Loading…</option></select></div>
+    </div>
+    <p class="hint" id="ac_hint">The card is attached on every machine where the chosen user exists.</p>
+    <div class="modal-actions">
+      <button class="btn" id="ac_cancel">Cancel</button>
+      <button class="btn primary" id="ac_save">Assign</button>
+    </div>`);
+  // employeeNo -> { name, devs: [machines the user exists on] }
+  const userMachines = new Map();
+  async function loadUsers() {
+    const sel = $('#ac_dev').value;
+    $('#ac_user').innerHTML = '<option value="">Loading…</option>';
+    userMachines.clear();
+    // Key by employee # AND name — two different people sharing a number on
+    // different machines stay separate entries.
+    const keyOf = (u) => `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+    if (sel === 'all') {
+      const results = await Promise.all(devs.map(async (d) => ({ d, r: await api.get(`/devices/${d.id}/users`) })));
+      for (const { d, r } of results) {
+        if (!r.ok) continue;
+        for (const u of r.users || []) {
+          const key = keyOf(u);
+          if (!userMachines.has(key)) userMachines.set(key, { employeeNo: String(u.employeeNo), name: u.name || 'User', devs: [] });
+          userMachines.get(key).devs.push(d);
+        }
+      }
+      $('#ac_hint').textContent = 'The card is attached on every machine where the chosen user exists.';
+    } else {
+      const d = devs.find((x) => x.id == sel);
+      const r = await api.get(`/devices/${sel}/users`);
+      if (r.ok) for (const u of r.users || []) userMachines.set(keyOf(u), { employeeNo: String(u.employeeNo), name: u.name || 'User', devs: [d] });
+      $('#ac_hint').textContent = `The card is attached on ${d ? d.name : 'this machine'} only.`;
+    }
+    const opts = [...userMachines.entries()]
+      .sort((a, b) => ((Number(a[1].employeeNo) || 0) - (Number(b[1].employeeNo) || 0)) || a[1].name.localeCompare(b[1].name))
+      .map(([key, info]) => `<option value="${esc(key)}">${esc(info.name)} — #${esc(info.employeeNo)}${sel === 'all' && devs.length > 1 ? ` (${info.devs.length} machine${info.devs.length === 1 ? '' : 's'})` : ''}</option>`)
+      .join('');
+    $('#ac_user').innerHTML = opts || '<option value="">No users found</option>';
+  }
+  $('#ac_dev').addEventListener('change', loadUsers);
+  loadUsers();
+  $('#ac_cancel').addEventListener('click', closeModal);
+  $('#ac_save').addEventListener('click', async () => {
+    const key = $('#ac_user').value;
+    const info = userMachines.get(key);
+    if (!info) { toast('Pick a user', 'err'); return; }
+    const targets = info.devs;
+    toast(`Attaching card on ${targets.length} machine${targets.length === 1 ? '' : 's'}…`);
+    const fails = [];
+    for (const d of targets) {
+      const r = await api.post(`/devices/${d.id}/users/${encodeURIComponent(info.employeeNo)}/card`, { card_no: card.card_no });
+      if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
+    }
+    closeModal();
+    toast(fails.length ? `Attached on ${targets.length - fails.length}/${targets.length} — ${fails[0]}`
+      : `Card ${card.card_no} attached to ${info.name} (#${info.employeeNo}) on ${targets.length} machine${targets.length === 1 ? '' : 's'}`,
+      fails.length ? 'err' : 'ok');
+  });
+}
+
+function cardModal(c = null, devs = []) {
+  // Add: only card # + name. Access and machines are set afterwards via Edit.
+  if (!c) return addCardModal();
+
+  const labelVal = c.name && !/^Card /.test(c.name) ? c.name : '';
+  const grantIds = new Set((c.grants || []).filter((g) => g.sync_state !== 'removing').map((g) => g.device_id));
+  const deviceChecks = devs.length
+    ? devs.map((d) => `<label><input type="checkbox" class="card-dev-check" value="${d.id}" ${grantIds.has(d.id) ? 'checked' : ''}> ${esc(d.name)} <small class="hint">${esc(d.host)}</small></label>`).join('')
+    : '<span class="muted">No machines yet — provision one in the database first.</span>';
+  openModal(`
+    <h2>Edit card</h2>
+    <div class="two-col">
+      <div class="field"><label>RFID card #</label><input id="c_card" value="${esc(c.card_no || '')}" placeholder="e.g. 0012345678"></div>
+      <div class="field"><label>Label <small class="hint">(optional)</small></label><input id="c_label" value="${esc(labelVal)}" placeholder="e.g. Cleaner, Locker 12"></div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>Access from</label><input id="c_begin" type="datetime-local" value="${toLocalInput(c.valid_begin)}"></div>
+      <div class="field"><label>Access until</label><input id="c_end" type="datetime-local" value="${toLocalInput(c.valid_end)}"></div>
+    </div>
+    <div class="field check"><input id="c_autodel" type="checkbox" ${c.auto_delete ? 'checked' : ''}><label>Auto-delete from machines after expiry</label></div>
+    <p class="hint">If this card is <b>assigned to a user</b>, the access period is applied to that user on every machine holding the card — machines enforce validity per person, so it covers all their credentials there.</p>
+    <div class="field">
+      <label>Machines <small class="hint">(standalone card only — pick one or more)</small></label>
+      ${groupSelectHtml(devs)}
+      <div class="device-checklist">${deviceChecks}</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="c_cancel">Cancel</button>
+      <button class="btn primary" id="c_save">Save & sync</button>
+    </div>`);
+  wireGroupSelect(devs, 'card-dev-check');
+  $('#c_cancel').addEventListener('click', closeModal);
+  $('#c_save').addEventListener('click', async () => {
+    const card_no = $('#c_card').value.trim();
+    if (!card_no) { toast('Card # required', 'err'); return; }
+    const deviceIds = [...document.querySelectorAll('.card-dev-check:checked')].map((x) => Number(x.value));
+    const r = await api.put(`/cards/${c.id}`, {
+      card_no,
+      label: $('#c_label').value.trim() || null,
+      valid_begin: fromLocalInput($('#c_begin').value),
+      valid_end: fromLocalInput($('#c_end').value),
+      auto_delete: $('#c_autodel').checked,
+    });
+    await api.put(`/cards/${c.id}/grants`, { device_ids: deviceIds });
+    await api.post(`/cards/${c.id}/sync`);
+    closeModal();
+    const applied = (r.applied || []).filter((x) => x.ok);
+    const failed = (r.applied || []).filter((x) => !x.ok);
+    if (failed.length) toast(`Saved, but expiry failed on ${failed.map((f) => f.device).join(', ')}`, 'err');
+    else if (applied.length) toast(`Saved — expiry applied to ${applied[0].name || 'holder'} on ${applied.length} machine${applied.length === 1 ? '' : 's'}`, 'ok');
+    else toast('Saved & synced', 'ok');
+    cards();
+  });
+}
+
+// Minimal add: card number + optional name. No machines/access here — the
+// dashboard user sets those afterwards with Edit.
+function addCardModal() {
+  openModal(`
+    <h2>Add card</h2>
+    <div class="two-col">
+      <div class="field"><label>RFID card #</label><input id="c_card" placeholder="e.g. 0012345678"></div>
+      <div class="field"><label>Name <small class="hint">(optional)</small></label><input id="c_label" placeholder="e.g. Cleaner, Locker 12"></div>
+    </div>
+    <p class="hint">After adding, use <b>Edit</b> to set the access period and which machines this card works on.</p>
+    <div class="modal-actions">
+      <button class="btn" id="c_cancel">Cancel</button>
+      <button class="btn primary" id="c_save">Add</button>
+    </div>`);
+  $('#c_cancel').addEventListener('click', closeModal);
+  $('#c_save').addEventListener('click', async () => {
+    const card_no = $('#c_card').value.trim();
+    if (!card_no) { toast('Card # required', 'err'); return; }
+    const r = await api.post('/cards', { card_no, label: $('#c_label').value.trim() || null });
+    if (r.error) { toast(r.error, 'err'); return; }
+    closeModal(); toast('Card added — now Edit it to set access & machines', 'ok'); cards();
+  });
+}
+
+// ---- Activity: machine entry log + dashboard action log ----
+const EVENT_LABELS = {
+  1: 'Entry authorized',
+  2: 'Card + password',
+  21: 'Door opened',
+  22: 'Door closed',
+  23: 'Door open timeout',
+  27: 'Remote unlock',
+  38: 'Fingerprint OK',
+  39: 'Fingerprint denied',
+  75: 'Face OK',
+  76: 'Face not recognized',
+  112: 'Entry denied (expired)',
+};
+const eventLabel = (e) => EVENT_LABELS[e.minor] || `Event ${e.minor}`;
+const EVENT_DENIED = new Set([23, 39, 76, 112]);
+
+let _logMode = 'entries';
+async function logs() {
+  // Live view: entries refresh every 12s so walk-ins appear as they badge.
+  clearInterval(_autoTimer);
+  _autoTimer = setInterval(() => {
+    if (current === 'logs' && $('#modalBackdrop').hidden) loadLogTable();
+  }, 12000);
+  content.innerHTML = '';
+  content.appendChild(el(`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+      <label class="hint">Show</label>
+      <select id="log_mode">
+        <option value="entries" ${_logMode === 'entries' ? 'selected' : ''}>Machine entries (who entered)</option>
+        <option value="system" ${_logMode === 'system' ? 'selected' : ''}>Dashboard activity</option>
+      </select>
+      <button class="btn" id="log_refresh">Refresh</button>
+    </div>`));
+  content.appendChild(el('<div id="log_table"></div>'));
+  $('#log_mode').addEventListener('change', (e) => { _logMode = e.target.value; loadLogTable(); });
+  $('#log_refresh').addEventListener('click', loadLogTable);
+  loadLogTable();
+}
+
+async function loadLogTable() {
+  const holder = $('#log_table');
+  if (!holder) return;
+  holder.innerHTML = '<div class="muted">Loading…</div>';
+
+  if (_logMode === 'system') {
+    const list = await api.get('/logs');
+    if (!list.length) { holder.innerHTML = '<div class="empty">No activity yet.</div>'; return; }
+    const rows = list.map((l) => `<tr>
+        <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
+        <td>${esc(l.employee_name || '—')}</td>
+        <td>${esc(l.device_name || '—')}</td>
+        <td>${esc(prettyAction(l.action))}</td>
+        <td><span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'ok' : 'fail'}</span></td>
+        <td><small class="hint">${esc((l.detail || '').slice(0, 80))}</small></td>
+      </tr>`).join('');
+    holder.innerHTML = `<div class="table-wrapper"><table><thead><tr>
+        <th>Time</th><th>Member</th><th>Machine</th><th>Action</th><th>Result</th><th>Detail</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+    return;
+  }
+
+  // Machine entries — read live from each terminal's own event memory.
+  const r = await api.get('/events?limit=80');
+  if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't read events: ${esc(r.error || 'error')}</div>`; return; }
+  const note = (r.unreachable || []).length
+    ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(r.unreachable.join(', '))} — their entries are not shown.</p>` : '';
+  // Person events tell you WHO; door open/close events give context.
+  const events = (r.events || []).filter((e) => e.name || e.employeeNoString || e.cardNo || EVENT_DENIED.has(e.minor));
+  if (!events.length) { holder.innerHTML = `${note}<div class="empty">No entries recorded yet. Events appear here after someone uses a card, fingerprint or face at a machine.</div>`; return; }
+  const rows = events.map((e) => {
+    const who = e.name || (e.employeeNoString ? `User ${e.employeeNoString}` : '—');
+    const cred = e.cardNo ? `card ${e.cardNo}` : (e.currentVerifyMode && e.currentVerifyMode !== 'invalid' ? e.currentVerifyMode : '');
+    const denied = EVENT_DENIED.has(e.minor);
+    return `<tr>
+      <td class="nowrap"><small class="hint">${esc(String(e.time || '').slice(0, 19).replace('T', ' '))}</small></td>
+      <td><b>${esc(who)}</b>${e.employeeNoString ? ` <small class="hint">#${esc(e.employeeNoString)}</small>` : ''}</td>
+      <td>${esc(e.device)}</td>
+      <td><small class="hint">${esc(cred || '—')}</small></td>
+      <td><span class="badge ${denied ? 'error' : 'synced'}">${esc(eventLabel(e))}</span></td>
+    </tr>`;
+  }).join('');
+  holder.innerHTML = `${note}<div class="table-wrapper"><table><thead><tr>
+      <th>Time</th><th>Person</th><th>Machine</th><th>Credential</th><th>Event</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// datetime helpers: DB stores "YYYY-MM-DDTHH:mm:ss", input needs "YYYY-MM-DDTHH:mm"
+function toLocalInput(v) { return v ? v.slice(0, 16) : ''; }
+function fromLocalInput(v) { return v ? (v.length === 16 ? v + ':00' : v) : null; }
+
+go('dashboard');
