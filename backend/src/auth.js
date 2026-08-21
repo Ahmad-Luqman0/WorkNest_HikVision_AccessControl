@@ -160,4 +160,22 @@ authRouter.post('/change-password', async (req, res) => {
   }
 });
 
+// Create an additional dashboard login account (requires a logged-in session).
+authRouter.post('/users', async (req, res) => {
+  if (!(await tokenValid(readCookie(req)))) return res.status(401).json({ error: 'authentication required' });
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  if (!username) return res.status(400).json({ ok: false, error: 'Username required' });
+  if (password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters' });
+  try {
+    if (await getDashUser(username)) {
+      return res.status(409).json({ ok: false, error: `User "${username}" already exists` });
+    }
+    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password) });
+    res.json({ ok: true, username });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 export default authRouter;

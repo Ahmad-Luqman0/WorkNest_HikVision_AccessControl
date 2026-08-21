@@ -54,7 +54,8 @@ function showLogin() {
 
 function changePasswordModal() {
   openModal(`
-    <h2>Change password</h2>
+    <h2>Account</h2>
+    <p class="hint" style="margin:0 0 6px"><b>Change password</b> for an existing dashboard login.</p>
     <div class="two-col">
       <div class="field"><label>Username</label><input id="cp_user" value="admin" autocomplete="username"></div>
       <div class="field"><label>Current password</label><input id="cp_cur" type="password" autocomplete="current-password"></div>
@@ -63,9 +64,18 @@ function changePasswordModal() {
       <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="cp_new" type="password" autocomplete="new-password"></div>
       <div class="field"><label>Repeat new password</label><input id="cp_new2" type="password" autocomplete="new-password"></div>
     </div>
-    <div class="modal-actions">
-      <button class="btn" id="cp_cancel">Cancel</button>
+    <div class="modal-actions" style="margin-top:10px">
       <button class="btn primary" id="cp_save">Change password</button>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
+    <p class="hint" style="margin:0 0 6px"><b>Add dashboard user</b> — a new login for the front desk or another admin.</p>
+    <div class="two-col">
+      <div class="field"><label>New username</label><input id="nu_user" autocomplete="off" placeholder="e.g. frontdesk"></div>
+      <div class="field"><label>Password <small class="hint">(min 6 chars)</small></label><input id="nu_pass" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="modal-actions" style="margin-top:10px">
+      <button class="btn" id="cp_cancel">Close</button>
+      <button class="btn primary" id="nu_add">Add user</button>
     </div>`);
   $('#cp_cancel').addEventListener('click', closeModal);
   $('#cp_save').addEventListener('click', async () => {
@@ -75,6 +85,15 @@ function changePasswordModal() {
     if (next !== $('#cp_new2').value) { toast('New passwords do not match', 'err'); return; }
     const r = await api.post('/auth/change-password', { username: $('#cp_user').value.trim() || 'admin', current: cur, next });
     if (r.ok) { closeModal(); toast('Password changed', 'ok'); }
+    else if (!r.__auth) toast(r.error || 'Failed', 'err');
+  });
+  $('#nu_add').addEventListener('click', async () => {
+    const username = $('#nu_user').value.trim();
+    const password = $('#nu_pass').value;
+    if (!username) { toast('Username required', 'err'); return; }
+    if (password.length < 6) { toast('Password must be at least 6 characters', 'err'); return; }
+    const r = await api.post('/auth/users', { username, password });
+    if (r.ok) { closeModal(); toast(`User "${username}" can now sign in`, 'ok'); }
     else if (!r.__auth) toast(r.error || 'Failed', 'err');
   });
 }
