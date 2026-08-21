@@ -1,20 +1,23 @@
-// Dashboard authentication.
+// Dashboard authentication with roles.
 //
-// Stateless signed-cookie sessions so it works both on a long-running server
-// and on serverless (Vercel): the token is HMAC-signed with a secret stored in
-// WN_HIK_Settings, so every instance can verify it.
+// Accounts live in dbo.WN_HIK_DashboardUsers (WN_HIK_DashUser_* procs) with a
+// role of 'admin' or 'user':
+//   admin — full dashboard + manage login accounts
+//   user  — full dashboard, may only change their own password
 //
-// Credentials:
-//   - If ADMIN_USER / ADMIN_PASSWORD env vars are set, they win (lets you
-//     reset the password from Vercel project settings without a DB change).
-//   - Otherwise the username/password hash stored in WN_HIK_Settings is used,
-//     seeded on first use as admin / admin123 (change it after first login).
+// Sessions are stateless signed cookies (payload: username, role, expiry) so
+// they work on a long-running server and on serverless (Vercel) alike. The
+// HMAC secret is stored in WN_HIK_Settings.
+//
+// If ADMIN_USER / ADMIN_PASSWORD env vars are set they act as an emergency
+// admin override (e.g. reset access from Vercel settings).
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { sp } from './db.js';
 
 const COOKIE = 'wn_auth';
 const SESSION_DAYS = 7;
+const ROLES = ['admin', 'user'];
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const h = crypto.scryptSync(String(password), salt, 32).toString('hex');
@@ -24,7 +27,11 @@ function verifyPassword(password, stored) {
   const [salt, h] = String(stored).split(':');
   if (!salt || !h) return false;
   const candidate = crypto.scryptSync(String(password), salt, 32).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(candidate), Buffer.from(h));
+  try {
+    return crypto.timingSafeEqual(Buffer.from(candidate), Buffer.from(h));
+  } catch {
+    return false;
+  }
 }
 
 async function getSetting(key) {
@@ -47,12 +54,11 @@ async function authSecret() {
   return s;
 }
 
-// Login accounts live in dbo.WN_HIK_DashboardUsers (WN_HIK_DashUser_* procs).
-// If the table is empty, a default admin / admin123 account is seeded.
+// Seed a default admin account when the table is empty.
 async function ensureSeedCredentials() {
   const rows = await sp('WN_HIK_DashUser_Count');
   if (!Number(rows[0]?.n)) {
-    await sp('WN_HIK_DashUser_Upsert', { username: 'admin', password_hash: hashPassword('admin123') });
+    await sp('WN_HIK_DashUser_Upsert', { username: 'admin', password_hash: hashPassword('admin123'), role: 'admin' });
   }
 }
 
@@ -61,28 +67,43 @@ async function getDashUser(username) {
   return rows[0] || null;
 }
 
+// Returns { username, role } on success, null on bad credentials.
 async function checkCredentials(username, password) {
   if (process.env.ADMIN_USER && process.env.ADMIN_PASSWORD) {
-    return username === process.env.ADMIN_USER && String(password) === process.env.ADMIN_PASSWORD;
+    if (username === process.env.ADMIN_USER && String(password) === process.env.ADMIN_PASSWORD) {
+      return { username, role: 'admin' };
+    }
   }
   await ensureSeedCredentials();
   const user = await getDashUser(username);
-  return !!user && verifyPassword(password, user.password_hash);
+  if (user && verifyPassword(password, user.password_hash)) {
+    return { username: user.username, role: ROLES.includes(user.role) ? user.role : 'user' };
+  }
+  return null;
 }
 
-async function makeToken() {
-  const exp = Date.now() + SESSION_DAYS * 86400000;
-  const sig = crypto.createHmac('sha256', await authSecret()).update(String(exp)).digest('hex');
-  return `${exp}.${sig}`;
+const b64u = (s) => Buffer.from(s).toString('base64url');
+async function makeToken(user) {
+  const payload = b64u(JSON.stringify({ u: user.username, r: user.role, exp: Date.now() + SESSION_DAYS * 86400000 }));
+  const sig = crypto.createHmac('sha256', await authSecret()).update(payload).digest('hex');
+  return `${payload}.${sig}`;
 }
-async function tokenValid(token) {
-  const [exp, sig] = String(token || '').split('.');
-  if (!exp || !sig || Number(exp) < Date.now()) return false;
-  const expect = crypto.createHmac('sha256', await authSecret()).update(String(exp)).digest('hex');
+// Returns { username, role } for a valid unexpired token, else null.
+async function tokenInfo(token) {
+  const [payload, sig] = String(token || '').split('.');
+  if (!payload || !sig) return null;
+  const expect = crypto.createHmac('sha256', await authSecret()).update(payload).digest('hex');
   try {
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect));
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
   } catch {
-    return false;
+    return null;
+  }
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data.u || Number(data.exp) < Date.now()) return null;
+    return { username: String(data.u), role: ROLES.includes(data.r) ? data.r : 'user' };
+  } catch {
+    return null;
   }
 }
 
@@ -97,11 +118,18 @@ function setCookie(res, req, value, maxAgeSeconds) {
     `${COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? '; Secure' : ''}`);
 }
 
+async function sessionOf(req) {
+  try {
+    return await tokenInfo(readCookie(req));
+  } catch {
+    return null;
+  }
+}
+
 // Guard for the dashboard APIs (the external /api/ext API has its own key).
 export async function requireAuth(req, res, next) {
-  try {
-    if (await tokenValid(readCookie(req))) return next();
-  } catch { /* fall through */ }
+  const auth = await sessionOf(req);
+  if (auth) { req.auth = auth; return next(); }
   res.status(401).json({ error: 'authentication required' });
 }
 
@@ -110,11 +138,10 @@ export const authRouter = Router();
 authRouter.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
   try {
-    if (!(await checkCredentials(String(username || ''), String(password || '')))) {
-      return res.status(401).json({ ok: false, error: 'Wrong username or password' });
-    }
-    setCookie(res, req, await makeToken(), SESSION_DAYS * 86400);
-    res.json({ ok: true });
+    const user = await checkCredentials(String(username || ''), String(password || ''));
+    if (!user) return res.status(401).json({ ok: false, error: 'Wrong username or password' });
+    setCookie(res, req, await makeToken(user), SESSION_DAYS * 86400);
+    res.json({ ok: true, username: user.username, role: user.role });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -126,53 +153,86 @@ authRouter.post('/logout', (req, res) => {
 });
 
 authRouter.get('/me', async (req, res) => {
-  res.json({ ok: await tokenValid(readCookie(req)).catch(() => false) });
+  const auth = await sessionOf(req);
+  res.json(auth ? { ok: true, username: auth.username, role: auth.role } : { ok: false });
 });
 
-// Change a login account's password (requires being logged in + the current
-// password of that account). Optionally renames the account too.
-// Note: if ADMIN_USER/ADMIN_PASSWORD env vars are set, they override the
-// stored credentials — change those in the environment instead.
+// Change a password. Regular users may only change their OWN password (current
+// password required). Admins may also RESET any other account's password
+// without knowing its current one.
 authRouter.post('/change-password', async (req, res) => {
-  if (!(await tokenValid(readCookie(req)))) return res.status(401).json({ error: 'authentication required' });
+  const auth = await sessionOf(req);
+  if (!auth) return res.status(401).json({ error: 'authentication required' });
   const { current, next: nextPassword } = req.body || {};
-  const username = String(req.body?.username || 'admin').trim();
-  const newUsername = req.body?.newUsername ? String(req.body.newUsername).trim() : null;
+  const username = String(req.body?.username || auth.username).trim();
   if (!nextPassword || String(nextPassword).length < 6) {
     return res.status(400).json({ ok: false, error: 'New password must be at least 6 characters' });
   }
   try {
-    if (process.env.ADMIN_USER && process.env.ADMIN_PASSWORD) {
+    if (process.env.ADMIN_USER && process.env.ADMIN_PASSWORD && username === process.env.ADMIN_USER) {
       return res.status(400).json({ ok: false, error: 'Credentials are set via environment variables — change them there' });
     }
-    await ensureSeedCredentials();
+    if (auth.role !== 'admin' && username !== auth.username) {
+      return res.status(403).json({ ok: false, error: 'Only admins can change other accounts' });
+    }
     const user = await getDashUser(username);
-    if (!user || !verifyPassword(String(current || ''), user.password_hash)) {
-      return res.status(401).json({ ok: false, error: 'Current username/password is wrong' });
+    if (!user) return res.status(404).json({ ok: false, error: `No account "${username}"` });
+    const isSelf = username === auth.username;
+    if (isSelf && !verifyPassword(String(current || ''), user.password_hash)) {
+      return res.status(401).json({ ok: false, error: 'Current password is wrong' });
     }
-    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(String(nextPassword)) });
-    if (newUsername && newUsername !== username) {
-      await sp('WN_HIK_DashUser_Rename', { old_username: username, new_username: newUsername });
-    }
+    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(String(nextPassword)), role: null });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
-// Create an additional dashboard login account (requires a logged-in session).
+// ---- Account management (admin only) ----
+async function requireAdmin(req, res) {
+  const auth = await sessionOf(req);
+  if (!auth) { res.status(401).json({ error: 'authentication required' }); return null; }
+  if (auth.role !== 'admin') { res.status(403).json({ error: 'admin role required' }); return null; }
+  return auth;
+}
+
+authRouter.get('/users', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try {
+    res.json({ ok: true, users: await sp('WN_HIK_DashUser_List') });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 authRouter.post('/users', async (req, res) => {
-  if (!(await tokenValid(readCookie(req)))) return res.status(401).json({ error: 'authentication required' });
+  if (!(await requireAdmin(req, res))) return;
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
+  const role = ROLES.includes(req.body?.role) ? req.body.role : 'user';
   if (!username) return res.status(400).json({ ok: false, error: 'Username required' });
   if (password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters' });
   try {
     if (await getDashUser(username)) {
       return res.status(409).json({ ok: false, error: `User "${username}" already exists` });
     }
-    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password) });
-    res.json({ ok: true, username });
+    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password), role });
+    res.json({ ok: true, username, role });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+authRouter.delete('/users/:username', async (req, res) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  const username = String(req.params.username);
+  if (username === auth.username) {
+    return res.status(400).json({ ok: false, error: 'You cannot delete the account you are signed in with' });
+  }
+  try {
+    await sp('WN_HIK_DashUser_Delete', { username });
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }

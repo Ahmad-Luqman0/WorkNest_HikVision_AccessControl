@@ -417,3 +417,53 @@ BEGIN
    WHERE username = @old_username;
 END
 GO
+
+-- Roles for dashboard logins: 'admin' manages accounts, 'user' operates only.
+IF COL_LENGTH('dbo.WN_HIK_DashboardUsers','role') IS NULL
+ALTER TABLE dbo.WN_HIK_DashboardUsers ADD role NVARCHAR(16) NOT NULL CONSTRAINT DF_WN_HIK_DashboardUsers_role DEFAULT ('user');
+GO
+
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Get
+  @username NVARCHAR(64)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT id, username, password_hash, role FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username;
+END
+GO
+
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Upsert
+  @username NVARCHAR(64), @password_hash NVARCHAR(256), @role NVARCHAR(16) = NULL
+AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username)
+    UPDATE dbo.WN_HIK_DashboardUsers
+       SET password_hash = @password_hash,
+           role = COALESCE(@role, role),
+           updated_at = SYSDATETIME()
+     WHERE username = @username;
+  ELSE
+    INSERT INTO dbo.WN_HIK_DashboardUsers (username, password_hash, role)
+    VALUES (@username, @password_hash, COALESCE(@role, 'user'));
+END
+GO
+
+-- All accounts (admin management list).
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_List
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT id, username, role, created_at, updated_at FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) ORDER BY username;
+END
+GO
+
+-- Remove a login account.
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Delete
+  @username NVARCHAR(64)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  DELETE FROM dbo.WN_HIK_DashboardUsers WHERE username = @username;
+END
+GO
