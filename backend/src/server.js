@@ -8,6 +8,7 @@ import * as isapi from './isapi.js';
 import { devicesRouter } from './routes/devices.js';
 import { cardsRouter } from './routes/cards.js';
 import { extRouter, ensureApiKey } from './routes/ext.js';
+import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { startScheduler, runExpiryPass, runCredentialSync } from './scheduler.js';
 
@@ -28,9 +29,11 @@ app.use(async (req, res, next) => {
   }
 });
 
+app.use('/api/auth', authRouter);
+app.use('/api/ext', extRouter); // external booking-system API (X-API-Key)
+app.use('/api', requireAuth);   // everything else needs a logged-in session
 app.use('/api/devices', devicesRouter);
 app.use('/api/cards', cardsRouter);
-app.use('/api/ext', extRouter); // external booking-system API (X-API-Key)
 
 // Push everything pending across all employees/devices.
 app.post('/api/sync', async (req, res) => {

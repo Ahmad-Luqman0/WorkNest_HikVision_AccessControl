@@ -1,21 +1,83 @@
 // No-build SPA for the Hik co-working dashboard.
+// Every API response goes through handle(): a 401 anywhere pops the login
+// screen instead of failing silently.
+async function handle(res) {
+  if (res.status === 401) {
+    showLogin();
+    return { error: 'authentication required', __auth: true };
+  }
+  return res.json();
+}
 const api = {
-  async get(p) { return (await fetch('/api' + p)).json(); },
+  async get(p) { return handle(await fetch('/api' + p)); },
   async post(p, body) {
-    return (await fetch('/api' + p, {
+    return handle(await fetch('/api' + p, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
-    })).json();
+    }));
   },
   async put(p, body) {
-    return (await fetch('/api' + p, {
+    return handle(await fetch('/api' + p, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    })).json();
+    }));
   },
-  async del(p) { return (await fetch('/api' + p, { method: 'DELETE' })).json(); },
-  async upload(p, formData) { return (await fetch('/api' + p, { method: 'POST', body: formData })).json(); },
+  async del(p) { return handle(await fetch('/api' + p, { method: 'DELETE' })); },
+  async upload(p, formData) { return handle(await fetch('/api' + p, { method: 'POST', body: formData })); },
 };
+
+// ---- Login overlay ----
+function showLogin() {
+  if ($('#loginOverlay')) return;
+  const overlay = el(`<div id="loginOverlay" class="login-overlay">
+    <form class="login-card" id="loginForm">
+      <h2>WorkNest Access Control</h2>
+      <p class="hint">Sign in to manage machines and members.</p>
+      <div class="field"><label>Username</label><input id="lg_user" autocomplete="username" value="admin"></div>
+      <div class="field"><label>Password</label><input id="lg_pass" type="password" autocomplete="current-password"></div>
+      <div id="lg_err" class="hint" style="color:var(--red);min-height:18px"></div>
+      <button class="btn primary" type="submit" style="width:100%">Sign in</button>
+    </form>
+  </div>`);
+  document.body.appendChild(overlay);
+  $('#lg_pass').focus();
+  $('#loginForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const r = await (await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('#lg_user').value.trim(), password: $('#lg_pass').value }),
+    })).json();
+    if (r.ok) { location.reload(); }
+    else { $('#lg_err').textContent = r.error || 'Sign-in failed'; $('#lg_pass').value = ''; $('#lg_pass').focus(); }
+  });
+}
+
+function changePasswordModal() {
+  openModal(`
+    <h2>Change password</h2>
+    <div class="two-col">
+      <div class="field"><label>Username</label><input id="cp_user" value="admin" autocomplete="username"></div>
+      <div class="field"><label>Current password</label><input id="cp_cur" type="password" autocomplete="current-password"></div>
+    </div>
+    <div class="two-col">
+      <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="cp_new" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>Repeat new password</label><input id="cp_new2" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="cp_cancel">Cancel</button>
+      <button class="btn primary" id="cp_save">Change password</button>
+    </div>`);
+  $('#cp_cancel').addEventListener('click', closeModal);
+  $('#cp_save').addEventListener('click', async () => {
+    const cur = $('#cp_cur').value;
+    const next = $('#cp_new').value;
+    if (next.length < 6) { toast('New password must be at least 6 characters', 'err'); return; }
+    if (next !== $('#cp_new2').value) { toast('New passwords do not match', 'err'); return; }
+    const r = await api.post('/auth/change-password', { username: $('#cp_user').value.trim() || 'admin', current: cur, next });
+    if (r.ok) { closeModal(); toast('Password changed', 'ok'); }
+    else if (!r.__auth) toast(r.error || 'Failed', 'err');
+  });
+}
 
 const $ = (s) => document.querySelector(s);
 const content = $('#content');
@@ -141,6 +203,14 @@ if (searchInput) {
     });
   });
 }
+
+const _logoutBtn = $('#logout');
+if (_logoutBtn) _logoutBtn.addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.reload();
+});
+const _changePassBtn = $('#changePass');
+if (_changePassBtn) _changePassBtn.addEventListener('click', changePasswordModal);
 
 $('#syncAll').addEventListener('click', async () => {
   toast('Syncing all pending changes…');

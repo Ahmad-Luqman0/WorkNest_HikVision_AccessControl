@@ -356,3 +356,64 @@ BEGIN
     INSERT INTO dbo.WN_HIK_Settings ([key], value) VALUES (@key, @value);
 END
 GO
+
+/* ---------------------------------------------------------------------------
+   4) DASHBOARD LOGIN
+--------------------------------------------------------------------------- */
+
+-- Dashboard login accounts (scrypt password hashes, set by the app).
+IF OBJECT_ID('dbo.WN_HIK_DashboardUsers','U') IS NULL
+CREATE TABLE dbo.WN_HIK_DashboardUsers (
+  id            INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_DashboardUsers PRIMARY KEY,
+  username      NVARCHAR(64)  NOT NULL CONSTRAINT UQ_WN_HIK_DashboardUsers_username UNIQUE,
+  password_hash NVARCHAR(256) NOT NULL,
+  created_at    DATETIME2(0)  NOT NULL CONSTRAINT DF_WN_HIK_DashboardUsers_created DEFAULT (SYSDATETIME()),
+  updated_at    DATETIME2(0)  NULL
+);
+GO
+
+-- Fetch one login account (hash verified by the app).
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Get
+  @username NVARCHAR(64)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT id, username, password_hash FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username;
+END
+GO
+
+-- How many accounts exist (0 -> the app seeds the default admin).
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Count
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT COUNT(*) AS n FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK);
+END
+GO
+
+-- Create an account or replace its password hash.
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Upsert
+  @username NVARCHAR(64), @password_hash NVARCHAR(256)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username)
+    UPDATE dbo.WN_HIK_DashboardUsers
+       SET password_hash = @password_hash, updated_at = SYSDATETIME()
+     WHERE username = @username;
+  ELSE
+    INSERT INTO dbo.WN_HIK_DashboardUsers (username, password_hash) VALUES (@username, @password_hash);
+END
+GO
+
+-- Rename an account (used by change-password when a new username is given).
+CREATE OR ALTER PROCEDURE dbo.WN_HIK_DashUser_Rename
+  @old_username NVARCHAR(64), @new_username NVARCHAR(64)
+AS
+BEGIN
+  SET NOCOUNT ON;
+  UPDATE dbo.WN_HIK_DashboardUsers
+     SET username = @new_username, updated_at = SYSDATETIME()
+   WHERE username = @old_username;
+END
+GO

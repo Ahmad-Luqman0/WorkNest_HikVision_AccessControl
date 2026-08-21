@@ -1336,3 +1336,37 @@ select option {
 [data-theme="light"] .row-menu button:hover { background: #f1f5f9; }
 [data-theme="light"] .row-menu button.danger { color: #b91c1c; }
 [data-theme="light"] .row-menu button.danger:hover { background: #fee2e2; }
+
+/* ---- Login ---- */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-gradient, #0b0f17);
+}
+.login-card {
+  width: min(380px, 92vw);
+  padding: 28px;
+  border-radius: var(--radius-lg, 16px);
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+}
+.login-card h2 { margin: 0 0 6px; font-size: 20px; color: var(--text-main); }
+.login-card .field { margin-top: 14px; }
+.login-card .field input {
+  width: 100%; padding: 10px 12px; border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--border-strong); background: var(--surface-input);
+  color: var(--text-main); font-size: 14px; font-family: inherit;
+}
+.login-card .field input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.login-card button[type="submit"] { margin-top: 14px; padding: 11px; font-size: 14px; }
+[data-theme="light"] .login-card { background: #ffffff; }
+[data-theme="light"] .login-card .field input { background: #f8fafc; color: #0f172a; }
+
+/* Sidebar auth controls */
+.auth-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.auth-row .btn { flex: 1; }
