@@ -9,3 +9,6 @@ backend/data/*.db-shm
 backend/data/*.db-wal
 backend/data/faces/
 backend/data/machines.json
+
+# Local editor/agent tooling
+.claude/
