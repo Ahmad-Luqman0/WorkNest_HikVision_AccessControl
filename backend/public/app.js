@@ -1472,12 +1472,23 @@ const eventLabel = (e) => EVENT_LABELS[e.minor] || `Event ${e.minor}`;
 const EVENT_DENIED = new Set([23, 39, 76, 112]);
 
 let _logMode = 'entries';
+let _logEvents = null; // cached last /events response (survives refreshes)
+let _logBusy = false;
+
+// How did the person authenticate? Derived from the event's minor code + data.
+function entryMethod(e) {
+  if (e.minor === 38 || e.minor === 39) return 'fingerprint';
+  if (e.minor === 75 || e.minor === 76) return 'face';
+  if (e.cardNo) return 'card';
+  return 'other';
+}
+
 async function logs() {
-  // Live view: entries refresh every 12s so walk-ins appear as they badge.
+  // Live view: entries refresh silently so the table never blanks out.
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
-    if (current === 'logs' && $('#modalBackdrop').hidden) loadLogTable();
-  }, 12000);
+    if (current === 'logs' && $('#modalBackdrop').hidden) loadLogTable(true);
+  }, 15000);
   content.innerHTML = '';
   content.appendChild(el(`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
       <label class="hint">Show</label>
@@ -1485,58 +1496,126 @@ async function logs() {
         <option value="entries" ${_logMode === 'entries' ? 'selected' : ''}>Machine entries (who entered)</option>
         <option value="system" ${_logMode === 'system' ? 'selected' : ''}>Dashboard activity</option>
       </select>
+      <span id="log_filters" style="display:${_logMode === 'entries' ? 'contents' : 'none'}">
+        <label class="hint">Machine</label>
+        <select id="log_machine"><option value="">All machines</option></select>
+        <label class="hint">Method</label>
+        <select id="log_method">
+          <option value="">All methods</option>
+          <option value="fingerprint">Fingerprint</option>
+          <option value="card">Card</option>
+          <option value="face">Face</option>
+          <option value="other">Other</option>
+        </select>
+        <label class="hint">Result</label>
+        <select id="log_result">
+          <option value="">All results</option>
+          <option value="ok">Allowed</option>
+          <option value="denied">Denied</option>
+        </select>
+      </span>
       <button class="btn" id="log_refresh">Refresh</button>
     </div>`));
   content.appendChild(el('<div id="log_table"></div>'));
-  $('#log_mode').addEventListener('change', (e) => { _logMode = e.target.value; loadLogTable(); });
-  $('#log_refresh').addEventListener('click', loadLogTable);
+  $('#log_mode').addEventListener('change', (e) => {
+    _logMode = e.target.value;
+    $('#log_filters').style.display = _logMode === 'entries' ? 'contents' : 'none';
+    loadLogTable();
+  });
+  ['log_machine', 'log_method', 'log_result'].forEach((id) =>
+    $('#' + id).addEventListener('change', renderEntries));
+  $('#log_refresh').addEventListener('click', () => loadLogTable());
   loadLogTable();
 }
 
-async function loadLogTable() {
+// silent=true keeps the current table on screen until fresh data arrives.
+async function loadLogTable(silent = false) {
   const holder = $('#log_table');
-  if (!holder) return;
-  holder.innerHTML = '<div class="muted">Loading…</div>';
+  if (!holder || _logBusy) return;
+  _logBusy = true;
+  try {
+    if (_logMode === 'system') {
+      if (!silent) holder.innerHTML = '<div class="muted">Loading…</div>';
+      const list = await api.get('/logs');
+      if (!$('#log_table') || _logMode !== 'system' || current !== 'logs') return;
+      if (!Array.isArray(list)) return;
+      if (!list.length) { $('#log_table').innerHTML = '<div class="empty">No activity yet.</div>'; return; }
+      const rows = list.map((l) => `<tr>
+          <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
+          <td>${esc(l.employee_name || '—')}</td>
+          <td>${esc(l.device_name || '—')}</td>
+          <td>${esc(prettyAction(l.action))}</td>
+          <td><span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'ok' : 'fail'}</span></td>
+          <td><small class="hint">${esc((l.detail || '').slice(0, 80))}</small></td>
+        </tr>`).join('');
+      $('#log_table').innerHTML = `<div class="table-wrapper"><table><thead><tr>
+          <th>Time</th><th>Member</th><th>Machine</th><th>Action</th><th>Result</th><th>Detail</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`;
+      return;
+    }
 
-  if (_logMode === 'system') {
-    const list = await api.get('/logs');
-    if (!list.length) { holder.innerHTML = '<div class="empty">No activity yet.</div>'; return; }
-    const rows = list.map((l) => `<tr>
-        <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
-        <td>${esc(l.employee_name || '—')}</td>
-        <td>${esc(l.device_name || '—')}</td>
-        <td>${esc(prettyAction(l.action))}</td>
-        <td><span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'ok' : 'fail'}</span></td>
-        <td><small class="hint">${esc((l.detail || '').slice(0, 80))}</small></td>
-      </tr>`).join('');
-    holder.innerHTML = `<div class="table-wrapper"><table><thead><tr>
-        <th>Time</th><th>Member</th><th>Machine</th><th>Action</th><th>Result</th><th>Detail</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>`;
-    return;
+    // Machine entries — read live from each machine's own event memory.
+    if (!silent && !_logEvents) holder.innerHTML = '<div class="muted">Loading entries from machines…</div>';
+    const r = await api.get('/events?limit=80');
+    if (!$('#log_table') || _logMode !== 'entries' || current !== 'logs') return;
+    if (!r.ok) {
+      if (!_logEvents && !r.__auth) $('#log_table').innerHTML = `<div class="empty">Couldn't read events: ${esc(r.error || 'error')}</div>`;
+      return; // keep showing the last good table on refresh failures
+    }
+    _logEvents = r;
+    renderEntries();
+  } finally {
+    _logBusy = false;
+  }
+}
+
+function renderEntries() {
+  const holder = $('#log_table');
+  if (!holder || _logMode !== 'entries' || !_logEvents) return;
+  const r = _logEvents;
+  // Person events tell you WHO; denied events give context.
+  let events = (r.events || []).filter((e) => e.name || e.employeeNoString || e.cardNo || EVENT_DENIED.has(e.minor));
+
+  // Machine filter options (kept in sync with the data, selection preserved).
+  const machineSel = $('#log_machine');
+  if (machineSel) {
+    const names = [...new Set(events.map((e) => e.device))].sort();
+    const prev = machineSel.value;
+    machineSel.innerHTML = '<option value="">All machines</option>' +
+      names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    if (names.includes(prev)) machineSel.value = prev;
   }
 
-  // Machine entries — read live from each terminal's own event memory.
-  const r = await api.get('/events?limit=80');
-  if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't read events: ${esc(r.error || 'error')}</div>`; return; }
+  const fMachine = machineSel ? machineSel.value : '';
+  const fMethod = $('#log_method') ? $('#log_method').value : '';
+  const fResult = $('#log_result') ? $('#log_result').value : '';
+  if (fMachine) events = events.filter((e) => e.device === fMachine);
+  if (fMethod) events = events.filter((e) => entryMethod(e) === fMethod);
+  if (fResult === 'ok') events = events.filter((e) => !EVENT_DENIED.has(e.minor));
+  if (fResult === 'denied') events = events.filter((e) => EVENT_DENIED.has(e.minor));
+
   const note = (r.unreachable || []).length
     ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(r.unreachable.join(', '))} — their entries are not shown.</p>` : '';
-  // Person events tell you WHO; door open/close events give context.
-  const events = (r.events || []).filter((e) => e.name || e.employeeNoString || e.cardNo || EVENT_DENIED.has(e.minor));
-  if (!events.length) { holder.innerHTML = `${note}<div class="empty">No entries recorded yet. Events appear here after someone uses a card, fingerprint or face at a machine.</div>`; return; }
+  if (!events.length) {
+    holder.innerHTML = `${note}<div class="empty">${fMachine || fMethod || fResult ? 'No entries match the current filters.' : 'No entries recorded yet. Events appear here after someone uses a card, fingerprint or face at a machine.'}</div>`;
+    return;
+  }
+  const METHOD_LABEL = { fingerprint: 'Fingerprint', card: 'Card', face: 'Face', other: '—' };
   const rows = events.map((e) => {
     const who = e.name || (e.employeeNoString ? `User ${e.employeeNoString}` : '—');
+    const method = entryMethod(e);
     const cred = e.cardNo ? `card ${e.cardNo}` : (e.currentVerifyMode && e.currentVerifyMode !== 'invalid' ? e.currentVerifyMode : '');
     const denied = EVENT_DENIED.has(e.minor);
     return `<tr>
       <td class="nowrap"><small class="hint">${esc(String(e.time || '').slice(0, 19).replace('T', ' '))}</small></td>
       <td><b>${esc(who)}</b>${e.employeeNoString ? ` <small class="hint">#${esc(e.employeeNoString)}</small>` : ''}</td>
       <td>${esc(e.device)}</td>
-      <td><small class="hint">${esc(cred || '—')}</small></td>
+      <td>${esc(METHOD_LABEL[method])}${cred ? ` <small class="hint">${esc(cred)}</small>` : ''}</td>
       <td><span class="badge ${denied ? 'error' : 'synced'}">${esc(eventLabel(e))}</span></td>
     </tr>`;
   }).join('');
   holder.innerHTML = `${note}<div class="table-wrapper"><table><thead><tr>
-      <th>Time</th><th>Person</th><th>Machine</th><th>Credential</th><th>Event</th>
+      <th>Time</th><th>Person</th><th>Machine</th><th>Method</th><th>Event</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
