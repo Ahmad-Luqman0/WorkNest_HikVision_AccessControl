@@ -18,7 +18,7 @@ GO
 CREATE TABLE dbo.WN_HIK_Devices (
   id         INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_Devices PRIMARY KEY,
   name       NVARCHAR(100)  NOT NULL,
-  host       NVARCHAR(64)   NOT NULL CONSTRAINT UQ_WN_HIK_Devices_host UNIQUE,  -- LAN IP
+  host       NVARCHAR(64)   NOT NULL,  -- LAN IP or public IP (port-forwarded)
   port       INT            NOT NULL CONSTRAINT DF_WN_HIK_Devices_port DEFAULT (80),
   use_https  BIT            NOT NULL CONSTRAINT DF_WN_HIK_Devices_https DEFAULT (0),
   username   NVARCHAR(64)   NOT NULL,                 -- device admin account
@@ -29,7 +29,9 @@ CREATE TABLE dbo.WN_HIK_Devices (
   serial     NVARCHAR(64)   NULL,
   last_seen  DATETIME2(0)   NULL,
   online     BIT            NOT NULL CONSTRAINT DF_WN_HIK_Devices_online DEFAULT (0),
-  created_at DATETIME2(0)   NOT NULL CONSTRAINT DF_WN_HIK_Devices_created DEFAULT (SYSDATETIME())
+  created_at DATETIME2(0)   NOT NULL CONSTRAINT DF_WN_HIK_Devices_created DEFAULT (SYSDATETIME()),
+  -- several machines may share one public IP on different forwarded ports
+  CONSTRAINT UQ_WN_HIK_Devices_host_port UNIQUE (host, port)
 );
 GO
 
@@ -122,16 +124,17 @@ CREATE OR ALTER PROCEDURE dbo.WN_HIK_Device_UpsertByHost
 AS
 BEGIN
   SET NOCOUNT ON;
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host)
+  -- keyed by host + port: several machines can share one public IP
+  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host AND port = @port)
     UPDATE dbo.WN_HIK_Devices
-       SET name = @name, port = @port, use_https = @use_https,
+       SET name = @name, use_https = @use_https,
            username = @username, password = @password,
            location = @location, grp = @grp
-     WHERE host = @host;
+     WHERE host = @host AND port = @port;
   ELSE
     INSERT INTO dbo.WN_HIK_Devices (name, host, port, use_https, username, password, location, grp)
     VALUES (@name, @host, @port, @use_https, @username, @password, @location, @grp);
-  SELECT id FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host;
+  SELECT id FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host AND port = @port;
 END
 GO
 
@@ -466,4 +469,13 @@ BEGIN
   SET NOCOUNT ON;
   DELETE FROM dbo.WN_HIK_DashboardUsers WHERE username = @username;
 END
+GO
+
+
+-- Migration for existing databases: host uniqueness becomes (host, port).
+IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE name='UQ_WN_HIK_Devices_host')
+  ALTER TABLE dbo.WN_HIK_Devices DROP CONSTRAINT UQ_WN_HIK_Devices_host;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name='UQ_WN_HIK_Devices_host_port')
+  ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT UQ_WN_HIK_Devices_host_port UNIQUE (host, port);
 GO
