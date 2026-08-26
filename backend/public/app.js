@@ -146,20 +146,42 @@ content.addEventListener('scroll', closeRowMenu);
 // ---- Machine groups: one-click select of a whole group (e.g. "Entrances")
 // in any machine checklist. items = [{id, grp}], checkboxClass = checklist class.
 function groupSelectHtml(items) {
-  const groups = [...new Set(items.map((x) => String(x.grp || '').trim()).filter(Boolean))];
-  if (!groups.length) return '';
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
-    <small class="hint">Groups:</small>
-    ${groups.map((g) => `<button type="button" class="btn sm" data-grpsel="${esc(g)}">${esc(g)}</button>`).join('')}
+  const groups = new Map(); // name -> machine count
+  for (const x of items) {
+    const g = String(x.grp || '').trim();
+    if (g) groups.set(g, (groups.get(g) || 0) + 1);
+  }
+  if (!groups.size) return '';
+  const chip = (g, n) => `
+    <button type="button" class="grp-chip" data-grpsel="${esc(g)}" title="Select / deselect all ${esc(g)} machines">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      ${esc(g)}<span class="grp-count">${n}</span>
+    </button>`;
+  return `<div class="grp-row">
+    <small class="hint">Groups</small>
+    ${[...groups.entries()].map(([g, n]) => chip(g, n)).join('')}
   </div>`;
 }
 function wireGroupSelect(items, checkboxClass) {
+  const boxesOf = (grp) => {
+    const ids = new Set(items.filter((x) => String(x.grp || '').trim() === grp).map((x) => String(x.id)));
+    return [...document.querySelectorAll(`.${checkboxClass}`)].filter((c) => ids.has(String(c.value)) && !c.disabled);
+  };
+  // A chip lights up while every machine of its group is selected.
+  const refresh = () => {
+    document.querySelectorAll('[data-grpsel]').forEach((b) => {
+      const boxes = boxesOf(b.dataset.grpsel);
+      b.classList.toggle('active', boxes.length > 0 && boxes.every((c) => c.checked));
+    });
+  };
   document.querySelectorAll('[data-grpsel]').forEach((b) => b.addEventListener('click', () => {
-    const ids = new Set(items.filter((x) => String(x.grp || '').trim() === b.dataset.grpsel).map((x) => String(x.id)));
-    const boxes = [...document.querySelectorAll(`.${checkboxClass}`)].filter((c) => ids.has(String(c.value)) && !c.disabled);
+    const boxes = boxesOf(b.dataset.grpsel);
     const all = boxes.length && boxes.every((c) => c.checked);
     boxes.forEach((c) => { c.checked = !all; c.dispatchEvent(new Event('change')); });
+    refresh();
   }));
+  document.querySelectorAll(`.${checkboxClass}`).forEach((c) => c.addEventListener('change', refresh));
+  refresh();
 }
 
 // ---- Router ----

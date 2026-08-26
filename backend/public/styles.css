@@ -1370,3 +1370,58 @@ select option {
 /* Sidebar auth controls */
 .auth-row { display: flex; gap: 6px; margin-bottom: 8px; }
 .auth-row .btn { flex: 1; }
+
+/* ---- Machine-group chips (select a whole group with one click) ---- */
+.grp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+.grp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-main);
+  background: rgba(99, 102, 241, 0.10);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.grp-chip svg { width: 14px; height: 14px; opacity: 0.85; flex: none; }
+.grp-chip:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: var(--accent);
+}
+.grp-chip .grp-count {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.25);
+}
+.grp-chip.active {
+  background: var(--accent-gradient, var(--accent));
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+.grp-chip.active svg { opacity: 1; }
+.grp-chip.active .grp-count { background: rgba(255, 255, 255, 0.22); }
+
+[data-theme="light"] .grp-chip {
+  color: #3730a3;
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+[data-theme="light"] .grp-chip:hover { background: rgba(99, 102, 241, 0.16); }
+[data-theme="light"] .grp-chip .grp-count { background: rgba(99, 102, 241, 0.18); }
+[data-theme="light"] .grp-chip.active { color: #ffffff; }
