@@ -185,7 +185,7 @@ function wireGroupSelect(items, checkboxClass) {
 }
 
 // ---- Router ----
-const views = { dashboard, devices, users, cards, logs, dashusers };
+const views = { dashboard, devices, users, cards, logs, dashusers, bookings: bookingsView };
 let current = 'dashboard';
 let _autoTimer = null; // live-refresh timer for dashboard / activity views
 document.querySelectorAll('nav a').forEach((a) =>
@@ -195,7 +195,7 @@ document.querySelectorAll('nav a').forEach((a) =>
 function go(view) {
   current = view;
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
-  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', dashusers: 'Dashboard Users' };
+  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', dashusers: 'Dashboard Users', bookings: 'Bookings' };
   const title = names[view] || 'Dashboard';
   $('#viewTitle').textContent = title;
   const breadcrumb = $('#viewBreadcrumb');
@@ -277,8 +277,9 @@ async function dashboard() {
   _autoTimer = setInterval(() => {
     if (current === 'dashboard' && $('#modalBackdrop').hidden) dashboard();
   }, 30000);
-  const [s, devs, logsList, expiring] = await Promise.all([
+  const [s, devs, logsList, expiring, bookingsSummary] = await Promise.all([
     api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
+    api.get('/bookings-feed?summary=1'),
   ]);
   if (current !== 'dashboard') return; // view changed while loading
   content.innerHTML = '';
@@ -332,8 +333,13 @@ async function dashboard() {
     ? `<div class="offline-banner">Machine${offline.length === 1 ? '' : 's'} offline: <b>${esc(offline.map((d) => d.name).join(', '))}</b> — check power and network. Entries and changes for ${offline.length === 1 ? 'it' : 'them'} won't apply until ${offline.length === 1 ? 'it is' : 'they are'} back.</div>`
     : '';
 
+  const bookingsBanner = bookingsSummary.ok && bookingsSummary.needingEnrollment > 0
+    ? `<div class="notice-banner" id="dashBookingsBanner">${bookingsSummary.needingEnrollment} booking${bookingsSummary.needingEnrollment === 1 ? '' : 's'} need${bookingsSummary.needingEnrollment === 1 ? 's' : ''} people enrolled (fingerprints/cards) — open <b>Bookings</b> to add them.</div>`
+    : '';
+
   content.appendChild(el(`<div>
     ${offlineBanner}
+    ${bookingsBanner}
     <div class="stat-grid">
       ${kpi('machine', 'Machines', s.devices)}
       ${kpi('online', 'Online', s.devicesOnline, s.devicesOnline === s.devices && s.devices ? 'good' : s.devices ? 'warn' : '')}
@@ -380,6 +386,8 @@ async function dashboard() {
   $('#dashGoMachines').addEventListener('click', () => go('devices'));
   $('#dashGoLogs').addEventListener('click', () => go('logs'));
   $('#dashGoUsers').addEventListener('click', () => go('users'));
+  const bb = $('#dashBookingsBanner');
+  if (bb) bb.addEventListener('click', () => go('bookings'));
   content.querySelectorAll('[data-extend]').forEach((b) => b.addEventListener('click', async () => {
     const who = b.dataset.ename || 'user ' + b.dataset.extend;
     if (!confirm(`Extend “${who}” (#${b.dataset.extend}) by 30 days on all their machines?`)) return;
@@ -432,7 +440,7 @@ async function devices() {
   if (!list.length) { content.appendChild(el('<div class="empty">No machines. Machines are provisioned in the database — add them via <code>data/machines.json</code> or a direct INSERT into <code>devices</code>, then restart.</div>')); return; }
   const rows = list.map((d) => `
     <tr>
-      <td><b>${esc(d.name)}</b> ${d.grp ? `<span class="badge">${esc(d.grp)}</span>` : ''}<br><small class="hint">${esc(d.location || '')}</small></td>
+      <td><b>${esc(d.name)}</b> ${d.grp ? `<span class="badge">${esc(d.grp)}</span>` : ''} ${d.code ? `<span class="badge admin">room ${esc(d.code)}</span>` : ''}<br><small class="hint">${esc(d.location || '')}</small></td>
       <td>${esc(d.host)}:${d.port}${d.use_https ? ' <small class="hint">https</small>' : ''}</td>
       <td>${esc(d.model || '—')}<br><small class="hint">${esc(d.serial || '')}</small></td>
       <td><span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span></td>
@@ -574,6 +582,7 @@ function deviceModal(d = null, all = []) {
     </div>
     <div class="two-col">
       <div class="field"><label>Location</label><input id="d_loc" value="${esc(d?.location || '')}" placeholder="Reception"></div>
+      <div class="field"><label>Room code <small class="hint">(matches a space's code)</small></label><input id="d_code" value="${esc(d?.code || '')}" placeholder="e.g. 355"></div>
       <div class="field"><label>Group</label>
         <select id="d_grp_sel">
           <option value="">No group</option>
@@ -601,6 +610,7 @@ function deviceModal(d = null, all = []) {
       port: Number($('#d_port').value), username: $('#d_user').value.trim(),
       location: $('#d_loc').value.trim(), use_https: $('#d_https').checked,
       grp: grpSel === '__new' ? ($('#d_grp_new').value.trim() || null) : (grpSel || null),
+      code: $('#d_code').value.trim() || null,
     };
     const pass = $('#d_pass').value;
     if (pass) body.password = pass;
@@ -1639,6 +1649,105 @@ function renderEntries() {
   holder.innerHTML = `${note}<div class="table-wrapper"><table><thead><tr>
       <th>Time</th><th>Person</th><th>Machine</th><th>Method</th><th>Event</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ---- Bookings (from the booking system's WN_Bookings / WN_Spaces tables) ----
+const fmtDT = (v) => String(v || '—').replace('T', ' ').slice(0, 16);
+
+async function bookingsView() {
+  $('#viewActions').innerHTML = '';
+  content.innerHTML = '<div class="muted">Loading bookings…</div>';
+  const r = await api.get('/bookings-feed');
+  if (current !== 'bookings') return; // view changed while loading
+  if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">Couldn't load bookings: ${esc(r.error || 'error')}</div>`; return; }
+  const items = r.items || [];
+  if (!items.length) { content.innerHTML = '<div class="empty">No current or upcoming bookings in the booking system.</div>'; return; }
+  const rows = items.map((b) => {
+    const full = b.capacity > 0 && b.enrolled >= b.capacity;
+    const none = b.enrolled === 0;
+    const badge = full ? 'synced' : none ? 'error' : 'pending';
+    return `<tr>
+      <td><b>${esc(b.challan || b.ref)}</b><br><small class="hint">${esc(b.customer || '')}</small></td>
+      <td><b>${esc(b.spaceName || '—')}</b> <span class="badge admin">room ${esc(b.spaceCode)}</span>
+        ${b.roomMachine ? '' : '<br><small class="hint" style="color:var(--amber)">no machine has this room code</small>'}
+        ${b.spaceType ? `<br><small class="hint">${esc(b.spaceType)}</small>` : ''}</td>
+      <td class="nowrap"><small class="hint">${esc(fmtDT(b.start))} →<br>${esc(fmtDT(b.end))}</small></td>
+      <td><span class="badge ${badge}">${b.enrolled} / ${b.capacity || '∞'} enrolled</span></td>
+      <td class="row-actions"><button class="btn sm ${full ? '' : 'primary'}" data-enroll="${b.id}">${full ? 'View people' : 'Enroll people'}</button></td>
+    </tr>`;
+  }).join('');
+  content.innerHTML = `<div class="table-wrapper"><table><thead><tr>
+      <th>Booking</th><th>Space</th><th>Period</th><th>People</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="hint" style="margin-top:14px">Each booking allows up to the space's capacity. Enrolled people get access to the Entrance machines and the machine whose room code matches the space, for the booking period only — and are removed automatically when it ends.</p>`;
+  content.querySelectorAll('[data-enroll]').forEach((b) => b.addEventListener('click', () => bookingEnrollModal(Number(b.dataset.enroll))));
+}
+
+async function bookingEnrollModal(bookingId) {
+  openModal('<h2>Booking</h2><div class="field"><span class="muted">Loading…</span></div>');
+  const r = await api.get(`/bookings-feed/${bookingId}`);
+  if (!r.ok) { if (!r.__auth) { closeModal(); toast(r.error || 'Failed to load booking', 'err'); } return; }
+  const b = r.booking;
+  const machines = r.machines || [];
+  const render = () => {
+    const left = Math.max(0, (b.capacity || 0) - r.attendees.length);
+    const attRows = r.attendees.length ? r.attendees.map((a) => `
+      <div class="list-row slim">
+        <div class="list-main"><b>${esc(a.name)}</b>
+          <small class="hint">#${esc(a.employeeNo)}${a.card_no ? ' · card ' + esc(a.card_no) : ''} · ${a.fingerprints === null ? 'fp: ?' : a.fingerprints + ' fp'}</small>
+        </div>
+        <button class="btn sm" data-bfp="${esc(a.employeeNo)}" data-bname="${esc(a.name)}" data-bfpn="${a.fingerprints || 0}">Capture FP</button>
+        <button class="btn sm danger" data-brm="${esc(a.employeeNo)}" data-bname="${esc(a.name)}">Remove</button>
+      </div>`).join('') : '<div class="list-empty">Nobody enrolled yet.</div>';
+    $('#modal').innerHTML = `
+      <h2>${esc(b.spaceName)} <span class="badge admin">room ${esc(b.spaceCode)}</span></h2>
+      <p class="hint" style="margin:0 0 4px">${esc(b.challan || b.ref)} · ${esc(b.customer || '')} · ${esc(fmtDT(b.start))} → ${esc(fmtDT(b.end))}</p>
+      <p class="hint" style="margin:0 0 10px">Access on: <b>${esc(machines.map((m) => m.name).join(', ') || '—')}</b>${r.roomMachine ? '' : ' <span style="color:var(--amber)">— no machine carries this room code yet (set it in Machines → Edit)</span>'}</p>
+      <div class="field">
+        <label>People <span class="badge ${left === 0 && b.capacity ? 'synced' : 'pending'}">${r.attendees.length} / ${b.capacity || '∞'}</span>
+          ${left > 0 ? `<small class="hint">${left} more can be enrolled</small>` : ''}</label>
+        <div class="device-checklist" style="max-height:260px">${attRows}</div>
+      </div>
+      ${(!b.capacity || r.attendees.length < b.capacity) ? `
+      <div class="two-col">
+        <div class="field"><label>Name</label><input id="ba_name" placeholder="Person's name"></div>
+        <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="ba_card" placeholder="or capture fingerprint after"></div>
+      </div>
+      <div class="modal-actions" style="margin-top:4px">
+        <button class="btn" id="ba_close">Close</button>
+        <button class="btn primary" id="ba_add">Add person</button>
+      </div>` : `
+      <div class="modal-actions"><button class="btn" id="ba_close">Close</button></div>`}`;
+    $('#ba_close').addEventListener('click', () => { closeModal(); if (current === 'bookings') bookingsView(); });
+    const addBtn = $('#ba_add');
+    if (addBtn) addBtn.addEventListener('click', async () => {
+      const name = $('#ba_name').value.trim();
+      if (!name) { toast('Name required', 'err'); return; }
+      toast('Enrolling on machines…');
+      const rr = await api.post(`/bookings-feed/${bookingId}/attendees`, {
+        name,
+        card_no: $('#ba_card').value.trim() || undefined,
+      });
+      if (!rr.ok) { if (!rr.__auth) toast(rr.error || 'Failed', 'err'); return; }
+      toast(`${name} enrolled (#${rr.employeeNo}) — now capture their fingerprint`, 'ok');
+      bookingEnrollModal(bookingId);
+    });
+    $('#modal').querySelectorAll('[data-bfp]').forEach((btn) => btn.addEventListener('click', () => {
+      closeModal();
+      captureFpModal({
+        u: { employeeNo: btn.dataset.bfp, name: btn.dataset.bname, numOfFP: Number(btn.dataset.bfpn) || 0 },
+        on: machines.map((m) => ({ id: m.id, name: m.name })),
+      }, []);
+    }));
+    $('#modal').querySelectorAll('[data-brm]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm(`Remove "${btn.dataset.bname}" from this booking? They are deleted from the machines immediately.`)) return;
+      toast('Removing from machines…');
+      const rr = await api.del(`/bookings-feed/${bookingId}/attendees/${encodeURIComponent(btn.dataset.brm)}`);
+      if (rr.ok) { toast('Removed', 'ok'); bookingEnrollModal(bookingId); }
+      else if (!rr.__auth) toast(rr.error || 'Failed', 'err');
+    }));
+  };
+  render();
 }
 
 // datetime helpers: DB stores "YYYY-MM-DDTHH:mm:ss", input needs "YYYY-MM-DDTHH:mm"

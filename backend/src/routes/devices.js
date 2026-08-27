@@ -19,7 +19,7 @@ devicesRouter.post('/', (req, res) => {
 devicesRouter.put('/:id', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
-  const fields = ['name', 'host', 'port', 'use_https', 'username', 'password', 'location', 'grp'];
+  const fields = ['name', 'host', 'port', 'use_https', 'username', 'password', 'location', 'grp', 'code'];
   const updates = [];
   const vals = [];
   for (const f of fields) {

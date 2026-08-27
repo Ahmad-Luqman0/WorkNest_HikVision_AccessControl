@@ -1425,3 +1425,19 @@ select option {
 [data-theme="light"] .grp-chip:hover { background: rgba(99, 102, 241, 0.16); }
 [data-theme="light"] .grp-chip .grp-count { background: rgba(99, 102, 241, 0.18); }
 [data-theme="light"] .grp-chip.active { color: #ffffff; }
+
+/* ---- Booking enrollment prompt banner (dashboard) ---- */
+.notice-banner {
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  border-radius: var(--radius-md, 12px);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.notice-banner:hover { filter: brightness(1.15); }
+.notice-banner b { font-weight: 700; }

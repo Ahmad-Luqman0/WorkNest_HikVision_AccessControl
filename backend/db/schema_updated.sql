@@ -479,3 +479,9 @@ GO
 IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name='UQ_WN_HIK_Devices_host_port')
   ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT UQ_WN_HIK_Devices_host_port UNIQUE (host, port);
 GO
+
+-- Room code on machines: matches WN_Spaces.Code so booking attendees are
+-- enrolled on the room's own door machine in addition to the Entrance group.
+IF COL_LENGTH('dbo.WN_HIK_Devices','code') IS NULL
+ALTER TABLE dbo.WN_HIK_Devices ADD code NVARCHAR(32) NULL;
+GO
