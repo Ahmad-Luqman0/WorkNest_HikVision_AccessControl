@@ -19,6 +19,26 @@ export const bookingsRouter = Router();
 
 const REF = (id) => `WNB-${id}`;
 
+function fmtLocal(d) {
+  if (!d) return null;
+  if (typeof d === 'string') return d.slice(0, 19);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Access ends when the PAID period ends: long bookings bill in installments,
+// so BillingPeriodEnd (when set) wins over the contract's EndOn. A midnight
+// value means "through that day".
+function accessEndOf(b) {
+  let s = fmtLocal(b.billEnd || b.EndOn);
+  if (s && s.endsWith('T00:00:00')) s = s.slice(0, 10) + 'T23:59:59';
+  return s;
+}
+
+// Access control covers private offices and meeting rooms only. Spaces 1-70
+// are shared/co-working spaces — no door of their own, so no enrollment.
+const SPACE_FILTER = `AND s.SpaceTypeId <> 2 AND s.Id NOT BETWEEN 1 AND 70`;
+
 // WN_SpaceTypes may or may not exist — probe once, then cache.
 let _hasSpaceTypes = null;
 async function bookingsQuery(whereExtra = '', params = []) {
@@ -35,11 +55,12 @@ async function bookingsQuery(whereExtra = '', params = []) {
         b.Id, b.ChallanNumber, b.CustomerCode, b.StartOn, b.EndOn,
         b.BookingStatusId, b.BookingDate,
         s.Id AS spaceId, s.Code AS spaceCode, s.Name AS spaceName,
-        s.Capacity AS capacity, ${typeCol} s.SpaceTypeId
+        s.Capacity AS capacity, ${typeCol} s.SpaceTypeId,
+        b.BillingPeriodStart AS billStart, b.BillingPeriodEnd AS billEnd
      FROM dbo.WN_Bookings b WITH (NOLOCK)
      JOIN dbo.WN_Spaces s WITH (NOLOCK) ON s.Id = b.SpaceId
      ${typeJoin}
-     WHERE b.IsDeleted = 0 ${whereExtra}
+     WHERE b.IsDeleted = 0 ${SPACE_FILTER} ${whereExtra}
      ORDER BY b.StartOn DESC`,
     params
   );
@@ -66,40 +87,12 @@ export async function migrateRenewedBookings() {
     `SELECT DISTINCT booking_ref FROM dbo.WN_HIK_Employees WHERE booking_ref LIKE 'WNB-%'`
   );
   let migrated = 0;
-  for (const { booking_ref } of refs) {
-    const oldId = Number(String(booking_ref).slice(4));
-    if (!oldId) continue;
-    const oldB = await getRow(
-      `SELECT b.Id, b.CustomerCode, b.SpaceId, b.EndOn
-       FROM dbo.WN_Bookings b WITH (NOLOCK) WHERE b.Id = ?`,
-      [oldId]
-    );
-    if (!oldB) continue;
-    // Successor = the earliest newer booking for the same customer + space
-    // that ends after this one (and hasn't ended already).
-    const next = await getRow(
-      `SELECT TOP 1 b.Id, b.StartOn, b.EndOn
-       FROM dbo.WN_Bookings b WITH (NOLOCK)
-       WHERE b.IsDeleted = 0 AND b.Id <> ? AND b.CustomerCode = ? AND b.SpaceId = ?
-         AND b.EndOn > ? AND b.EndOn > SYSDATETIME()
-       ORDER BY b.StartOn ASC`,
-      [oldB.Id, oldB.CustomerCode, oldB.SpaceId, oldB.EndOn]
-    );
-    if (!next) continue;
-    const clash = await getRow(
-      `SELECT 1 AS x FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
-      [REF(next.Id)]
-    );
-    if (clash) continue; // the new booking already has its own attendees
-    const attendees = await getRows(
-      `SELECT id FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
-      [booking_ref]
-    );
-    if (!attendees.length) continue;
-    // valid_begin stays as-is so access is continuous through the changeover.
+  let extended = 0;
+
+  async function retarget(fromRef, toRef, newEnd, attendees, action) {
     await run(
       `UPDATE dbo.WN_HIK_Employees SET booking_ref = ?, valid_end = ?, status = 'active' WHERE booking_ref = ?`,
-      [REF(next.Id), next.EndOn, booking_ref]
+      [toRef, newEnd, fromRef]
     );
     for (const a of attendees) {
       await run(
@@ -108,12 +101,60 @@ export async function migrateRenewedBookings() {
       );
       try { await syncEmployee(a.id); } catch { /* machine unreachable — the watcher retries */ }
     }
-    migrated += attendees.length;
-    logSync(null, null, 'booking-renew', true, {
-      from: booking_ref, to: REF(next.Id), attendees: attendees.length, newEnd: next.EndOn,
-    });
+    logSync(null, null, action, true, { from: fromRef, to: toRef, attendees: attendees.length, newEnd });
   }
-  return { migrated };
+
+  for (const { booking_ref } of refs) {
+    const oldId = Number(String(booking_ref).slice(4));
+    if (!oldId) continue;
+    const oldB = await getRow(
+      `SELECT b.Id, b.CustomerCode, b.SpaceId, b.EndOn, b.BillingPeriodEnd AS billEnd
+       FROM dbo.WN_Bookings b WITH (NOLOCK) WHERE b.Id = ?`,
+      [oldId]
+    );
+    if (!oldB) continue;
+    const attendees = await getRows(
+      `SELECT id, CONVERT(varchar(19), valid_end, 126) AS ve FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
+      [booking_ref]
+    );
+    if (!attendees.length) continue;
+
+    const nowIso = fmtLocal(new Date());
+    const curEnd = accessEndOf(oldB); // paid-through date, else contract end
+
+    // 1) Same-row extension: a new installment payment advances
+    //    BillingPeriodEnd (or the row's EndOn was edited) — follow it.
+    if (curEnd > nowIso) {
+      if (attendees.some((a) => (a.ve || '') !== curEnd)) {
+        await retarget(booking_ref, booking_ref, curEnd, attendees, 'booking-extend');
+        extended += attendees.length;
+      }
+      continue; // paid & current — no successor needed
+    }
+
+    // 2) New-row renewal: the earliest newer booking for the same
+    //    customer + space that is still running and already paid.
+    const next = await getRow(
+      `SELECT TOP 1 b.Id, b.StartOn, b.EndOn, b.BillingPeriodEnd AS billEnd
+       FROM dbo.WN_Bookings b WITH (NOLOCK)
+       WHERE b.IsDeleted = 0 AND b.Id <> ? AND b.CustomerCode = ? AND b.SpaceId = ?
+         AND b.EndOn > ? AND b.EndOn > SYSDATETIME()
+       ORDER BY b.StartOn ASC`,
+      [oldB.Id, oldB.CustomerCode, oldB.SpaceId, oldB.EndOn]
+    );
+    if (!next) continue;
+    const nextEnd = accessEndOf(next);
+    if (!(nextEnd > nowIso)) continue; // successor exists but isn't paid yet — wait
+    const clash = await getRow(
+      `SELECT 1 AS x FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
+      [REF(next.Id)]
+    );
+    if (clash) continue; // the new booking already has its own attendees
+    // valid_begin stays as-is so access is continuous through the changeover.
+    await retarget(booking_ref, REF(next.Id), nextEnd, attendees, 'booking-renew');
+    migrated += attendees.length;
+  }
+  return { migrated, extended };
 }
 
 async function attendeesOf(bookingId) {
@@ -153,6 +194,7 @@ bookingsRouter.get('/', async (req, res) => {
       capacity: Number(b.capacity) || 0,
       enrolled: counts.get(REF(b.Id)) || 0,
       roomMachine: codes.has(String(b.spaceCode).trim()),
+      accessEnd: accessEndOf(b),
     }));
     if (req.query.summary) {
       const needing = items.filter((x) => x.enrolled < x.capacity);
@@ -204,6 +246,7 @@ bookingsRouter.get('/:id', async (req, res) => {
         start: b.StartOn, end: b.EndOn,
         spaceCode: b.spaceCode, spaceName: b.spaceName, spaceType: b.spaceType,
         capacity: Number(b.capacity) || 0,
+        accessEnd: accessEndOf(b),
       },
       machines: targets.map((d) => ({ id: d.id, name: d.name })),
       roomMachine: room ? { id: room.id, name: room.name } : null,
@@ -225,8 +268,9 @@ bookingsRouter.post('/:id/attendees', async (req, res) => {
     const rows = await bookingsQuery('AND b.Id = ?', [Number(req.params.id)]);
     const b = rows[0];
     if (!b) return res.status(404).json({ ok: false, error: 'booking not found' });
-    if (String(b.EndOn) < new Date().toISOString().slice(0, 19)) {
-      return res.status(400).json({ ok: false, error: 'booking has already ended' });
+    const payEnd = accessEndOf(b);
+    if (payEnd < fmtLocal(new Date())) {
+      return res.status(400).json({ ok: false, error: 'booking (or its paid billing period) has already ended' });
     }
     const existing = await attendeesOf(b.Id);
     const capacity = Number(b.capacity) || 0;
@@ -250,7 +294,7 @@ bookingsRouter.post('/:id/attendees', async (req, res) => {
       name,
       card_no: req.body?.card_no ? String(req.body.card_no).trim() : null,
       valid_begin: b.StartOn,
-      valid_end: b.EndOn,
+      valid_end: payEnd,
       booking_ref: REF(b.Id),
     });
     const empId = Number(created[0]?.id);

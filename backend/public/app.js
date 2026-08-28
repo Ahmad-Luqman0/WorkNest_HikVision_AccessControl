@@ -1671,7 +1671,7 @@ async function bookingsView() {
       <td><b>${esc(b.spaceName || '—')}</b> <span class="badge admin">room ${esc(b.spaceCode)}</span>
         ${b.roomMachine ? '' : '<br><small class="hint" style="color:var(--amber)">no machine has this room code</small>'}
         ${b.spaceType ? `<br><small class="hint">${esc(b.spaceType)}</small>` : ''}</td>
-      <td class="nowrap"><small class="hint">${esc(fmtDT(b.start))} →<br>${esc(fmtDT(b.end))}</small></td>
+      <td class="nowrap"><small class="hint">${esc(fmtDT(b.start))} →<br>${esc(fmtDT(b.end))}</small>${b.accessEnd && b.accessEnd.slice(0, 10) !== String(b.end).slice(0, 10) ? `<br><small class="hint" style="color:var(--amber)">paid till ${esc(fmtDT(b.accessEnd))}</small>` : ''}</td>
       <td><span class="badge ${badge}">${b.enrolled} / ${b.capacity || '∞'} enrolled</span></td>
       <td class="row-actions"><button class="btn sm ${full ? '' : 'primary'}" data-enroll="${b.id}">${full ? 'View people' : 'Enroll people'}</button></td>
     </tr>`;
@@ -1679,7 +1679,7 @@ async function bookingsView() {
   content.innerHTML = `<div class="table-wrapper"><table><thead><tr>
       <th>Booking</th><th>Space</th><th>Period</th><th>People</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="hint" style="margin-top:14px">Each booking allows up to the space's capacity. Enrolled people get access to the Entrance machines and the machine whose room code matches the space, for the booking period only — and are removed automatically when it ends.</p>`;
+    <p class="hint" style="margin-top:14px">Each booking allows up to the space's capacity. Enrolled people get access to the Entrance machines and the machine whose room code matches the space, for the paid booking period only — and are removed automatically when it ends. Shared co-working spaces don't appear here; paying another installment or re-booking the same space extends access automatically.</p>`;
   content.querySelectorAll('[data-enroll]').forEach((b) => b.addEventListener('click', () => bookingEnrollModal(Number(b.dataset.enroll))));
 }
 
@@ -1701,7 +1701,7 @@ async function bookingEnrollModal(bookingId) {
       </div>`).join('') : '<div class="list-empty">Nobody enrolled yet.</div>';
     $('#modal').innerHTML = `
       <h2>${esc(b.spaceName)} <span class="badge admin">room ${esc(b.spaceCode)}</span></h2>
-      <p class="hint" style="margin:0 0 4px">${esc(b.challan || b.ref)} · ${esc(b.customer || '')} · ${esc(fmtDT(b.start))} → ${esc(fmtDT(b.end))}</p>
+      <p class="hint" style="margin:0 0 4px">${esc(b.challan || b.ref)} · ${esc(b.customer || '')} · ${esc(fmtDT(b.start))} → ${esc(fmtDT(b.end))}${b.accessEnd && b.accessEnd.slice(0, 10) !== String(b.end).slice(0, 10) ? ` · <span style="color:var(--amber)">access till ${esc(fmtDT(b.accessEnd))} (paid period)</span>` : ''}</p>
       <p class="hint" style="margin:0 0 10px">Access on: <b>${esc(machines.map((m) => m.name).join(', ') || '—')}</b>${r.roomMachine ? '' : ' <span style="color:var(--amber)">— no machine carries this room code yet (set it in Machines → Edit)</span>'}</p>
       <div class="field">
         <label>People <span class="badge ${left === 0 && b.capacity ? 'synced' : 'pending'}">${r.attendees.length} / ${b.capacity || '∞'}</span>
