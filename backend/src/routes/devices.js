@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getAllDevices, getDeviceById, run, sp, logSync } from '../db.js';
 import * as isapi from '../isapi.js';
+import { getRoster, invalidateRoster } from '../machineCache.js';
 
 export const devicesRouter = Router();
 
@@ -60,14 +61,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   try {
-    const users = [];
-    let pos = 0;
-    for (let i = 0; i < 200; i++) {
-      const page = await isapi.searchPersons(dev, pos, 30);
-      users.push(...page.list);
-      if (!page.list.length || users.length >= page.total) break;
-      pos += page.list.length;
-    }
+    const users = await getRoster(dev);
     res.json({ ok: true, total: users.length, users });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -90,15 +84,8 @@ devicesRouter.post('/users', async (req, res) => {
     // auto-pick a number that is free on all of them.
     const taken = new Set();
     let maxNo = 0;
-    for (const dev of devs) {
-      const existing = [];
-      let pos = 0;
-      for (let i = 0; i < 200; i++) {
-        const page = await isapi.searchPersons(dev, pos, 30);
-        existing.push(...page.list);
-        if (!page.list.length || existing.length >= page.total) break;
-        pos += page.list.length;
-      }
+    const rosters = await Promise.all(devs.map((dev) => getRoster(dev)));
+    for (const existing of rosters) {
       for (const u of existing) {
         taken.add(String(u.employeeNo));
         maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
@@ -137,6 +124,7 @@ devicesRouter.post('/users', async (req, res) => {
         results.push({ device_id: dev.id, device: dev.name, ok: false, error: String(e.message || e) });
       }
     }
+    for (const dev of devs) invalidateRoster(dev.id);
     const okCount = results.filter((x) => x.ok).length;
     res.status(okCount ? 200 : 502).json({ ok: okCount > 0, employeeNo, name, results });
   } catch (e) {
@@ -153,14 +141,7 @@ devicesRouter.post('/:id/users', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     // Read current users once: to reject duplicates and to auto-pick a free #.
-    const existing = [];
-    let pos = 0;
-    for (let i = 0; i < 200; i++) {
-      const page = await isapi.searchPersons(dev, pos, 30);
-      existing.push(...page.list);
-      if (!page.list.length || existing.length >= page.total) break;
-      pos += page.list.length;
-    }
+    const existing = await getRoster(dev);
     const taken = new Set(existing.map((u) => String(u.employeeNo)));
 
     let employeeNo = req.body.employeeNo ? String(req.body.employeeNo).trim() : '';
@@ -182,6 +163,7 @@ devicesRouter.post('/:id/users', async (req, res) => {
     const r = await isapi.upsertPerson(dev, record, 'add'); // add only — never overwrite
     logSync(null, dev.id, 'add-user', r.ok, { employeeNo, ...r });
     if (!r.ok) return res.status(502).json({ ok: false, error: isapi.describe(r) });
+    invalidateRoster(dev.id);
     res.json({ ok: true, employeeNo, name });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -195,6 +177,7 @@ devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
   try {
     const r = await isapi.deletePerson(dev, req.params.employeeNo);
     logSync(null, dev.id, 'delete-user', r.ok, { employeeNo: req.params.employeeNo, ...r });
+    invalidateRoster(dev.id);
     res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -209,8 +192,7 @@ devicesRouter.get('/:id/users/:employeeNo/access', async (req, res) => {
   const employeeNo = String(req.params.employeeNo);
   const devices = await getAllDevices();
   let name = null;
-  const machines = [];
-  for (const d of devices) {
+  const machines = await Promise.all(devices.map(async (d) => {
     let present = false;
     let enabled = true;
     let validEnd = null;
@@ -223,8 +205,8 @@ devicesRouter.get('/:id/users/:employeeNo/access', async (req, res) => {
     } catch {
       present = null; // unreachable
     }
-    machines.push({ device_id: d.id, name: d.name, host: d.host, grp: d.grp || null, present, enabled, valid_end: validEnd, isSource: d.id === src.id });
-  }
+    return { device_id: d.id, name: d.name, host: d.host, grp: d.grp || null, present, enabled, valid_end: validEnd, isSource: d.id === src.id };
+  }));
   res.json({ ok: true, employeeNo, name, machines });
 });
 
@@ -297,6 +279,7 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
         results.push({ device_id: d.id, device: d.name, state: 'error', error: String(e.message || e) });
       }
     }
+    invalidateRoster();
     res.json({ ok: true, results });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -361,6 +344,7 @@ devicesRouter.post('/:id/users/:employeeNo/update', async (req, res) => {
       results.push({ device: dev.name, ok: false, error: String(e.message || e) });
     }
   }
+  for (const dev of targets) invalidateRoster(dev.id);
   const okCount = results.filter((x) => x.ok).length;
   res.status(okCount ? 200 : 502).json({ ok: okCount > 0, results });
 });
@@ -423,6 +407,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', async (req, res
         replicated.push({ device: rdev.name, ok: false, error: String(e.message || e) });
       }
     }
+    invalidateRoster();
     res.json({ ok: true, quality: cap.quality, replicated });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -458,6 +443,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-card', async (req, res) => {
         replicated.push({ device: rdev.name, ok: false, error: String(e.message || e) });
       }
     }
+    invalidateRoster();
     res.json({ ok: true, cardNo: cap.cardNo, replicated });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -472,18 +458,17 @@ devicesRouter.post('/door', async (req, res) => {
   const ids = Array.isArray(req.body?.device_ids) && req.body.device_ids.length
     ? [...new Set(req.body.device_ids.map(Number))]
     : (await getAllDevices()).map((d) => d.id);
-  const results = [];
-  for (const id of ids) {
+  const results = await Promise.all(ids.map(async (id) => {
     const dev = await getDeviceById(id);
-    if (!dev) { results.push({ device_id: id, ok: false, error: 'not found' }); continue; }
+    if (!dev) return { device_id: id, ok: false, error: 'not found' };
     try {
       const r = await isapi.remoteControlDoor(dev, cmd);
       logSync(null, dev.id, `door:${cmd}`, r.ok, r);
-      results.push({ device_id: id, device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
+      return { device_id: id, device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) };
     } catch (e) {
-      results.push({ device_id: id, device: dev.name, ok: false, error: String(e.message || e) });
+      return { device_id: id, device: dev.name, ok: false, error: String(e.message || e) };
     }
-  }
+  }));
   const okCount = results.filter((r) => r.ok).length;
   res.json({ ok: okCount > 0, okCount, total: results.length, results });
 });
@@ -496,18 +481,17 @@ devicesRouter.post('/card/delete', async (req, res) => {
   const ids = Array.isArray(req.body?.device_ids) && req.body.device_ids.length
     ? [...new Set(req.body.device_ids.map(Number))]
     : (await getAllDevices()).map((d) => d.id);
-  const results = [];
-  for (const id of ids) {
+  const results = (await Promise.all(ids.map(async (id) => {
     const dev = await getDeviceById(id);
-    if (!dev) continue;
+    if (!dev) return null;
     try {
       const r = await isapi.deleteCard(dev, cardNo);
       logSync(null, dev.id, 'delete-card', r.ok, { cardNo, ...r });
-      results.push({ device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
+      return { device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) };
     } catch (e) {
-      results.push({ device: dev.name, ok: false, error: String(e.message || e) });
+      return { device: dev.name, ok: false, error: String(e.message || e) };
     }
-  }
+  }))).filter(Boolean);
   res.json({ ok: results.some((x) => x.ok), results });
 });
 
@@ -551,6 +535,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-face', async (req, res) => {
         replicated.push({ device: rdev.name, ok: false, error: String(e.message || e) });
       }
     }
+    invalidateRoster();
     res.json({ ok: true, replicated });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -665,6 +650,7 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
         results.push({ device_id: tid, device: dev.name, state: 'error', error: String(e.message || e) });
       }
     }
+    invalidateRoster();
     res.json({ ok: true, employeeNo, name: person.name, cards: cards.length, fingerprints: prints.length, results });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });

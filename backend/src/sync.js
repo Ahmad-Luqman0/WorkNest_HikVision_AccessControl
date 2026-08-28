@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { getRow, getRows, getDeviceById, sp, run, logSync } from './db.js';
 import * as isapi from './isapi.js';
+import { invalidateRoster } from './machineCache.js';
 
 function employee(id) {
   return getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE id = ?', [Number(id)]);
@@ -45,12 +46,14 @@ export async function pushEmployeeToDevice(emp, dev) {
     logSync(emp.id, dev.id, 'fingerprint', p.ok, p);
   }
 
+  invalidateRoster(dev.id);
   return true;
 }
 
 export async function removeEmployeeFromDevice(emp, dev) {
   const r = await isapi.deletePerson(dev, emp.employee_no); // cascades card/face/fp on device
   logSync(emp.id, dev.id, 'delete', r.ok, r);
+  invalidateRoster(dev.id);
   return r.ok;
 }
 

@@ -11,6 +11,7 @@ import { bookingsRouter } from './routes/bookings.js';
 import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
+import { getRoster } from './machineCache.js';
 import { startScheduler, runExpiryPass, runCredentialSync } from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,17 +99,8 @@ app.post('/api/visitors', async (req, res) => {
   try {
     // Pick a number free on the target machines AND in the dashboard DB.
     let maxNo = 8999;
-    for (const dev of devices) {
-      const users = [];
-      let pos = 0;
-      for (let i = 0; i < 200; i++) {
-        const page = await isapi.searchPersons(dev, pos, 30);
-        users.push(...page.list);
-        if (!page.list.length || users.length >= page.total) break;
-        pos += page.list.length;
-      }
-      for (const u of users) maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
-    }
+    const rosters = await Promise.all(devices.map((dev) => getRoster(dev).catch(() => [])));
+    for (const users of rosters) for (const u of users) maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
     const dbMax = await getRow(
       'SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees'
     );
@@ -239,14 +231,7 @@ app.get('/api/expiring', async (req, res) => {
   const unreachable = [];
   await Promise.all(devices.map(async (dev) => {
     try {
-      const users = [];
-      let pos = 0;
-      for (let i = 0; i < 200; i++) {
-        const page = await isapi.searchPersons(dev, pos, 30);
-        users.push(...page.list);
-        if (!page.list.length || users.length >= page.total) break;
-        pos += page.list.length;
-      }
+      const users = await getRoster(dev);
       for (const u of users) {
         const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
         if (!groups.has(key)) groups.set(key, { employeeNo: String(u.employeeNo), name: u.name || '', on: [] });

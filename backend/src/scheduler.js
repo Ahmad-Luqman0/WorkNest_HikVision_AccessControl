@@ -6,6 +6,7 @@ import cron from 'node-cron';
 import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
+import { getRoster } from './machineCache.js';
 
 function nowLocalIso() {
   const d = new Date();
@@ -45,7 +46,7 @@ export async function runExpiryPass() {
 export async function runClockSync() {
   const devices = await getAllDevices();
   const results = [];
-  for (const dev of devices) {
+  await Promise.all(devices.map(async (dev) => {
     try {
       const r = await isapi.setDeviceTime(dev);
       logSync(null, dev.id, 'time-sync', r.ok, r.ok ? 'clock set to server time' : r);
@@ -54,7 +55,7 @@ export async function runClockSync() {
       logSync(null, dev.id, 'time-sync', false, String(e.message || e));
       results.push({ device: dev.name, ok: false });
     }
-  }
+  }));
   return results;
 }
 
@@ -62,7 +63,7 @@ export async function runClockSync() {
 // dashboard can show offline alerts.
 export async function runOnlineCheck() {
   const devices = await getAllDevices();
-  for (const dev of devices) {
+  await Promise.all(devices.map(async (dev) => {
     let up = false;
     try {
       await isapi.getDeviceInfo(dev);
@@ -75,7 +76,7 @@ export async function runOnlineCheck() {
       if (dev.online) logSync(null, dev.id, 'offline', false, 'machine stopped responding');
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
     }
-  }
+  }));
 }
 
 // Keep credentials identical for the same person across machines. A person is
@@ -86,20 +87,10 @@ export async function runCredentialSync() {
   const devices = await getAllDevices();
   if (devices.length < 2) return { copied: 0 };
 
-  const rosters = [];
-  for (const dev of devices) {
-    try {
-      const users = [];
-      let pos = 0;
-      for (let i = 0; i < 200; i++) {
-        const page = await isapi.searchPersons(dev, pos, 30);
-        users.push(...page.list);
-        if (!page.list.length || users.length >= page.total) break;
-        pos += page.list.length;
-      }
-      rosters.push({ dev, users });
-    } catch { /* unreachable — skip this machine this round */ }
-  }
+  const rosters = (await Promise.all(devices.map(async (dev) => {
+    try { return { dev, users: await getRoster(dev) }; }
+    catch { return null; } /* unreachable — skip this machine this round */
+  }))).filter(Boolean);
   if (rosters.length < 2) return { copied: 0 };
 
   const groups = new Map(); // `${employeeNo}||${name}` -> [{dev, u}]
@@ -178,23 +169,16 @@ let _rosterSig = null;
 async function rosterSignature() {
   const devices = await getAllDevices();
   const parts = [];
-  for (const dev of devices) {
+  await Promise.all(devices.map(async (dev) => {
     try {
-      const users = [];
-      let pos = 0;
-      for (let i = 0; i < 200; i++) {
-        const page = await isapi.searchPersons(dev, pos, 30);
-        users.push(...page.list);
-        if (!page.list.length || users.length >= page.total) break;
-        pos += page.list.length;
-      }
+      const users = await getRoster(dev, 5000); // near-fresh scan for the watcher
       for (const u of users) {
         parts.push(`${dev.id}:${u.employeeNo}:${u.name}:${u.numOfFP || 0}:${u.numOfFace || 0}:${u.numOfCard || 0}`);
       }
     } catch {
       parts.push(`${dev.id}:unreachable`);
     }
-  }
+  }));
   return parts.sort().join('|');
 }
 
@@ -233,8 +217,8 @@ export function startScheduler() {
       if (r.copied) console.log(`[scheduler] credential sync copied ${r.copied} item(s)`);
     } catch (e) { console.error('[scheduler] credential sync failed:', e); }
   });
-  // Machine reachability every minute.
-  cron.schedule('* * * * *', () => {
+  // Machine reachability every 2 minutes.
+  cron.schedule('*/2 * * * *', () => {
     runOnlineCheck().catch((e) => console.error('[scheduler] online check failed:', e));
   });
   // Clock sync daily at 04:00, and once shortly after startup.
@@ -242,11 +226,11 @@ export function startScheduler() {
     runClockSync().catch((e) => console.error('[scheduler] clock sync failed:', e));
   });
   // Enrollment watcher — near-real-time credential sync.
-  setInterval(() => { runRosterWatch(); }, 30000);
+  setInterval(() => { runRosterWatch(); }, 90000);
   setTimeout(() => {
     runOnlineCheck().catch(() => {});
     runClockSync().catch(() => {});
     runCredentialSync().catch(() => {}).finally(() => runRosterWatch());
   }, 3000);
-  console.log('[scheduler] enrollment watch every 30s · expiry + credential sync every 5 min · online check every 1 min · clock sync daily 04:00');
+  console.log('[scheduler] enrollment watch every 90s · expiry + credential sync every 5 min · online check every 2 min · clock sync daily 04:00');
 }

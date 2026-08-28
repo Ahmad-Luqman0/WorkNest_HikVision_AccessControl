@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getRow, getRows, run, sp, getAllDevices, logSync } from '../db.js';
 import { syncEmployee } from '../sync.js';
 import * as isapi from '../isapi.js';
+import { getRoster } from '../machineCache.js';
 
 export const cardsRouter = Router();
 
@@ -40,21 +41,19 @@ cardsRouter.get('/', async (req, res) => {
         const all = [];
         let pos = 0;
         for (let i = 0; i < 50; i++) {
-          const page = await isapi.readAllCards(dev, pos, 30);
+          const page = await isapi.readAllCards(dev, pos, 100);
           all.push(...page.list);
           if (!page.list.length || all.length >= page.total) break;
           pos += page.list.length;
         }
-        const nameCache = new Map();
+        // Holder names come from the cached roster — no per-user round trips.
+        const roster = await getRoster(dev).catch(() => []);
+        const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
         for (const c of all) {
           const no = String(c.cardNo);
           const emp = String(c.employeeNo);
-          if (!nameCache.has(emp)) {
-            try { nameCache.set(emp, (await isapi.getPerson(dev, emp))?.name || null); }
-            catch { nameCache.set(emp, null); }
-          }
           if (!holders.has(no)) holders.set(no, []);
-          holders.get(no).push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) });
+          holders.get(no).push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
         }
       } catch { /* unreachable machine — skip */ }
     }));
@@ -144,7 +143,7 @@ cardsRouter.put('/:id', async (req, res) => {
           const all = [];
           let pos = 0;
           for (let i = 0; i < 50; i++) {
-            const page = await isapi.readAllCards(dev, pos, 30);
+            const page = await isapi.readAllCards(dev, pos, 100);
             all.push(...page.list);
             if (!page.list.length || all.length >= page.total) break;
             pos += page.list.length;

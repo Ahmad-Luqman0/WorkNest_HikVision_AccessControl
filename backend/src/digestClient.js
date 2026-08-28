@@ -52,7 +52,7 @@ function rawRequest({ hostname, port, protocol, method, path, headers, body, tim
         path,
         headers,
         protocol,
-        timeout: timeout || 15000,
+        timeout: timeout || 8000,
         // Hikvision devices often use self-signed certs on https
         rejectUnauthorized: false,
       },

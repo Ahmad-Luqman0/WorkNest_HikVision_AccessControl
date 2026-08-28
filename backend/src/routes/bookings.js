@@ -13,6 +13,7 @@ import { Router } from 'express';
 import { getRow, getRows, run, sp, getAllDevices, getDeviceById, logSync } from '../db.js';
 import * as isapi from '../isapi.js';
 import { syncEmployee } from '../sync.js';
+import { getRoster } from '../machineCache.js';
 
 export const bookingsRouter = Router();
 
@@ -175,19 +176,8 @@ bookingsRouter.post('/:id/attendees', async (req, res) => {
 
     // Free number in the 9000+ range across the target machines and the DB.
     let maxNo = 8999;
-    for (const dev of targets) {
-      try {
-        const users = [];
-        let pos = 0;
-        for (let i = 0; i < 200; i++) {
-          const page = await isapi.searchPersons(dev, pos, 30);
-          users.push(...page.list);
-          if (!page.list.length || users.length >= page.total) break;
-          pos += page.list.length;
-        }
-        for (const u of users) maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
-      } catch { /* unreachable machine — the sync engine will retry */ }
-    }
+    const rosters = await Promise.all(targets.map((dev) => getRoster(dev).catch(() => [])));
+    for (const users of rosters) for (const u of users) maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
     const dbMax = await getRow('SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees');
     const employeeNo = String(Math.max(maxNo, Number(dbMax?.m) || 0) + 1);
 
