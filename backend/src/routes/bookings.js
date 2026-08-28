@@ -55,6 +55,67 @@ async function bookingMachines(spaceCode) {
   return { targets, entrances, room };
 }
 
+// Booking renewals: extending a room creates a NEW row in WN_Bookings with a
+// new Id but the same CustomerCode + SpaceId. That is treated as the SAME
+// booking continuing — the old booking's attendees are re-linked to the new
+// booking id and their Valid Period on the machines is extended to the new
+// EndOn, so fingerprints/cards keep working with no re-enrollment and no gap.
+// Runs before the expiry pass so a renewal always wins over auto-delete.
+export async function migrateRenewedBookings() {
+  const refs = await getRows(
+    `SELECT DISTINCT booking_ref FROM dbo.WN_HIK_Employees WHERE booking_ref LIKE 'WNB-%'`
+  );
+  let migrated = 0;
+  for (const { booking_ref } of refs) {
+    const oldId = Number(String(booking_ref).slice(4));
+    if (!oldId) continue;
+    const oldB = await getRow(
+      `SELECT b.Id, b.CustomerCode, b.SpaceId, b.EndOn
+       FROM dbo.WN_Bookings b WITH (NOLOCK) WHERE b.Id = ?`,
+      [oldId]
+    );
+    if (!oldB) continue;
+    // Successor = the earliest newer booking for the same customer + space
+    // that ends after this one (and hasn't ended already).
+    const next = await getRow(
+      `SELECT TOP 1 b.Id, b.StartOn, b.EndOn
+       FROM dbo.WN_Bookings b WITH (NOLOCK)
+       WHERE b.IsDeleted = 0 AND b.Id <> ? AND b.CustomerCode = ? AND b.SpaceId = ?
+         AND b.EndOn > ? AND b.EndOn > SYSDATETIME()
+       ORDER BY b.StartOn ASC`,
+      [oldB.Id, oldB.CustomerCode, oldB.SpaceId, oldB.EndOn]
+    );
+    if (!next) continue;
+    const clash = await getRow(
+      `SELECT 1 AS x FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
+      [REF(next.Id)]
+    );
+    if (clash) continue; // the new booking already has its own attendees
+    const attendees = await getRows(
+      `SELECT id FROM dbo.WN_HIK_Employees WHERE booking_ref = ?`,
+      [booking_ref]
+    );
+    if (!attendees.length) continue;
+    // valid_begin stays as-is so access is continuous through the changeover.
+    await run(
+      `UPDATE dbo.WN_HIK_Employees SET booking_ref = ?, valid_end = ?, status = 'active' WHERE booking_ref = ?`,
+      [REF(next.Id), next.EndOn, booking_ref]
+    );
+    for (const a of attendees) {
+      await run(
+        `UPDATE dbo.WN_HIK_AccessGrants SET sync_state='pending' WHERE employee_id=? AND sync_state IN ('synced','error')`,
+        [a.id]
+      );
+      try { await syncEmployee(a.id); } catch { /* machine unreachable — the watcher retries */ }
+    }
+    migrated += attendees.length;
+    logSync(null, null, 'booking-renew', true, {
+      from: booking_ref, to: REF(next.Id), attendees: attendees.length, newEnd: next.EndOn,
+    });
+  }
+  return { migrated };
+}
+
 async function attendeesOf(bookingId) {
   return getRows(
     `SELECT * FROM dbo.WN_HIK_Employees WHERE booking_ref = ? ORDER BY id`,
@@ -66,6 +127,9 @@ async function attendeesOf(bookingId) {
 // ?summary=1 returns just the "needs enrollment" counters for the dashboard.
 bookingsRouter.get('/', async (req, res) => {
   try {
+    // Reconcile renewals in the background — the carried-over counts show on
+    // the next refresh; don't make the page wait on machine calls.
+    migrateRenewedBookings().catch(() => {});
     const bookings = await bookingsQuery('AND b.EndOn >= SYSDATETIME()');
     const counts = new Map();
     const enrolled = await getRows(

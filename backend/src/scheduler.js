@@ -7,6 +7,7 @@ import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync } from 
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster } from './machineCache.js';
+import { migrateRenewedBookings } from './routes/bookings.js';
 
 function nowLocalIso() {
   const d = new Date();
@@ -186,6 +187,7 @@ export async function runRosterWatch() {
   if (_watchBusy) return;
   _watchBusy = true;
   try {
+    try { await migrateRenewedBookings(); } catch { /* checked again next tick */ }
     const pending = await getRow(
       `SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE sync_state IN ('pending','removing')`
     );
@@ -210,6 +212,10 @@ export async function runRosterWatch() {
 export function startScheduler() {
   // Every 5 minutes: expiry, retry errored syncs, then credential sync.
   cron.schedule('*/5 * * * *', async () => {
+    try {
+      const r = await migrateRenewedBookings();
+      if (r.migrated) console.log(`[scheduler] booking renewal carried over ${r.migrated} attendee(s)`);
+    } catch (e) { console.error('[scheduler] booking renewal check failed:', e); }
     try { await runExpiryPass(); } catch (e) { console.error('[scheduler] expiry pass failed:', e); }
     try { await syncAllPending(); } catch (e) { console.error('[scheduler] pending sync failed:', e); }
     try {

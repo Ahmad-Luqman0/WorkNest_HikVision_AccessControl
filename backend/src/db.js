@@ -20,7 +20,9 @@ const config = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  options: { encrypt: false, trustServerCertificate: true },
+  // useUTC:false — DATETIME columns hold local wall-clock times (booking
+  // windows, validity periods). Reading them as UTC shifted every time +5h.
+  options: { encrypt: false, trustServerCertificate: true, useUTC: false },
   pool: { max: 10, min: 1, idleTimeoutMillis: 30000 },
   connectionTimeout: 15000,
   requestTimeout: 30000,
