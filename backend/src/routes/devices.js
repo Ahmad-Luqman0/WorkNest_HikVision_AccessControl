@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById, run, sp, logSync } from '../db.js';
+import { getAllDevices, getDeviceById, getRow, run, sp, logSync } from '../db.js';
 import * as isapi from '../isapi.js';
 import { getRoster, invalidateRoster } from '../machineCache.js';
 
@@ -178,6 +178,20 @@ devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
     const r = await isapi.deletePerson(dev, req.params.employeeNo);
     logSync(null, dev.id, 'delete-user', r.ok, { employeeNo: req.params.employeeNo, ...r });
     invalidateRoster(dev.id);
+    // Also drop the dashboard-side desired state for this machine — otherwise
+    // the sync engine sees a missing person and puts them right back. When a
+    // visitor/booking attendee loses their last machine, remove the record
+    // entirely so bookings show them as unenrolled.
+    if (r.ok) {
+      const emp = await getRow('SELECT id, kind FROM dbo.WN_HIK_Employees WHERE employee_no=?', [String(req.params.employeeNo)]);
+      if (emp) {
+        await run('DELETE FROM dbo.WN_HIK_AccessGrants WHERE employee_id=? AND device_id=?', [emp.id, dev.id]);
+        if (emp.kind === 'visitor') {
+          const left = await getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [emp.id]);
+          if (!Number(left?.n)) await run('DELETE FROM dbo.WN_HIK_Employees WHERE id=?', [emp.id]);
+        }
+      }
+    }
     res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
