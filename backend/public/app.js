@@ -192,8 +192,14 @@ document.querySelectorAll('nav a').forEach((a) =>
   a.addEventListener('click', () => go(a.dataset.view))
 );
 
+// Mobile: the sidebar is an off-canvas drawer behind the hamburger button.
+const setNav = (open) => document.body.classList.toggle('nav-open', open);
+$('#menuToggle')?.addEventListener('click', () => setNav(!document.body.classList.contains('nav-open')));
+$('#sidebarBackdrop')?.addEventListener('click', () => setNav(false));
+
 function go(view) {
   current = view;
+  setNav(false); // picking a page closes the mobile drawer
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
   const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', dashusers: 'Dashboard Users', bookings: 'Bookings' };
   const title = names[view] || 'Dashboard';

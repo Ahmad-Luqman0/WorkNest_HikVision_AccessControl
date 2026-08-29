@@ -110,6 +110,13 @@
   <main class="main-wrapper">
     <header class="topbar">
       <div class="topbar-left">
+        <button id="menuToggle" class="menu-toggle" type="button" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
         <div class="breadcrumb">
           <span class="crumb-root">WorkNest</span> / <span class="crumb-current" id="viewBreadcrumb">Dashboard</span>
         </div>
@@ -144,6 +151,8 @@
     </header>
     <section id="content" class="content-body"></section>
   </main>
+
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
   <div class="modal-backdrop" id="modalBackdrop" hidden>
     <div class="modal" id="modal"></div>
