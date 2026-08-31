@@ -388,17 +388,20 @@ async function dashboard() {
 
   const trendText = s.trendPct !== undefined ? `${s.trendPct >= 0 ? '+' : ''}${s.trendPct}% vs yesterday` : '';
 
+  const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
+  const onlineMachines = (s && s.devicesOnline !== undefined) ? s.devicesOnline : devs.filter((d) => d.online).length;
+
   content.appendChild(el(`<div>
     ${offlineBanner}
     ${bookingsBanner}
     <div id="dashConsistency"></div>
     <div class="stat-grid">
-      ${kpi('machine', 'Machines', s.devices, '', `${s.devicesOnline || 0} online`)}
-      ${kpi('user', 'Active Users', s.active, 'good')}
+      ${kpi('machine', 'Machines', totalMachines, '', `${onlineMachines} online`)}
+      ${kpi('user', 'Active Users', s.active || 0, 'good')}
       ${kpi('online', 'Today Scans', s.todayScans || 0, 'good', trendText, s.trendPct)}
-      ${kpi('card', 'Cards', s.cards ?? 0)}
-      ${kpi('clock', 'Expired', s.expired, s.expired ? 'warn' : '')}
-      ${kpi('sync', 'Pending sync', s.pendingSync, s.pendingSync ? 'bad' : '')}
+      ${kpi('card', 'Cards', s.cards || 0)}
+      ${kpi('clock', 'Expired', s.expired || 0, s.expired ? 'warn' : '')}
+      ${kpi('sync', 'Pending sync', s.pendingSync || 0, s.pendingSync ? 'bad' : '')}
     </div>
 
     <div class="panel-grid">

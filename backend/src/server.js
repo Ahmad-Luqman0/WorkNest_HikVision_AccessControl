@@ -530,19 +530,34 @@ app.post('/api/expiring/extend', async (req, res) => {
 // Dashboard summary counters.
 app.get('/api/stats', async (req, res) => {
   try {
-    const rows = await sp('WN_HIK_Stats_Get');
-    const raw = rows[0] || {};
+    let raw = {};
+    try {
+      const rows = await sp('WN_HIK_Stats_Get');
+      raw = rows[0] || {};
+    } catch {}
+
+    const [devsCount, onlineDevsCount, activeEmpsCount, expiredEmpsCount, cardsCount, pendingSyncCount] = await Promise.all([
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Devices').catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Devices WHERE online = 1').catch(() => ({ n: 0 })),
+      getRow("SELECT COUNT(*) AS n FROM dbo.WN_HIK_Employees WHERE status = 'active' OR status IS NULL").catch(() => ({ n: 0 })),
+      getRow("SELECT COUNT(*) AS n FROM dbo.WN_HIK_Employees WHERE status = 'expired'").catch(() => ({ n: 0 })),
+      getRow("SELECT COUNT(*) AS n FROM dbo.WN_HIK_Cards").catch(async () => {
+        return getRow("SELECT COUNT(DISTINCT card_no) AS n FROM dbo.WN_HIK_Employees WHERE card_no IS NOT NULL").catch(() => ({ n: 0 }));
+      }),
+      getRow("SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE sync_state IN ('pending','error','removing')").catch(() => ({ n: 0 })),
+    ]);
+
     const base = {};
     for (const [k, v] of Object.entries(raw)) {
       base[k.toLowerCase()] = v;
     }
 
-    const devices = Number(base.devices ?? raw.devices ?? 0);
-    const devicesOnline = Number(base.devicesonline ?? raw.devicesOnline ?? 0);
-    const active = Number(base.active ?? raw.active ?? 0);
-    const expired = Number(base.expired ?? raw.expired ?? 0);
-    const cards = Number(base.cards ?? raw.cards ?? 0);
-    const pendingSync = Number(base.pendingsync ?? raw.pendingSync ?? 0);
+    const devices = Number(base.devices ?? devsCount?.n ?? 0);
+    const devicesOnline = Number(base.devicesonline ?? onlineDevsCount?.n ?? 0);
+    const active = Number(base.active ?? activeEmpsCount?.n ?? 0);
+    const expired = Number(base.expired ?? expiredEmpsCount?.n ?? 0);
+    const cards = Number(base.cards ?? cardsCount?.n ?? 0);
+    const pendingSync = Number(base.pendingsync ?? pendingSyncCount?.n ?? 0);
 
     const now = new Date();
     const p2 = (n) => String(n).padStart(2, '0');
@@ -551,8 +566,8 @@ app.get('/api/stats', async (req, res) => {
     const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
 
     const [todayRow, yestRow] = await Promise.all([
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [todayStr]),
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [yestStr]),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
     ]);
 
     const todayScans = todayRow?.n || 0;
