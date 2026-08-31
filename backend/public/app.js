@@ -736,7 +736,7 @@ async function loadUsersTable(devs) {
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
-      <td><small class="hint">${u.numOfCard ? `<a class="link" data-cards="${i}">${esc(creds.join(' · '))}</a>` : esc(creds.join(' · ') || 'no credentials')}</small></td>
+      <td><small class="hint"><a class="link" data-cards="${i}" title="View / add cards">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
       <td class="row-actions">
         <button class="btn sm" data-menu="${i}">Actions ▾</button>
       </td></tr>`;
