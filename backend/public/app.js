@@ -1191,9 +1191,13 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       : hasAccess ? '<span class="badge synced">has access</span>'
         : m.present ? '<span class="badge blocked">blocked</span>'
           : '<span class="badge">no access</span>';
-    return `<label>
+    return `<label class="dev-check-item">
       <input type="checkbox" class="acc-check" value="${m.device_id}" ${hasAccess ? 'checked' : ''} ${m.present === null ? 'disabled' : ''}>
-      <span style="flex:1;min-width:0">${esc(m.name)} <small class="hint">${esc(m.host)}</small> ${state}</span>
+      <div class="dev-info">
+        <span class="dev-name">${esc(m.name)}</span>
+        <span class="dev-host">${esc(m.host)}</span>
+      </div>
+      ${state}
       <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
       <button type="button" class="btn sm acc-today" data-dev="${m.device_id}" ${m.present === null ? 'disabled' : ''} title="Access until tonight 23:59">Today</button>
     </label>`;
@@ -1211,7 +1215,6 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       <button class="btn primary" id="acc_save">Apply</button>
     </div>`);
   wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
-  limitRoomSelection('acc-check', r.machines.map((m) => ({ id: m.device_id, grp: m.grp })));
   wireChecklistFilter('acc_filter');
   // "Today" preset: access until tonight 23:59 on that machine.
   document.querySelectorAll('.acc-today').forEach((b) => b.addEventListener('click', () => {
@@ -1229,27 +1232,14 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       if (v) validEnds[inp.dataset.dev] = v;
     });
     closeModal();
-    // Batches of machines with a live progress bar — device_ids is always the
-    // FULL wanted set; only_ids limits which machines each request touches.
-    const allIds = r.machines.map((m) => m.device_id);
-    const chunks = [];
-    for (let i = 0; i < allIds.length; i += 8) chunks.push(allIds.slice(i, i + 8));
-    const bar = progressBar(allIds.length, 'Applying access —');
-    const results = [];
-    let reqError = null;
-    await runBatched(chunks, async (chunk) => {
-      const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
-        device_ids: ids,
-        valid_ends: validEnds,
-        only_ids: chunk,
-      });
-      if (rr.ok) results.push(...(rr.results || []));
-      else reqError = rr.error || 'error';
-    }, bar);
-    bar.close();
-    if (reqError && !results.length) { toast(`Failed: ${reqError}`, 'err'); return; }
-    const errs = results.filter((x) => x.state === 'error');
-    const changed = results.filter((x) => ['granted', 'unblocked', 'blocked', 'updated'].includes(x.state)).length;
+    toast('Applying machine access…');
+    const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
+      device_ids: ids,
+      valid_ends: validEnds,
+    });
+    if (!rr.ok) { toast(`Failed: ${rr.error || 'error'}`, 'err'); return; }
+    const errs = (rr.results || []).filter((x) => x.state === 'error');
+    const changed = (rr.results || []).filter((x) => ['granted', 'revoked', 'updated'].includes(x.state)).length;
     toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})`, errs.length ? 'err' : 'ok');
     if ($('#u_table')) loadUsersTable(devs);
   });
@@ -1322,23 +1312,25 @@ function tagCard(entry, devs) {
     const dev = on.find((d) => d.id === Number($('#tc_dev').value)) || on[0];
     captureBusy = true;
     closeModal();
-    toast(`Waiting for a card at ${dev.name}… tap it now`);
-    try {
-      const r = await api.post(`/devices/${dev.id}/users/${encodeURIComponent(u.employeeNo)}/capture-card`, {
-        replicate_device_ids: on.map((d) => d.id),
-      });
-      const repBad = (r.replicated || []).filter((x) => !x.ok);
-      if (!r.ok) toast(`Failed: ${r.error || 'no card'}`, 'err');
-      else if (repBad.length) toast(`Card ${r.cardNo} attached on ${dev.name}, but copy failed on ${repBad.map((x) => x.device).join(', ')}`, 'err');
-      else toast(`Card ${r.cardNo} attached${on.length > 1 ? ` on ${on.length} machines` : ''}`, 'ok');
-      if ($('#u_table')) loadUsersTable(devs);
-    } finally { captureBusy = false; }
+    toast(`Reading card on ${dev.name}… tap your card now (30s)`);
+    const r = await api.post(`/devices/${dev.id}/users/${encodeURIComponent(u.employeeNo)}/read-card`);
+    captureBusy = false;
+    if (!r.ok) { toast(`Card read failed: ${r.error || 'error'}`, 'err'); return; }
+    toast(`Card ${r.card_no} assigned to ${u.name || 'user ' + u.employeeNo}`, 'ok');
+    if ($('#u_table')) loadUsersTable(devs);
   });
 }
 
 function addUserModal(srcDev, devs, checkAll = false) {
-  const checks = devs.map((d) =>
-    `<label><input type="checkbox" class="au-dev" value="${d.id}" ${!checkAll && d.id === srcDev.id ? 'checked' : ''}> ${esc(d.name)} <small class="hint">${esc(d.host)}</small></label>`
+  const checks = devs.map((d) => `
+    <label class="dev-check-item">
+      <input type="checkbox" class="au-dev" value="${d.id}" ${!checkAll && d.id === srcDev.id ? 'checked' : ''}>
+      <div class="dev-info">
+        <span class="dev-name">${esc(d.name)}</span>
+        ${d.location ? `<span class="dev-loc">${esc(d.location)}</span>` : ''}
+      </div>
+      <span class="dev-host">${esc(d.host)}</span>
+    </label>`
   ).join('');
   openModal(`
     <h2>Add user</h2>
