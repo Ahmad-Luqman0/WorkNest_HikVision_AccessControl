@@ -1200,6 +1200,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
     <p class="hint">Checked machines allow entry, and each machine has its own <b>access-until</b> deadline. Unchecking <b>blocks</b> the user there but keeps their fingerprints and cards enrolled — re-checking restores access instantly. Use Delete to fully remove a user.</p>
     <div class="field">
       ${groupSelectHtml(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })))}
+      <input id="acc_filter" placeholder="Search machines… e.g. 315" autocomplete="off" style="margin:8px 0">
       <div class="device-checklist">${checks}</div>
     </div>
     <div class="modal-actions">
@@ -1208,6 +1209,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
     </div>`);
   wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
   limitRoomSelection('acc-check', r.machines.map((m) => ({ id: m.device_id, grp: m.grp })));
+  wireChecklistFilter('acc_filter');
   // "Today" preset: access until tonight 23:59 on that machine.
   document.querySelectorAll('.acc-today').forEach((b) => b.addEventListener('click', () => {
     const d = new Date();
@@ -1353,6 +1355,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
     </div>
     <div class="field"><label>Create on machines <small class="hint">(pick one or more)</small></label>
       ${groupSelectHtml(devs)}
+      <input id="au_filter" placeholder="Search machines… e.g. 315" autocomplete="off" style="margin:8px 0">
       <div class="device-checklist">${checks}</div>
     </div>
     <div class="field"><label>Fingerprint machine <small class="hint">(after creating, this machine prompts for the finger — optional when an RFID card # is entered)</small></label>
@@ -1365,6 +1368,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
     </div>`);
   wireGroupSelect(devs, 'au-dev');
   limitRoomSelection('au-dev', devs);
+  wireChecklistFilter('au_filter');
   // Fingerprint-capture machine list mirrors whichever machines are ticked.
   // With an RFID card # entered, the fingerprint becomes optional — a
   // "card only" choice appears (and is preselected when the card came first).
@@ -2012,6 +2016,18 @@ let dashRole = 'user';
     if (me.ok && me.role === 'admin') $('#navDashUsers').style.display = '';
   } catch { /* not signed in yet — login overlay handles it */ }
 })();
+
+// Search box for long machine checklists: hides labels that don't match.
+function wireChecklistFilter(inputId) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    const q = inp.value.toLowerCase().trim();
+    inp.closest('.field').querySelectorAll('.device-checklist label').forEach((l) => {
+      l.style.display = !q || l.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+}
 
 // Non-admin dashboard accounts: Entrance group + ONE room per employee.
 // Removes the Select-all chip and keeps at most one non-entrance machine
