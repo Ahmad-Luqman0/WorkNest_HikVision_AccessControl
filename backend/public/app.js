@@ -162,19 +162,20 @@ function groupSelectHtml(items) {
     const g = String(x.grp || '').trim();
     if (g) groups.set(g, (groups.get(g) || 0) + 1);
   }
-  if (!groups.size) return '';
-  const chip = (g, n) => `
-    <button type="button" class="grp-chip" data-grpsel="${esc(g)}" title="Select / deselect all ${esc(g)} machines">
+  const chip = (g, n, label) => `
+    <button type="button" class="grp-chip" data-grpsel="${esc(g)}" title="Select / deselect ${esc(label || 'all ' + g + ' machines')}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      ${esc(g)}<span class="grp-count">${n}</span>
+      ${esc(label || g)}<span class="grp-count">${n}</span>
     </button>`;
   return `<div class="grp-row">
     <small class="hint">Groups</small>
     ${[...groups.entries()].map(([g, n]) => chip(g, n)).join('')}
+    ${chip('*', items.length, 'Select all')}
   </div>`;
 }
 function wireGroupSelect(items, checkboxClass) {
   const boxesOf = (grp) => {
+    if (grp === '*') return [...document.querySelectorAll(`.${checkboxClass}`)].filter((c) => !c.disabled);
     const ids = new Set(items.filter((x) => String(x.grp || '').trim() === grp).map((x) => String(x.id)));
     return [...document.querySelectorAll(`.${checkboxClass}`)].filter((c) => ids.has(String(c.value)) && !c.disabled);
   };
