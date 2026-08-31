@@ -192,7 +192,14 @@ devicesRouter.post('/users', async (req, res) => {
   const ids = [...new Set((req.body?.device_ids || []).map(Number))].filter(Boolean);
   if (!name) return res.status(400).json({ error: 'name required' });
   if (!ids.length) return res.status(400).json({ error: 'pick at least one machine' });
-  const devs = (await Promise.all(ids.map((id) => getDeviceById(id)))).filter(Boolean);
+  // only_ids: create on just this batch (the UI batches machines to show a
+  // progress bar); device_ids stays the FULL selection for the role check,
+  // and later batches pass the employeeNo assigned by the first one.
+  const onlyIds = Array.isArray(req.body?.only_ids) && req.body.only_ids.length
+    ? new Set(req.body.only_ids.map(Number))
+    : null;
+  const devsAll = (await Promise.all(ids.map((id) => getDeviceById(id)))).filter(Boolean);
+  const devs = onlyIds ? devsAll.filter((d) => onlyIds.has(d.id)) : devsAll;
   if (!devs.length) return res.status(404).json({ error: 'no such machines' });
   const limitErr = await roleLimitError(req, ids);
   if (limitErr) return res.status(403).json({ error: limitErr });
@@ -206,7 +213,8 @@ devicesRouter.post('/users', async (req, res) => {
 
     let employeeNo = req.body.employeeNo ? String(req.body.employeeNo).trim() : '';
     if (employeeNo) {
-      if (taken.has(employeeNo))
+      // a continuation batch reuses the number the first batch assigned
+      if (!onlyIds && taken.has(employeeNo))
         return res.status(409).json({ error: `Employee #${employeeNo} already exists on a machine — pick another or leave it blank.` });
     } else {
       employeeNo = String(next);

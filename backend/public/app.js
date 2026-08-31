@@ -1408,20 +1408,35 @@ function addUserModal(srcDev, devs, checkAll = false) {
       valid_end: fromLocalInput($('#au_end').value),
     };
     const fpDevId = Number($('#au_fpdev').value) || null;
-    toast(`Creating user on ${deviceIds.length} machine${deviceIds.length === 1 ? '' : 's'}…`);
-    const r = await api.post('/devices/users', body);
-    if (!r.ok) {
-      const firstErr = r.error || (r.results || []).map((x) => x.error).filter(Boolean)[0] || 'error';
-      toast(`Failed: ${firstErr}`, 'err'); return;
-    }
     closeModal();
-    const bad = (r.results || []).filter((x) => !x.ok);
-    const cardBad = (r.results || []).filter((x) => x.ok && x.cardError);
-    if (bad.length) toast(`User ${r.employeeNo} added, but failed on ${bad.map((b) => b.device).join(', ')}: ${bad[0].error}`, 'err');
-    else if (cardBad.length) toast(`User ${r.employeeNo} added; card failed on ${cardBad.map((b) => b.device).join(', ')}: ${cardBad[0].cardError}`, 'err');
-    else toast(`User ${r.employeeNo}${body.card_no ? ' + card' : ''} added on ${r.results.length} machine${r.results.length === 1 ? '' : 's'}`, 'ok');
+    // Machines in batches with a live progress bar. The first batch assigns
+    // the employee #; later batches reuse it (sequential on purpose).
+    const chunks = [];
+    for (let i = 0; i < deviceIds.length; i += 8) chunks.push(deviceIds.slice(i, i + 8));
+    const bar = progressBar(deviceIds.length, 'Creating user —');
+    let employeeNo = null;
+    let firstErr = null;
+    const results = [];
+    for (const chunk of chunks) {
+      const r = await api.post('/devices/users', {
+        ...body,
+        only_ids: chunk,
+        employeeNo: employeeNo || undefined,
+      });
+      if (r.employeeNo) employeeNo = employeeNo || r.employeeNo;
+      if (r.results) results.push(...r.results);
+      else if (!firstErr) firstErr = r.error || 'error';
+      bar.tick(chunk.length);
+    }
+    bar.close();
+    if (!results.length) { toast(`Failed: ${firstErr || 'error'}`, 'err'); return; }
+    const bad = results.filter((x) => !x.ok);
+    const cardBad = results.filter((x) => x.ok && x.cardError);
+    if (bad.length) toast(`User ${employeeNo} added, but failed on ${bad.map((b) => b.device).join(', ')}: ${bad[0].error}`, 'err');
+    else if (cardBad.length) toast(`User ${employeeNo} added; card failed on ${cardBad.map((b) => b.device).join(', ')}: ${cardBad[0].cardError}`, 'err');
+    else toast(`User ${employeeNo}${body.card_no ? ' + card' : ''} added on ${results.length} machine${results.length === 1 ? '' : 's'}`, 'ok');
     const fpDev = fpDevId && deviceIds.includes(fpDevId) ? devs.find((d) => d.id === fpDevId) : null;
-    if (fpDev) await captureFp(fpDev, r.employeeNo, devs, deviceIds);
+    if (fpDev && employeeNo) await captureFp(fpDev, employeeNo, devs, deviceIds);
     if ($('#u_table')) loadUsersTable(devs);
   });
 }
