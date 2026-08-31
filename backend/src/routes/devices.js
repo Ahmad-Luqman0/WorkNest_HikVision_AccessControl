@@ -31,10 +31,36 @@ devicesRouter.get('/', async (req, res) => {
   res.json(rows.map(({ password, ...d }) => d));
 });
 
-// Machines are provisioned in the DB (data/machines.json or direct INSERT), not
-// created from the UI. Creation via the API is intentionally disabled.
-devicesRouter.post('/', (req, res) => {
-  res.status(405).json({ error: 'Machines are managed in the database, not the dashboard. Add them via data/machines.json or a direct INSERT into `devices`.' });
+// Add a machine from the dashboard — admin accounts only.
+devicesRouter.post('/', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Adding machines is admin-only.' });
+  }
+  const { name, host, username, password } = req.body || {};
+  const port = Number(req.body?.port) || (req.body?.use_https ? 443 : 80);
+  if (!name || !host || !username || !password) {
+    return res.status(400).json({ error: 'name, host, username and password are required' });
+  }
+  try {
+    const dupe = await getRow('SELECT id FROM dbo.WN_HIK_Devices WHERE host=? AND port=?', [String(host).trim(), port]);
+    if (dupe) return res.status(409).json({ error: `A machine already exists at ${String(host).trim()}:${port}` });
+    const rows = await sp('WN_HIK_Device_UpsertByHost', {
+      name: String(name).trim(),
+      host: String(host).trim(),
+      port,
+      use_https: req.body?.use_https ? 1 : 0,
+      username: String(username).trim(),
+      password: String(password),
+      location: req.body?.location || null,
+      grp: req.body?.grp || null,
+    });
+    const id = Number(rows[0]?.id);
+    if (req.body?.code) await run('UPDATE dbo.WN_HIK_Devices SET code=? WHERE id=?', [String(req.body.code).trim(), id]);
+    logSync(null, id, 'add-machine', true, { name: String(name).trim(), host: String(host).trim(), port });
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 devicesRouter.put('/:id', async (req, res) => {

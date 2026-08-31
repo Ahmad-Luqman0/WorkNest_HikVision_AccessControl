@@ -450,7 +450,10 @@ async function devices() {
   }, 30000);
   const list = await api.get('/devices');
   if (current !== 'devices') return; // view changed while loading
-  $('#viewActions').innerHTML = list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '';
+  $('#viewActions').innerHTML =
+    (dashRole === 'admin' ? '<button class="btn" id="addMachine">+ Add machine</button>' : '') +
+    (list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
+  $('#addMachine')?.addEventListener('click', () => deviceModal(null, list));
   const unlockAllBtn = $('#unlockAll');
   if (unlockAllBtn) unlockAllBtn.addEventListener('click', async () => {
     if (!confirm(`Unlock the door on ALL ${list.length} machine${list.length === 1 ? '' : 's'} now?`)) return;
