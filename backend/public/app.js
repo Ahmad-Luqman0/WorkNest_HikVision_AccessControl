@@ -1127,18 +1127,56 @@ function editUserModal(entry, devs) {
 async function userCardsModal(entry, devs) {
   const { u, on } = entry;
   const srcDev = on[0];
+  const machineOpts = `<option value="all">All their machines (${on.length})</option>` +
+    on.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
   openModal(`
-    <h2>Cards — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
-    <p class="hint">Cards attached to this user on ${esc(on.map((d) => d.name).join(', '))}. Removing a card detaches it from every machine this user is on — their fingerprints and profile stay.</p>
-    <div class="field" id="uc_list"><span class="muted">Loading cards…</span></div>
-    <div class="field"><label>Add a card <small class="hint">(typed — attached on every machine this user is on; or use Actions → Tag card to tap it on a reader)</small></label>
+    <h2>Credentials — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <p class="hint">On ${on.length} machine${on.length === 1 ? '' : 's'}. Deleting a fingerprint or face from only some machines may be undone by the credential auto-sync copying it back.</p>
+    <div class="field"><label>Cards</label><div id="uc_list"><span class="muted">Loading cards…</span></div></div>
+    <div class="field"><label>Add a card <small class="hint">(typed — attached on every machine this user is on; or use Actions → Tag card)</small></label>
       <div style="display:flex;gap:8px">
         <input id="uc_new" placeholder="e.g. 0012345678" style="flex:1">
         <button class="btn primary" id="uc_add">Attach card</button>
       </div>
     </div>
+    <div class="field"><label>Fingerprint <small class="hint">${u.numOfFP ? `${u.numOfFP} enrolled` : 'none enrolled'}</small></label>
+      <div style="display:flex;gap:8px">
+        <select id="uc_fpdev" style="flex:1">${machineOpts}</select>
+        <button class="btn danger" id="uc_fpdel" ${u.numOfFP ? '' : 'disabled'}>Delete fingerprint</button>
+      </div>
+    </div>
+    <div class="field"><label>Face <small class="hint">${u.numOfFace ? 'enrolled' : 'none enrolled'}</small></label>
+      <div style="display:flex;gap:8px">
+        <select id="uc_facedev" style="flex:1">${machineOpts}</select>
+        <button class="btn danger" id="uc_facedel" ${u.numOfFace ? '' : 'disabled'}>Delete face</button>
+      </div>
+    </div>
     <div class="modal-actions"><button class="btn" id="uc_close">Close</button></div>`);
   $('#uc_close').addEventListener('click', closeModal);
+  const chosen = (selId) => {
+    const v = $(selId).value;
+    return v === 'all' ? on.map((d) => d.id) : [Number(v)];
+  };
+  $('#uc_fpdel').addEventListener('click', async () => {
+    const ids = chosen('#uc_fpdev');
+    const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
+    if (!confirm(`Delete ${u.name || 'this user'}'s fingerprint from ${where}? They keep cards, face and profile.`)) return;
+    toast('Deleting fingerprint…');
+    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-fingerprints`, { device_ids: ids });
+    const fails = (r.results || []).filter((x) => !x.ok);
+    toast(r.ok && !fails.length ? 'Fingerprint deleted' : `Failed on ${fails.map((f) => f.device).join(', ') || 'all'}`, r.ok && !fails.length ? 'ok' : 'err');
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+  $('#uc_facedel').addEventListener('click', async () => {
+    const ids = chosen('#uc_facedev');
+    const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
+    if (!confirm(`Delete ${u.name || 'this user'}'s face from ${where}? Face recognition stops there; fingerprints, cards and profile stay.`)) return;
+    toast('Deleting face…');
+    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-face`, { device_ids: ids });
+    const fails = (r.results || []).filter((x) => !x.ok);
+    toast(r.ok && !fails.length ? 'Face deleted' : `Failed on ${fails.map((f) => f.device).join(', ') || 'all'}`, r.ok && !fails.length ? 'ok' : 'err');
+    if ($('#u_table')) loadUsersTable(devs);
+  });
   $('#uc_add').addEventListener('click', async () => {
     const cardNo = $('#uc_new').value.trim();
     if (!cardNo) { toast('Enter a card number', 'err'); return; }
@@ -1158,6 +1196,7 @@ async function userCardsModal(entry, devs) {
   async function load() {
     const r = await api.get(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/cards`);
     const cardsList = r.ok ? r.cards : [];
+    if (!$('#uc_list')) return;
     $('#uc_list').innerHTML = cardsList.length
       ? `<div class="device-checklist">${cardsList.map((c) => `
           <label style="justify-content:space-between;cursor:default">

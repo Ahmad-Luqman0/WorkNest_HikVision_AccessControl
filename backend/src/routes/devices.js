@@ -695,6 +695,31 @@ devicesRouter.post('/:id/users/:employeeNo/capture-face', async (req, res) => {
   }
 });
 
+// Delete a user's fingerprints (all slots) on the given machines, keeping
+// face, cards and profile. Deleting on only some machines may be undone by
+// the credential auto-sync if the template is exportable elsewhere.
+devicesRouter.post('/:id/users/:employeeNo/delete-fingerprints', async (req, res) => {
+  const src = await getDeviceById(req.params.id);
+  if (!src) return res.status(404).json({ error: 'not found' });
+  const employeeNo = String(req.params.employeeNo);
+  const guard = await adminTargetError(req, src, employeeNo);
+  if (guard) return res.status(403).json({ error: guard });
+  const ids = [...new Set((req.body?.device_ids || []).map(Number))].filter(Boolean);
+  const targets = (await Promise.all((ids.length ? ids : [src.id]).map((id) => getDeviceById(id)))).filter(Boolean);
+  const results = await Promise.all(targets.map(async (dev) => {
+    try {
+      const r = await isapi.deleteFingerprint(dev, employeeNo);
+      logSync(null, dev.id, 'delete-fingerprint', r.ok, { employeeNo, ...r });
+      return { device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) };
+    } catch (e) {
+      return { device: dev.name, ok: false, error: String(e.message || e) };
+    }
+  }));
+  invalidateRoster();
+  const okCount = results.filter((x) => x.ok).length;
+  res.status(okCount ? 200 : 502).json({ ok: okCount > 0, results });
+});
+
 // Delete a user's enrolled face(s) while keeping fingerprints, cards and the
 // profile. Applies to every given machine — deleting on just one would be
 // undone by the credential auto-sync copying the face back.
