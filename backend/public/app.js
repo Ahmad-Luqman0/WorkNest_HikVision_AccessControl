@@ -1336,7 +1336,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
     <h2>Add user</h2>
     <div class="two-col">
       <div class="field"><label>Name</label><input id="au_name" placeholder="Full name"></div>
-      <div class="field"><label>Employee # <small class="hint">(auto if blank)</small></label><input id="au_no" placeholder="e.g. 1005"></div>
+      <div class="field"><label>Employee # <small class="hint">(auto-generated)</small></label><input id="au_no" readonly style="opacity:.75;cursor:default" tabindex="-1"></div>
     </div>
     <div class="two-col">
       <div class="field"><label>RFID card # <small class="hint">(optional — typed, no tap needed)</small></label><input id="au_card" placeholder="e.g. 0012345678"></div>
@@ -1401,7 +1401,6 @@ function addUserModal(srcDev, devs, checkAll = false) {
     if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
     const body = {
       device_ids: deviceIds,
-      employeeNo: $('#au_no').value.trim() || undefined,
       name,
       role: $('#au_role').value,
       card_no: $('#au_card').value.trim() || undefined,
