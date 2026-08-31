@@ -5,6 +5,26 @@ import { getRoster, invalidateRoster } from '../machineCache.js';
 
 export const devicesRouter = Router();
 
+// Non-admin dashboard accounts may give an employee at most the FULL Entrance
+// group + ONE room. Admin accounts are unrestricted. Returns an error string
+// when the chosen machine set breaks the rule.
+async function roleLimitError(req, deviceIds) {
+  if ((req.auth?.role || 'user') === 'admin') return null;
+  const devs = await getAllDevices();
+  const entranceIds = devs
+    .filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
+    .map((d) => d.id);
+  const chosen = new Set((deviceIds || []).map(Number));
+  const rooms = [...chosen].filter((id) => !entranceIds.includes(id));
+  if (rooms.length > 1) {
+    return `Your account can grant the Entrance group plus ONE room per employee (you picked ${rooms.length} rooms) — ask an admin for more.`;
+  }
+  if (chosen.size && entranceIds.some((id) => !chosen.has(id))) {
+    return 'Your account must include the FULL Entrance group when granting access — use the Entrance chip.';
+  }
+  return null;
+}
+
 devicesRouter.get('/', async (req, res) => {
   const rows = await getAllDevices();
   // never leak passwords to the UI
@@ -101,6 +121,8 @@ devicesRouter.post('/users', async (req, res) => {
   if (!ids.length) return res.status(400).json({ error: 'pick at least one machine' });
   const devs = (await Promise.all(ids.map((id) => getDeviceById(id)))).filter(Boolean);
   if (!devs.length) return res.status(404).json({ error: 'no such machines' });
+  const limitErr = await roleLimitError(req, ids);
+  if (limitErr) return res.status(403).json({ error: limitErr });
   try {
     // Read existing users on every target machine: reject a duplicate # and
     // auto-pick a number that is free on all of them.
@@ -254,6 +276,8 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
   if (!src) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
   const wanted = new Set((req.body.device_ids || []).map(Number));
+  const limitErr = await roleLimitError(req, req.body.device_ids || []);
+  if (limitErr) return res.status(403).json({ error: limitErr });
   const validEnd = req.body.valid_end || null; // global fallback
   const validEnds = req.body.valid_ends || {}; // per-machine: { "<device_id>": "YYYY-MM-DDTHH:mm:ss" }
   try {
@@ -261,6 +285,8 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
     if (!person) return res.status(404).json({ error: `user ${employeeNo} not found on source machine` });
     const cards = await isapi.readCards(src, employeeNo);
     const prints = await isapi.readFingerprints(src, employeeNo);
+    let faces = [];
+    try { faces = await isapi.readFaces(src, employeeNo); } catch { /* face export unsupported — sync closes it later */ }
     const base = {
       employeeNo,
       name: person.name || `User ${employeeNo}`,
@@ -296,6 +322,7 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
           if (!r.ok) throw new Error(isapi.describe(r));
           for (const c of cards) await isapi.addCard(d, employeeNo, c);
           for (const fp of prints) await isapi.addFingerprint(d, employeeNo, fp.fingerData, fp.fingerPrintID);
+          for (const f of faces) await isapi.addFaceByModel(d, employeeNo, f.modelData);
           logSync(null, d.id, 'access-grant', true, { employeeNo });
           return { device_id: d.id, device: d.name, state: 'granted' };
         } else if (want && present && !enabled) {
@@ -649,6 +676,9 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
     (id) => id && id !== src.id
   );
   if (!targetIds.length) return res.status(400).json({ error: 'pick at least one target machine' });
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Copying a user between machines is admin-only — use Machine access (Entrance group + one room) instead.' });
+  }
   const validEnd = req.body.valid_end || null;
   const validBegin = req.body.valid_begin || null;
 
@@ -657,6 +687,8 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
     if (!person) return res.status(404).json({ error: `no user ${employeeNo} on source machine` });
     const cards = await isapi.readCards(src, employeeNo);
     const prints = await isapi.readFingerprints(src, employeeNo);
+    let faces = [];
+    try { faces = await isapi.readFaces(src, employeeNo); } catch { /* face export unsupported */ }
 
     const results = await Promise.all(targetIds.map(async (tid) => {
       const dev = await getDeviceById(tid);
@@ -684,6 +716,12 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
           const p = await isapi.addFingerprint(dev, employeeNo, fp.fingerData, fp.fingerPrintID);
           if (p.ok) detail.fingerprints++;
           logSync(null, dev.id, 'copy-fingerprint', p.ok, p);
+        }
+        detail.faces = 0;
+        for (const f of faces) {
+          const fr = await isapi.addFaceByModel(dev, employeeNo, f.modelData);
+          if (fr.ok) detail.faces++;
+          logSync(null, dev.id, 'copy-face', fr.ok, fr);
         }
         return { device_id: tid, device: dev.name, state: 'copied', ...detail };
       } catch (e) {

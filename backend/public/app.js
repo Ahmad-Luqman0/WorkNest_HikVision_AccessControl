@@ -568,7 +568,7 @@ function copyUserModal(srcDev, employeeNo, name, devs, users) {
     : '<span class="muted">No other machines yet. Provision a second machine in the database to copy to.</span>';
   openModal(`
     <h2>Copy “${esc(name || 'User ' + employeeNo)}” → machine(s)</h2>
-    <p class="hint">From ${esc(srcDev.name)}. Copies identity, fingerprints and cards. Face photos can't be exported from a device.</p>
+    <p class="hint">From ${esc(srcDev.name)}. Copies identity, fingerprints, cards and the face template.</p>
     <div class="field">
       <label>Access until <small class="hint">(deadline enforced by the machine)</small></label>
       <input id="copy_end" type="datetime-local">
@@ -1207,6 +1207,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       <button class="btn primary" id="acc_save">Apply</button>
     </div>`);
   wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
+  limitRoomSelection('acc-check', r.machines.map((m) => ({ id: m.device_id, grp: m.grp })));
   // "Today" preset: access until tonight 23:59 on that machine.
   document.querySelectorAll('.acc-today').forEach((b) => b.addEventListener('click', () => {
     const d = new Date();
@@ -1363,6 +1364,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       <button class="btn primary" id="au_save">Add user</button>
     </div>`);
   wireGroupSelect(devs, 'au-dev');
+  limitRoomSelection('au-dev', devs);
   // Fingerprint-capture machine list mirrors whichever machines are ticked.
   // With an RFID card # entered, the fingerprint becomes optional — a
   // "card only" choice appears (and is preselected when the card came first).
@@ -2002,12 +2004,31 @@ function resetDashPasswordModal(username, me) {
 }
 
 // Reveal the Dashboard Users nav item for admins (server enforces regardless).
+let dashRole = 'user';
 (async () => {
   try {
     const me = await api.get('/auth/me');
+    if (me.ok) dashRole = me.role || 'user';
     if (me.ok && me.role === 'admin') $('#navDashUsers').style.display = '';
   } catch { /* not signed in yet — login overlay handles it */ }
 })();
+
+// Non-admin dashboard accounts: Entrance group + ONE room per employee.
+// Removes the Select-all chip and keeps at most one non-entrance machine
+// ticked (the server enforces the same rule regardless).
+function limitRoomSelection(checkboxClass, devsList) {
+  if (dashRole === 'admin') return;
+  document.querySelector('[data-grpsel="*"]')?.remove();
+  const entr = new Set(devsList
+    .filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
+    .map((x) => String(x.id)));
+  document.querySelectorAll(`.${checkboxClass}`).forEach((c) => c.addEventListener('change', () => {
+    if (!c.checked || entr.has(String(c.value))) return;
+    document.querySelectorAll(`.${checkboxClass}:checked`).forEach((o) => {
+      if (o !== c && !entr.has(String(o.value))) { o.checked = false; o.dispatchEvent(new Event('change')); }
+    });
+  }));
+}
 
 // ---- Analytics & Occupancy View ----
 async function analyticsView() {
