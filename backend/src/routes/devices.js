@@ -25,6 +25,18 @@ async function roleLimitError(req, deviceIds) {
   return null;
 }
 
+// Non-admin dashboard accounts cannot see or change machine-admin users.
+async function adminTargetError(req, dev, employeeNo) {
+  if ((req.auth?.role || 'user') === 'admin') return null;
+  try {
+    const p = await isapi.getPerson(dev, String(employeeNo));
+    if (p?.localUIRight) return 'This is a machine admin — only dashboard admins can manage them.';
+  } catch { /* unreachable — the operation itself will report it */ }
+  return null;
+}
+const hideAdmins = (req, users) =>
+  (req.auth?.role || 'user') === 'admin' ? users : users.filter((u) => !u.localUIRight);
+
 devicesRouter.get('/', async (req, res) => {
   const rows = await getAllDevices();
   // never leak passwords to the UI
@@ -107,7 +119,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   try {
-    const users = await getRoster(dev);
+    const users = hideAdmins(req, await getRoster(dev));
     // Attach the actual card numbers per user (one bulk read for the whole
     // machine — not one call per user).
     let cardsBy = new Map();
@@ -149,18 +161,28 @@ devicesRouter.post('/users', async (req, res) => {
   if (!devs.length) return res.status(404).json({ error: 'no such machines' });
   const limitErr = await roleLimitError(req, ids);
   if (limitErr) return res.status(403).json({ error: limitErr });
+  if (req.body?.role === 'admin' && (req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Only dashboard admins can create machine-admin users.' });
+  }
   try {
-    // Read existing users on every target machine: reject a duplicate # and
-    // auto-pick a number that is free on all of them.
+    // Auto-pick an employee # that is free across EVERY reachable machine and
+    // the dashboard DB (not just the selected machines). Member numbers stay
+    // below 9000 — that range belongs to visitors/day passes.
     const taken = new Set();
     let maxNo = 0;
-    const rosters = await Promise.all(devs.map((dev) => getRoster(dev)));
+    const rosters = await Promise.all((await getAllDevices()).map((dev) => getRoster(dev).catch(() => null)));
     for (const existing of rosters) {
+      if (!existing) continue;
       for (const u of existing) {
         taken.add(String(u.employeeNo));
-        maxNo = Math.max(maxNo, Number(u.employeeNo) || 0);
+        const n = Number(u.employeeNo) || 0;
+        if (n < 9000) maxNo = Math.max(maxNo, n);
       }
     }
+    const dbMax = await getRow(
+      'SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees WHERE TRY_CAST(employee_no AS INT) < 9000'
+    );
+    maxNo = Math.max(maxNo, Number(dbMax?.m) || 0);
 
     let employeeNo = req.body.employeeNo ? String(req.body.employeeNo).trim() : '';
     if (employeeNo) {
@@ -243,6 +265,8 @@ devicesRouter.post('/:id/users', async (req, res) => {
 devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
+  const guard = await adminTargetError(req, dev, req.params.employeeNo);
+  if (guard) return res.status(403).json({ error: guard });
   try {
     const r = await isapi.deletePerson(dev, req.params.employeeNo);
     logSync(null, dev.id, 'delete-user', r.ok, { employeeNo: req.params.employeeNo, ...r });
@@ -302,6 +326,8 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
   if (!src) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
   const wanted = new Set((req.body.device_ids || []).map(Number));
+  const adminErr = await adminTargetError(req, src, employeeNo);
+  if (adminErr) return res.status(403).json({ error: adminErr });
   const limitErr = await roleLimitError(req, req.body.device_ids || []);
   if (limitErr) return res.status(403).json({ error: limitErr });
   const validEnd = req.body.valid_end || null; // global fallback
@@ -393,6 +419,8 @@ devicesRouter.post('/:id/users/:employeeNo/update', async (req, res) => {
   const ids = [...new Set((req.body?.device_ids || []).map(Number))].filter(Boolean);
   const targets = (await Promise.all((ids.length ? ids : [src.id]).map((id) => getDeviceById(id)))).filter(Boolean);
   const renumber = newNo && newNo !== employeeNo;
+  const guard = await adminTargetError(req, src, employeeNo);
+  if (guard) return res.status(403).json({ error: guard });
   const results = [];
   for (const dev of targets) {
     try {
@@ -450,6 +478,9 @@ devicesRouter.post('/:id/users/:employeeNo/role', async (req, res) => {
   if (!dev) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
   const admin = req.body?.role === 'admin';
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Changing machine-admin level is dashboard-admin only.' });
+  }
   try {
     const p = await isapi.getPerson(dev, employeeNo);
     if (!p) return res.status(404).json({ error: `no user ${employeeNo} on this machine` });

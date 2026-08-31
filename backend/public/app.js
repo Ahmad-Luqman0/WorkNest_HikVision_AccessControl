@@ -804,11 +804,11 @@ async function loadUsersTable(devs) {
       ['View profile', () => userProfileModal(e)],
       ['Edit name / #', () => editUserModal(e, devs)],
       ['Machine access', () => accessModal(e.on[0], e.u.employeeNo, e.u.name || '', devs)],
-      [admin ? 'Make user' : 'Make admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)],
+      ...(dashRole === 'admin' ? [[admin ? 'Make user' : 'Make admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)]] : []),
       ['Tag card', () => tagCard(e, devs)],
       ['Capture fingerprint', () => captureFpModal(e, devs)],
       e.u.numOfFace ? ['Delete face', () => deleteFaceAction(e, devs), true] : ['Enroll face', () => enrollFace(e, devs)],
-      ['Copy to machine…', () => copyUserModal(e.on[0], e.u.employeeNo, e.u.name || '', devs, entries.map((x) => x.u))],
+      ...(dashRole === 'admin' ? [['Copy to machine…', () => copyUserModal(e.on[0], e.u.employeeNo, e.u.name || '', devs, entries.map((x) => x.u))]] : []),
       ['Delete user', () => deleteUser(e.on, e.u.employeeNo, e.u.name || '', devs), true],
     ]);
   }));
@@ -1349,7 +1349,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
     <div class="two-col">
       <div class="field"><label>RFID card # <small class="hint">(optional — typed, no tap needed)</small></label><input id="au_card" placeholder="e.g. 0012345678"></div>
       <div class="field"><label>Access level</label>
-        <select id="au_role"><option value="user">User (door access only)</option><option value="admin">Admin (can enter the machine menu)</option></select>
+        <select id="au_role"><option value="user">User (door access only)</option>${dashRole === 'admin' ? '<option value="admin">Admin (can enter the machine menu)</option>' : ''}</select>
       </div>
     </div>
     <div class="two-col">

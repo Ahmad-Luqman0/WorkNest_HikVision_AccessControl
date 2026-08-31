@@ -135,7 +135,8 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
       for (const [fid, data] of union) {
         if (have.has(fid)) continue;
         const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
-        logSync(null, s.m.dev.id, 'sync-fingerprint', r.ok, { employeeNo, fingerPrintID: fid });
+        const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+        logSync(null, s.m.dev.id, 'sync-fingerprint', ok, { employeeNo, fingerPrintID: fid });
         if (r.ok) copied++;
       }
     }));
@@ -150,7 +151,8 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
       for (const c of union) {
         if (have.has(c)) continue;
         const r = await isapi.addCard(s.m.dev, employeeNo, c);
-        logSync(null, s.m.dev.id, 'sync-card', r.ok, { employeeNo, cardNo: c });
+        const ok = r.ok || /alreadyexist|duplicate/i.test(String(r.subStatusCode || ''));
+        logSync(null, s.m.dev.id, 'sync-card', ok, { employeeNo, cardNo: c });
         if (r.ok) copied++;
       }
     }));
@@ -165,7 +167,9 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
       if (faces.length) {
         await Promise.all(without.map(async (m) => {
           const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
-          logSync(null, m.dev.id, 'sync-face', r.ok, { employeeNo });
+          // 'deviceUserAlreadyExistFace' = the face is already there — success.
+          const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+          logSync(null, m.dev.id, 'sync-face', ok, { employeeNo });
           if (r.ok) copied++;
         }));
       }

@@ -268,9 +268,11 @@ app.get('/api/profile', async (req, res) => {
 // offline machines; the server fans out in parallel instead.
 app.get('/api/roster', async (req, res) => {
   const devices = await getAllDevices();
+  const isAdmin = (req.auth?.role || 'user') === 'admin';
   const rosters = await Promise.all(devices.map(async (dev) => {
     try {
-      return { device_id: dev.id, ok: true, users: await getRoster(dev) };
+      const users = await getRoster(dev);
+      return { device_id: dev.id, ok: true, users: isAdmin ? users : users.filter((u) => !u.localUIRight) };
     } catch (e) {
       return { device_id: dev.id, ok: false, error: String(e.message || e) };
     }
@@ -321,7 +323,8 @@ app.get('/api/consistency', async (req, res) => {
     const per = [];
     await Promise.all(devices.map(async (dev) => {
       try {
-        const users = await getRoster(dev);
+        // near-fresh scan — a stale cache here made fixed issues linger
+        const users = await getRoster(dev, 5000);
         const all = [];
         let pos = 0;
         for (let i = 0; i < 50; i++) {
