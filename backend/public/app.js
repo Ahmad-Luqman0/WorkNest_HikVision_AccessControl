@@ -31,8 +31,19 @@ function showLogin() {
   if ($('#loginOverlay')) return;
   const overlay = el(`<div id="loginOverlay" class="login-overlay">
     <form class="login-card" id="loginForm">
-      <h2>WorkNest Access Control</h2>
-      <p class="hint">Sign in to manage machines and members.</p>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
+        <div class="logo-icon" style="width:44px;height:44px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="10" rx="2" />
+            <circle cx="12" cy="16" r="1.5" fill="currentColor" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <div>
+          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:-0.03em;">WorkNest Access</h2>
+          <p class="hint" style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Centralized Control</p>
+        </div>
+      </div>
       <div class="field"><label>Username</label><input id="lg_user" autocomplete="username" value="admin"></div>
       <div class="field"><label>Password</label><input id="lg_pass" type="password" autocomplete="current-password"></div>
       <div id="lg_err" class="hint" style="color:var(--red);min-height:18px"></div>
