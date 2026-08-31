@@ -767,10 +767,22 @@ async function loadUsersTable(devs) {
     document.querySelectorAll('[data-fixmm]').forEach((b) => b.addEventListener('click', async () => {
       const iss = c.issues[Number(b.dataset.fixmm)];
       b.disabled = true;
-      toast(`Copying missing credentials for ${iss.name || '#' + iss.employeeNo}…`);
-      const r = await api.post('/consistency/fix', { employeeNo: iss.employeeNo, name: iss.name || '' });
-      toast(r.ok ? `Copied ${r.copied} credential(s) across ${r.machines} machines` : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
-      if (r.ok && current === 'users') loadUsersTable(devs);
+      // Batches of machines with a live progress bar; the credential union is
+      // always computed from every machine, each batch only WRITES to its own.
+      const allIds = devs.map((d) => d.id);
+      const chunks = [];
+      for (let i = 0; i < allIds.length; i += 10) chunks.push(allIds.slice(i, i + 10));
+      const bar = progressBar(allIds.length, `Copying to ${iss.name || '#' + iss.employeeNo} —`);
+      let copied = 0;
+      let err = null;
+      await runBatched(chunks, async (chunk) => {
+        const r = await api.post('/consistency/fix', { employeeNo: iss.employeeNo, name: iss.name || '', only_device_ids: chunk });
+        if (r.ok) copied += r.copied || 0;
+        else err = r.error || 'error';
+      }, bar, 1);
+      bar.close();
+      toast(err && !copied ? `Failed: ${err}` : `Done — copied ${copied} credential(s)`, err && !copied ? 'err' : 'ok');
+      if (current === 'users') loadUsersTable(devs);
     }));
   }).catch(() => {});
 

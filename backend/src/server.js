@@ -299,7 +299,10 @@ app.post('/api/consistency/fix', hardwareRateLimiter, async (req, res) => {
     if (members.length < 2) {
       return res.json({ ok: false, error: 'person found on fewer than 2 reachable machines — nothing to reconcile' });
     }
-    const r = await syncCredentialGroup(members);
+    const onlyIds = Array.isArray(req.body?.only_device_ids) && req.body.only_device_ids.length
+      ? new Set(req.body.only_device_ids.map(Number))
+      : null;
+    const r = await syncCredentialGroup(members, onlyIds);
     invalidateRoster();
     logSync(null, null, 'consistency-fix', true, { employeeNo, name, copied: r.copied, machines: members.length });
     res.json({ ok: true, machines: members.length, copied: r.copied });

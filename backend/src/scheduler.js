@@ -116,18 +116,21 @@ export async function runCredentialSync() {
 // Copy the union of ONE person's fingerprints, cards and face template to
 // every machine in `members` ([{dev, u}]) that lacks them. Used by the
 // periodic credential sync and by the dashboard's per-person Fix button.
-export async function syncCredentialGroup(members) {
+export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   let copied = 0;
   if (members.length < 2) return { copied };
   const employeeNo = String(members[0].u.employeeNo);
+  // onlyDeviceIds: write just to these machines (the union is still read from
+  // ALL members so nothing is missed) — lets the UI batch for progress.
+  const writable = (m) => !onlyDeviceIds || onlyDeviceIds.has(m.dev.id);
 
-  // Fingerprints: union by finger slot.
+  // Fingerprints: union by finger slot. Reads and writes fan out across
+  // machines in parallel (each machine still gets its calls one at a time).
   try {
-    const sets = [];
-    for (const m of members) sets.push({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) });
+    const sets = await Promise.all(members.map(async (m) => ({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) })));
     const union = new Map();
     for (const s of sets) for (const p of s.prints) if (!union.has(p.fingerPrintID)) union.set(p.fingerPrintID, p.fingerData);
-    for (const s of sets) {
+    await Promise.all(sets.filter((s) => writable(s.m)).map(async (s) => {
       const have = new Set(s.prints.map((p) => p.fingerPrintID));
       for (const [fid, data] of union) {
         if (have.has(fid)) continue;
@@ -135,15 +138,14 @@ export async function syncCredentialGroup(members) {
         logSync(null, s.m.dev.id, 'sync-fingerprint', r.ok, { employeeNo, fingerPrintID: fid });
         if (r.ok) copied++;
       }
-    }
+    }));
   } catch { /* partial failure — retried next round */ }
 
   // Cards: union of card numbers.
   try {
-    const sets = [];
-    for (const m of members) sets.push({ m, cards: await isapi.readCards(m.dev, employeeNo) });
+    const sets = await Promise.all(members.map(async (m) => ({ m, cards: await isapi.readCards(m.dev, employeeNo) })));
     const union = new Set(sets.flatMap((s) => s.cards));
-    for (const s of sets) {
+    await Promise.all(sets.filter((s) => writable(s.m)).map(async (s) => {
       const have = new Set(s.cards);
       for (const c of union) {
         if (have.has(c)) continue;
@@ -151,21 +153,21 @@ export async function syncCredentialGroup(members) {
         logSync(null, s.m.dev.id, 'sync-card', r.ok, { employeeNo, cardNo: c });
         if (r.ok) copied++;
       }
-    }
+    }));
   } catch { /* retried next round */ }
 
   // Faces: copy the recognition template to machines with no face enrolled.
   try {
     const withFace = members.filter((m) => Number(m.u.numOfFace) > 0);
-    const without = members.filter((m) => !Number(m.u.numOfFace));
+    const without = members.filter((m) => !Number(m.u.numOfFace) && writable(m));
     if (withFace.length && without.length) {
       const faces = await isapi.readFaces(withFace[0].dev, employeeNo);
       if (faces.length) {
-        for (const m of without) {
+        await Promise.all(without.map(async (m) => {
           const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
           logSync(null, m.dev.id, 'sync-face', r.ok, { employeeNo });
           if (r.ok) copied++;
-        }
+        }));
       }
     }
   } catch { /* retried next round */ }
