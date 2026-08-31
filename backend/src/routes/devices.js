@@ -168,10 +168,16 @@ async function nextFreeEmployeeNo() {
   return { taken, next: Math.max(maxNo, Number(dbMax?.m) || 0) + 1 };
 }
 
-// The next auto number, for prefilling the Add-user form.
+// The next auto number, for prefilling the Add-user form. Answered from the
+// DB + the persisted roster high-water mark — no machine round trips, so the
+// form fills instantly (creation still does the full authoritative scan).
 devicesRouter.get('/next-employee-no', async (req, res) => {
   try {
-    res.json({ ok: true, next: (await nextFreeEmployeeNo()).next });
+    const hw = await sp('WN_HIK_Settings_Get', { key: 'max_member_no' });
+    const dbMax = await getRow(
+      'SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees WHERE TRY_CAST(employee_no AS INT) < 9000'
+    );
+    res.json({ ok: true, next: Math.max(Number(hw[0]?.value) || 0, Number(dbMax?.m) || 0) + 1 });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }

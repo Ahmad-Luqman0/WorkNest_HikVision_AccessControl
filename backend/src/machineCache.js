@@ -5,9 +5,26 @@
 // slow. All read-heavy paths share one scan per machine per TTL window,
 // and concurrent requests share the same in-flight scan.
 import * as isapi from './isapi.js';
+import { sp } from './db.js';
 
 const TTL = 20000; // ms
-const entries = new Map(); // deviceId -> { at, data, inflight }
+const FAIL_TTL = 25000; // an unreachable machine isn't retried for this long
+const entries = new Map(); // deviceId -> { at, data, inflight, failedAt, lastErr }
+
+// Persistent high-water mark of member employee numbers (< 9000) seen on any
+// roster — lets the Add-user form prefill instantly without machine calls.
+let _hw = 0;
+function trackHighWater(users) {
+  let mx = 0;
+  for (const u of users) {
+    const n = Number(u.employeeNo) || 0;
+    if (n < 9000) mx = Math.max(mx, n);
+  }
+  if (mx > _hw) {
+    _hw = mx;
+    sp('WN_HIK_Settings_Set', { key: 'max_member_no', value: String(mx) }).catch(() => {});
+  }
+}
 
 async function scan(dev) {
   const users = [];
@@ -28,13 +45,19 @@ export function getRoster(dev, maxAge = TTL) {
   const now = Date.now();
   if (e?.data && now - e.at < maxAge) return Promise.resolve(e.data);
   if (e?.inflight) return e.inflight;
+  // Recently-failed machine: fail fast instead of re-waiting on the timeout.
+  if (e?.failedAt && now - e.failedAt < FAIL_TTL && !(e?.data && maxAge > TTL)) {
+    return Promise.reject(new Error(e.lastErr || 'machine unreachable (cached)'));
+  }
   const inflight = scan(dev)
     .then((users) => {
       entries.set(dev.id, { at: Date.now(), data: users });
+      trackHighWater(users);
       return users;
     })
     .catch((err) => {
-      entries.set(dev.id, { at: e?.at || 0, data: e?.data }); // drop inflight, keep stale data
+      // drop inflight, keep stale data, remember the failure briefly
+      entries.set(dev.id, { at: e?.at || 0, data: e?.data, failedAt: Date.now(), lastErr: String(err.message || err) });
       throw err;
     });
   entries.set(dev.id, { at: e?.at || 0, data: e?.data, inflight });

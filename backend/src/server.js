@@ -351,6 +351,7 @@ app.get('/api/consistency', async (req, res) => {
         const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
         if (!people.has(key)) people.set(key, { employeeNo: String(u.employeeNo), name: u.name || '', machines: [] });
         people.get(key).machines.push({
+          dev,
           device: dev.name,
           cards: cards.get(String(u.employeeNo)) || [],
           fp: Number(u.numOfFP) || 0,
@@ -400,16 +401,24 @@ app.get('/api/consistency', async (req, res) => {
       if (fpMax && fpMiss.length) {
         issues.push({
           type: 'fp-differ', employeeNo: p.employeeNo, name: p.name,
-          detail: `${who} has ${fpMax} fingerprint(s) on some machines but fewer on ${fpMiss.map((m) => `${m.device} (${m.fp})`).join(', ')} — auto-sync should close this shortly.`,
+          detail: `${who} has ${fpMax} fingerprint(s) on some machines but fewer on ${fpMiss.map((m) => `${m.device} (${m.fp})`).join(', ')} — auto-sync copies it when the template is exportable; if this persists, recapture once via Actions → Capture fingerprint (one scan enrolls it everywhere).`,
         });
       }
       const faceMax = Math.max(...p.machines.map((m) => m.face));
       const faceMiss = p.machines.filter((m) => m.face < faceMax);
       if (faceMax && faceMiss.length) {
-        issues.push({
-          type: 'face-differ', employeeNo: p.employeeNo, name: p.name,
-          detail: `${who} has a face enrolled on some machines but not on ${faceMiss.map((m) => m.device).join(', ')} — auto-sync should close this shortly.`,
-        });
+        // Roster counts can lag right after a sync — trust the face library:
+        // only report machines whose FDLib really has no template.
+        const reallyMissing = (await Promise.all(faceMiss.map(async (m) => {
+          try { return (await isapi.readFaces(m.dev, p.employeeNo)).length ? null : m; }
+          catch { return null; /* unreachable — don't accuse it */ }
+        }))).filter(Boolean);
+        if (reallyMissing.length) {
+          issues.push({
+            type: 'face-differ', employeeNo: p.employeeNo, name: p.name,
+            detail: `${who} has a face enrolled on some machines but not on ${reallyMissing.map((m) => m.device).join(', ')} — auto-sync should close this shortly.`,
+          });
+        }
       }
     }
     res.json({ ok: true, checked: per.length, issues });
