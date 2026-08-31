@@ -148,6 +148,35 @@ devicesRouter.get('/:id/users', async (req, res) => {
   }
 });
 
+// Next employee # free across every reachable machine and the dashboard DB.
+// Member numbers stay below 9000 — that range belongs to visitors/day passes.
+async function nextFreeEmployeeNo() {
+  const taken = new Set();
+  let maxNo = 0;
+  const rosters = await Promise.all((await getAllDevices()).map((dev) => getRoster(dev).catch(() => null)));
+  for (const existing of rosters) {
+    if (!existing) continue;
+    for (const u of existing) {
+      taken.add(String(u.employeeNo));
+      const n = Number(u.employeeNo) || 0;
+      if (n < 9000) maxNo = Math.max(maxNo, n);
+    }
+  }
+  const dbMax = await getRow(
+    'SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees WHERE TRY_CAST(employee_no AS INT) < 9000'
+  );
+  return { taken, next: Math.max(maxNo, Number(dbMax?.m) || 0) + 1 };
+}
+
+// The next auto number, for prefilling the Add-user form.
+devicesRouter.get('/next-employee-no', async (req, res) => {
+  try {
+    res.json({ ok: true, next: (await nextFreeEmployeeNo()).next });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // Create a user on one or more machines in a single operation, with an optional
 // typed RFID card attached on each. The employee # is chosen to be free on ALL
 // selected machines so the same person keeps one number everywhere.
@@ -166,30 +195,15 @@ devicesRouter.post('/users', async (req, res) => {
   }
   try {
     // Auto-pick an employee # that is free across EVERY reachable machine and
-    // the dashboard DB (not just the selected machines). Member numbers stay
-    // below 9000 — that range belongs to visitors/day passes.
-    const taken = new Set();
-    let maxNo = 0;
-    const rosters = await Promise.all((await getAllDevices()).map((dev) => getRoster(dev).catch(() => null)));
-    for (const existing of rosters) {
-      if (!existing) continue;
-      for (const u of existing) {
-        taken.add(String(u.employeeNo));
-        const n = Number(u.employeeNo) || 0;
-        if (n < 9000) maxNo = Math.max(maxNo, n);
-      }
-    }
-    const dbMax = await getRow(
-      'SELECT MAX(TRY_CAST(employee_no AS INT)) AS m FROM dbo.WN_HIK_Employees WHERE TRY_CAST(employee_no AS INT) < 9000'
-    );
-    maxNo = Math.max(maxNo, Number(dbMax?.m) || 0);
+    // the dashboard DB (not just the selected machines).
+    const { taken, next } = await nextFreeEmployeeNo();
 
     let employeeNo = req.body.employeeNo ? String(req.body.employeeNo).trim() : '';
     if (employeeNo) {
       if (taken.has(employeeNo))
-        return res.status(409).json({ error: `Employee #${employeeNo} already exists on a selected machine — pick another or leave it blank.` });
+        return res.status(409).json({ error: `Employee #${employeeNo} already exists on a machine — pick another or leave it blank.` });
     } else {
-      employeeNo = String(maxNo + 1);
+      employeeNo = String(next);
     }
 
     const record = {

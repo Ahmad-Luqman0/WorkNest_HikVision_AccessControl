@@ -1372,6 +1372,12 @@ function addUserModal(srcDev, devs, checkAll = false) {
   wireGroupSelect(devs, 'au-dev');
   limitRoomSelection('au-dev', devs);
   wireChecklistFilter('au_filter');
+  // Show the auto-generated employee # (checked across all machines + DB).
+  $('#au_no').placeholder = 'auto…';
+  api.get('/devices/next-employee-no').then((r) => {
+    const inp = $('#au_no');
+    if (r?.ok && inp && !inp.value.trim()) inp.value = String(r.next);
+  }).catch(() => {});
   // Fingerprint-capture machine list mirrors whichever machines are ticked.
   // With an RFID card # entered, the fingerprint becomes optional — a
   // "card only" choice appears (and is preselected when the card came first).
