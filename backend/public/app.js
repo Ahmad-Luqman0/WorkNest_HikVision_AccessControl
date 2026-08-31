@@ -2023,7 +2023,11 @@ let dashRole = 'user';
   try {
     const me = await api.get('/auth/me');
     if (me.ok) dashRole = me.role || 'user';
-    if (me.ok && me.role === 'admin') $('#navDashUsers').style.display = '';
+    if (me.ok && me.role === 'admin') {
+      $('#navDashUsers').style.display = '';
+      const a = $('#navAudit');
+      if (a) a.style.display = '';
+    }
   } catch { /* not signed in yet — login overlay handles it */ }
 })();
 
@@ -2129,6 +2133,7 @@ async function analyticsView() {
 
 // ---- Admin Audit Log View ----
 async function auditView() {
+  if (dashRole !== 'admin') { content.innerHTML = '<div class="empty">Admin Audit is available to admin accounts only.</div>'; return; }
   clearInterval(_autoTimer);
   content.innerHTML = '<div class="empty">Loading admin audit trail…</div>';
   const data = await api.get('/audit-logs?limit=200');
