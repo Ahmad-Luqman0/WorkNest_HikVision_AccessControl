@@ -317,25 +317,26 @@ async function dashboard() {
       const trendCls = isUp ? 'up' : 'down';
       trendBadge = `<span class="stat-trend ${trendCls}">${arrow} ${isUp ? '+' : ''}${trend}%</span>`;
     }
+    const displayVal = (value !== undefined && value !== null && !Number.isNaN(value)) ? value : 0;
     return `
     <div class="stat ${cls}">
       <div class="stat-head">
-        <span class="stat-icon">${ICONS[icon]}</span>
+        <span class="stat-icon">${ICONS[icon] || ''}</span>
         <span class="label">${label}</span>
         ${trendBadge}
       </div>
-      <div class="value">${value}</div>
+      <div class="value">${displayVal}</div>
       ${sub ? `<div class="sub">${sub}</div>` : ''}
     </div>`;
   };
 
   const getCredBadge = (action) => {
     const act = String(action || '').toLowerCase();
-    if (act.includes('card') || act.includes('rfid')) return { icon: '💳', label: 'RFID Card', cls: 'cred-card' };
-    if (act.includes('face')) return { icon: '👤', label: 'Facial Scan', cls: 'cred-face' };
-    if (act.includes('finger')) return { icon: '👆', label: 'Fingerprint', cls: 'cred-finger' };
-    if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: '🔓', label: 'Remote Unlock', cls: 'cred-remote' };
-    return { icon: '🔑', label: 'Access Event', cls: 'cred-gen' };
+    if (act.includes('card') || act.includes('rfid')) return { icon: ICONS.card, label: 'RFID Card', cls: 'cred-card' };
+    if (act.includes('face')) return { icon: ICONS.user, label: 'Facial Scan', cls: 'cred-face' };
+    if (act.includes('finger')) return { icon: ICONS.user, label: 'Fingerprint', cls: 'cred-finger' };
+    if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: ICONS.unlock, label: 'Remote Unlock', cls: 'cred-remote' };
+    return { icon: ICONS.machine, label: 'Access Event', cls: 'cred-gen' };
   };
 
   const machineRows = devs.length ? devs.map((d) => `
