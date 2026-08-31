@@ -62,7 +62,29 @@ devicesRouter.get('/:id/users', async (req, res) => {
   if (!dev) return res.status(404).json({ error: 'not found' });
   try {
     const users = await getRoster(dev);
-    res.json({ ok: true, total: users.length, users });
+    // Attach the actual card numbers per user (one bulk read for the whole
+    // machine — not one call per user).
+    let cardsBy = new Map();
+    try {
+      const all = [];
+      let pos = 0;
+      for (let i = 0; i < 50; i++) {
+        const page = await isapi.readAllCards(dev, pos, 100);
+        all.push(...page.list);
+        if (!page.list.length || all.length >= page.total) break;
+        pos += page.list.length;
+      }
+      for (const c of all) {
+        const emp = String(c.employeeNo);
+        if (!cardsBy.has(emp)) cardsBy.set(emp, []);
+        cardsBy.get(emp).push(String(c.cardNo));
+      }
+    } catch { /* cards unavailable — counts still shown */ }
+    res.json({
+      ok: true,
+      total: users.length,
+      users: users.map((u) => ({ ...u, cards: cardsBy.get(String(u.employeeNo)) || [] })),
+    });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }

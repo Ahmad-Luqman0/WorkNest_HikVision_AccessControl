@@ -497,7 +497,8 @@ function usersModal(srcDev, users, devs = []) {
   const rows = users.length
     ? users.map((u) => {
         const creds = [];
-        if (u.numOfCard) creds.push(`${u.numOfCard} card`);
+        if (u.cards && u.cards.length) creds.push(`card${u.cards.length > 1 ? 's' : ''} ${u.cards.join(', ')}`);
+        else if (u.numOfCard) creds.push(`${u.numOfCard} card`);
         if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
         if (u.numOfFace) creds.push(`${u.numOfFace} face`);
         const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
