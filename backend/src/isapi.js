@@ -19,17 +19,22 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
     body = xml;
     h['Content-Type'] = 'application/xml';
   }
-  const res = await digestRequest({
-    baseUrl: deviceBaseUrl(device),
-    username: device.username,
-    password: device.password,
-    method,
-    path,
-    body,
-    headers: h,
-    timeout,
-  });
-  return res;
+  try {
+    const res = await digestRequest({
+      baseUrl: deviceBaseUrl(device),
+      username: device.username,
+      password: device.password,
+      method,
+      path,
+      body,
+      headers: h,
+      timeout,
+    });
+    return res;
+  } catch (err) {
+    const hostStr = device.name ? `${device.name} (${device.host})` : device.host;
+    throw new Error(`Device unreachable [${hostStr}]: ${err.message || String(err)}`);
+  }
 }
 
 // ---- Connectivity / device info -------------------------------------------

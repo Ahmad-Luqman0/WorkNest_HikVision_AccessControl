@@ -14,6 +14,7 @@ import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster } from './machineCache.js';
 import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
+import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -471,6 +472,19 @@ app.get('/api/stats', async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// 404 API & Global Error Handlers
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+// Global process guards to catch unexpected background errors gracefully
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandled-rejection] Promise:', promise, 'Reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[uncaught-exception] Error:', err.message || err, err.stack);
+});
 
 const PORT = process.env.PORT || 3000;
 const isServerless = !!process.env.VERCEL;
