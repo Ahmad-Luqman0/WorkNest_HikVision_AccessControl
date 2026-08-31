@@ -3,10 +3,10 @@
 // Period natively — these jobs handle the extras (status flips, auto-delete,
 // keeping credentials identical everywhere).
 import cron from 'node-cron';
-import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync } from './db.js';
+import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
-import { getRoster } from './machineCache.js';
+import { getRoster, invalidateRoster } from './machineCache.js';
 import { migrateRenewedBookings } from './routes/bookings.js';
 
 function nowLocalIso() {
@@ -178,6 +178,65 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   return { copied };
 }
 
+// Replay queued operations against machines that are back online. Ops for
+// still-offline machines stay queued; an op that keeps failing on a live
+// machine is dropped (and logged) after 8 attempts.
+export async function replayPendingOps() {
+  const ops = await getRows('SELECT TOP 200 * FROM dbo.WN_HIK_PendingOps ORDER BY id');
+  if (!ops.length) return { applied: 0 };
+  const devCache = new Map();
+  let applied = 0;
+  for (const o of ops) {
+    if (!devCache.has(o.device_id)) devCache.set(o.device_id, await getDeviceById(o.device_id));
+    const dev = devCache.get(o.device_id);
+    if (!dev) { await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE id=?', [o.id]); continue; }
+    if (!dev.online) continue; // wait for the watchdog to see it up
+    try {
+      const payload = o.payload ? JSON.parse(o.payload) : {};
+      const emp = String(o.employee_no || '');
+      if (o.op === 'grant') {
+        const rec = payload.record;
+        let r = await isapi.upsertPerson(dev, rec, 'add');
+        if (!r.ok) r = await isapi.upsertPerson(dev, rec, 'modify');
+        if (!r.ok) throw new Error(isapi.describe(r));
+        for (const c of payload.cards || []) await isapi.addCard(dev, emp, c);
+        for (const fp of payload.prints || []) await isapi.addFingerprint(dev, emp, fp.fingerData, fp.fingerPrintID);
+        for (const f of payload.faces || []) await isapi.addFaceByModel(dev, emp, f);
+      } else if (['block', 'unblock', 'rename', 'set-role'].includes(o.op)) {
+        const p = await isapi.getPerson(dev, emp);
+        if (p) {
+          const r = await isapi.upsertPerson(dev, {
+            employeeNo: emp,
+            name: o.op === 'rename' ? payload.name : (p.name || `User ${emp}`),
+            admin: o.op === 'set-role' ? !!payload.admin : !!p.localUIRight,
+            enabled: o.op === 'block' ? false : o.op === 'unblock' ? true : p.Valid?.enable !== false,
+            validBegin: p.Valid?.beginTime || '2020-01-01T00:00:00',
+            validEnd: p.Valid?.endTime || '2037-12-31T23:59:59',
+          }, 'modify');
+          if (!r.ok) throw new Error(isapi.describe(r));
+        }
+      } else if (o.op === 'delete-user') {
+        const r = await isapi.deletePerson(dev, emp);
+        if (!r.ok && !/notExist/i.test(String(r.subStatusCode || ''))) throw new Error(isapi.describe(r));
+      }
+      await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE id=?', [o.id]);
+      logSync(null, dev.id, `applied-queued:${o.op}`, true, { employee_no: o.employee_no });
+      invalidateRoster(dev.id);
+      applied++;
+    } catch (e) {
+      const msg = String(e.message || e).slice(0, 400);
+      await run('UPDATE dbo.WN_HIK_PendingOps SET attempts=attempts+1, last_error=? WHERE id=?', [msg, o.id]);
+      if (isUnreachableErr(e)) continue;
+      if ((Number(o.attempts) || 0) + 1 >= 8) {
+        await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE id=?', [o.id]);
+        logSync(null, dev.id, `dropped-queued:${o.op}`, false, msg);
+      }
+    }
+  }
+  if (applied) console.log(`[queue] applied ${applied} queued op(s) to machines that came back online`);
+  return { applied };
+}
+
 // Near-real-time enrollment watcher. Every 30s it takes a cheap "signature" of
 // each machine's roster; any change (enrolled finger/face/card, user added or
 // removed at a terminal) triggers the credential sync immediately. It also
@@ -212,6 +271,7 @@ export async function runRosterWatch() {
     if (pending.n) {
       try { await syncAllPending(); } catch (e) { console.error('[watch] pending sync failed:', e); }
     }
+    try { await replayPendingOps(); } catch (e) { console.error('[watch] queued-op replay failed:', e); }
     const sig = await rosterSignature();
     if (_rosterSig !== null && sig !== _rosterSig) {
       const r = await runCredentialSync();

@@ -12,7 +12,7 @@ import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup } from './scheduler.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
@@ -88,7 +88,10 @@ app.post('/api/online-check', async (req, res) => {
       return res.json({ ok: true, skipped: true, changed: 0 });
     }
     await sp('WN_HIK_Settings_Set', { key: 'online_check_at', value: String(now) });
-    res.json({ ok: true, ...(await runOnlineCheck()) });
+    const check = await runOnlineCheck();
+    let replayed = 0;
+    try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
+    res.json({ ok: true, ...check, replayed });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -641,7 +644,13 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  // Browsers must revalidate app.js/styles.css on every load — stale cached
+  // UI after a deploy looked like bugs that were already fixed.
+  setHeaders(res, filePath) {
+    if (/\.(js|css|html)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 // 404 API & Global Error Handlers
 app.use(notFoundHandler);

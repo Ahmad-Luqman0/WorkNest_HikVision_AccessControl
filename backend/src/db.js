@@ -34,9 +34,43 @@ export async function initDb() {
   if (pool) return pool;
   pool = await new sql.ConnectionPool(config).connect();
   pool.on('error', (e) => console.error('[db] pool error:', e.message));
+  await ensurePendingOps();
   await migrateFromSqliteIfEmpty();
   return pool;
 }
+
+// Operations aimed at a machine that was offline are queued here and replayed
+// automatically when the machine comes back — so a rename/grant/delete can
+// never be half-applied across the fleet again.
+async function ensurePendingOps() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_PendingOps','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_PendingOps (
+        id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_PendingOps PRIMARY KEY,
+        device_id INT NOT NULL,
+        op NVARCHAR(32) NOT NULL,
+        employee_no NVARCHAR(32) NULL,
+        payload NVARCHAR(MAX) NULL,
+        attempts INT NOT NULL CONSTRAINT DF_WN_HIK_PendingOps_att DEFAULT (0),
+        last_error NVARCHAR(MAX) NULL,
+        created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_PendingOps_created DEFAULT (SYSDATETIME())
+      )`);
+  } catch (e) {
+    console.error('[db] ensurePendingOps:', e.message);
+  }
+}
+
+// Queue (or replace) a pending op for an offline machine.
+export async function queueOp(device_id, op, employee_no, payload) {
+  await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE device_id=? AND op=? AND ISNULL(employee_no,\'\')=ISNULL(?,\'\')',
+    [Number(device_id), op, employee_no ?? null]);
+  await run('INSERT INTO dbo.WN_HIK_PendingOps (device_id, op, employee_no, payload) VALUES (?,?,?,?)',
+    [Number(device_id), op, employee_no ?? null, payload ? JSON.stringify(payload) : null]);
+  logSync(null, device_id, `queued:${op}`, true, { employee_no });
+}
+
+export const isUnreachableErr = (e) =>
+  /timed out|timeout|ENETUNREACH|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|unreachable/i.test(String(e?.message || e));
 
 const p2 = (n) => String(n).padStart(2, '0');
 function toLocalString(d) {

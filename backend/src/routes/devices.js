@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById, getRow, run, sp, logSync } from '../db.js';
+import { getAllDevices, getDeviceById, getRow, run, sp, logSync, queueOp, isUnreachableErr } from '../db.js';
 import * as isapi from '../isapi.js';
 import { getRoster, invalidateRoster } from '../machineCache.js';
 
@@ -296,7 +296,14 @@ devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
   const guard = await adminTargetError(req, dev, req.params.employeeNo);
   if (guard) return res.status(403).json({ error: guard });
   try {
-    const r = await isapi.deletePerson(dev, req.params.employeeNo);
+    let r;
+    try { r = await isapi.deletePerson(dev, req.params.employeeNo); }
+    catch (e) {
+      if (isUnreachableErr(e)) {
+        await queueOp(dev.id, 'delete-user', String(req.params.employeeNo), {}).catch(() => {});
+        r = { ok: true, queued: true };
+      } else throw e;
+    }
     logSync(null, dev.id, 'delete-user', r.ok, { employeeNo: req.params.employeeNo, ...r });
     invalidateRoster(dev.id);
     // Also drop the dashboard-side desired state for this machine — otherwise
@@ -385,7 +392,22 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
     const results = await Promise.all(devices.map(async (d) => {
       let existing;
       try { existing = await isapi.getPerson(d, employeeNo); }
-      catch { return { device_id: d.id, device: d.name, state: 'unreachable' }; }
+      catch {
+        // Machine offline: queue the desired state — it applies automatically
+        // when the machine comes back, so the change is never half-done.
+        const dEnd0 = validEnds[String(d.id)] || validEnd || person.Valid?.endTime || '2037-12-31T23:59:59';
+        try {
+          if (wanted.has(d.id)) {
+            await queueOp(d.id, 'grant', employeeNo, {
+              record: { ...base, validEnd: dEnd0, enabled: true },
+              cards, prints, faces: faces.map((f) => f.modelData),
+            });
+          } else {
+            await queueOp(d.id, 'block', employeeNo, {});
+          }
+          return { device_id: d.id, device: d.name, state: 'queued' };
+        } catch { return { device_id: d.id, device: d.name, state: 'unreachable' }; }
+      }
       const present = !!existing;
       const enabled = present && existing.Valid?.enable !== false;
       const want = wanted.has(d.id);
@@ -452,7 +474,16 @@ devicesRouter.post('/:id/users/:employeeNo/update', async (req, res) => {
   const results = [];
   for (const dev of targets) {
     try {
-      const p = await isapi.getPerson(dev, employeeNo);
+      let p;
+      try { p = await isapi.getPerson(dev, employeeNo); }
+      catch (e) {
+        if (isUnreachableErr(e) && !renumber && newName) {
+          await queueOp(dev.id, 'rename', employeeNo, { name: newName }).catch(() => {});
+          results.push({ device: dev.name, ok: true, queued: true });
+          continue;
+        }
+        throw e;
+      }
       if (!p) { results.push({ device: dev.name, ok: false, error: 'user not on this machine' }); continue; }
       if (renumber) {
         const clash = await isapi.getPerson(dev, newNo);
@@ -510,7 +541,15 @@ devicesRouter.post('/:id/users/:employeeNo/role', async (req, res) => {
     return res.status(403).json({ error: 'Changing machine-admin level is dashboard-admin only.' });
   }
   try {
-    const p = await isapi.getPerson(dev, employeeNo);
+    let p;
+    try { p = await isapi.getPerson(dev, employeeNo); }
+    catch (e) {
+      if (isUnreachableErr(e)) {
+        await queueOp(dev.id, 'set-role', employeeNo, { admin }).catch(() => {});
+        return res.json({ ok: true, queued: true, role: admin ? 'admin' : 'user' });
+      }
+      throw e;
+    }
     if (!p) return res.status(404).json({ error: `no user ${employeeNo} on this machine` });
     const r = await isapi.upsertPerson(
       dev,
