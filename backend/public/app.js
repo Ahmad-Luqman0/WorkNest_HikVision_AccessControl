@@ -759,9 +759,18 @@ async function loadUsersTable(devs) {
       <div class="notice-banner" style="cursor:default">
         <b>${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines</b> — the dashboard compared ${c.checked} reachable machine${c.checked === 1 ? '' : 's'}.
         <details style="margin-top:6px"><summary style="cursor:pointer">Show details</summary>
-          <ul style="margin:8px 0 0 18px; padding:0">${c.issues.map((i) => `<li style="margin-bottom:4px">${esc(i.detail)}</li>`).join('')}</ul>
+          <ul style="margin:8px 0 0 18px; padding:0">${c.issues.map((i, n) => `<li style="margin-bottom:6px">${esc(i.detail)}
+            ${i.employeeNo !== undefined && i.type !== 'card-conflict' ? `<button class="btn sm" style="margin-left:8px" data-fixmm="${n}">Copy missing to ${esc(i.name || '#' + i.employeeNo)}'s machines</button>` : ''}</li>`).join('')}</ul>
         </details>
       </div>`;
+    document.querySelectorAll('[data-fixmm]').forEach((b) => b.addEventListener('click', async () => {
+      const iss = c.issues[Number(b.dataset.fixmm)];
+      b.disabled = true;
+      toast(`Copying missing credentials for ${iss.name || '#' + iss.employeeNo}…`);
+      const r = await api.post('/consistency/fix', { employeeNo: iss.employeeNo, name: iss.name || '' });
+      toast(r.ok ? `Copied ${r.copied} credential(s) across ${r.machines} machines` : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+      if (r.ok && current === 'users') loadUsersTable(devs);
+    }));
   }).catch(() => {});
 
   holder.querySelectorAll('[data-profile]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userProfileModal(entries[Number(b.dataset.profile)]); }));

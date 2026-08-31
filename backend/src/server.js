@@ -11,8 +11,8 @@ import { bookingsRouter } from './routes/bookings.js';
 import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
-import { getRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck } from './scheduler.js';
+import { getRoster, invalidateRoster } from './machineCache.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
@@ -276,6 +276,36 @@ app.get('/api/roster', async (req, res) => {
     }
   }));
   res.json({ ok: true, rosters });
+});
+
+// Fix one person's credential gaps NOW: copy the union of their cards,
+// fingerprints and face template to every reachable machine they exist on
+// (matched by employee # AND name). Powers the mismatch banner's Fix button.
+app.post('/api/consistency/fix', hardwareRateLimiter, async (req, res) => {
+  const employeeNo = String(req.body?.employeeNo ?? '').trim();
+  const name = String(req.body?.name ?? '').trim().toLowerCase();
+  if (!employeeNo) return res.status(400).json({ ok: false, error: 'employeeNo required' });
+  try {
+    const devices = await getAllDevices();
+    const members = [];
+    await Promise.all(devices.map(async (dev) => {
+      try {
+        const users = await getRoster(dev);
+        const u = users.find((x) => String(x.employeeNo) === employeeNo
+          && String(x.name || '').trim().toLowerCase() === name);
+        if (u) members.push({ dev, u });
+      } catch { /* unreachable — skipped */ }
+    }));
+    if (members.length < 2) {
+      return res.json({ ok: false, error: 'person found on fewer than 2 reachable machines — nothing to reconcile' });
+    }
+    const r = await syncCredentialGroup(members);
+    invalidateRoster();
+    logSync(null, null, 'consistency-fix', true, { employeeNo, name, copied: r.copied, machines: members.length });
+    res.json({ ok: true, machines: members.length, copied: r.copied });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 // Central-truth check: compare every person's credentials across machines and

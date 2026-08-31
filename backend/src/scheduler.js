@@ -108,57 +108,67 @@ export async function runCredentialSync() {
   let copied = 0;
   for (const members of groups.values()) {
     if (members.length < 2) continue;
-    const employeeNo = String(members[0].u.employeeNo);
-
-    // Fingerprints: union by finger slot.
-    try {
-      const sets = [];
-      for (const m of members) sets.push({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) });
-      const union = new Map();
-      for (const s of sets) for (const p of s.prints) if (!union.has(p.fingerPrintID)) union.set(p.fingerPrintID, p.fingerData);
-      for (const s of sets) {
-        const have = new Set(s.prints.map((p) => p.fingerPrintID));
-        for (const [fid, data] of union) {
-          if (have.has(fid)) continue;
-          const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
-          logSync(null, s.m.dev.id, 'sync-fingerprint', r.ok, { employeeNo, fingerPrintID: fid });
-          if (r.ok) copied++;
-        }
-      }
-    } catch { /* partial failure — retried next round */ }
-
-    // Cards: union of card numbers.
-    try {
-      const sets = [];
-      for (const m of members) sets.push({ m, cards: await isapi.readCards(m.dev, employeeNo) });
-      const union = new Set(sets.flatMap((s) => s.cards));
-      for (const s of sets) {
-        const have = new Set(s.cards);
-        for (const c of union) {
-          if (have.has(c)) continue;
-          const r = await isapi.addCard(s.m.dev, employeeNo, c);
-          logSync(null, s.m.dev.id, 'sync-card', r.ok, { employeeNo, cardNo: c });
-          if (r.ok) copied++;
-        }
-      }
-    } catch { /* retried next round */ }
-
-    // Faces: copy the recognition template to machines with no face enrolled.
-    try {
-      const withFace = members.filter((m) => Number(m.u.numOfFace) > 0);
-      const without = members.filter((m) => !Number(m.u.numOfFace));
-      if (withFace.length && without.length) {
-        const faces = await isapi.readFaces(withFace[0].dev, employeeNo);
-        if (faces.length) {
-          for (const m of without) {
-            const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
-            logSync(null, m.dev.id, 'sync-face', r.ok, { employeeNo });
-            if (r.ok) copied++;
-          }
-        }
-      }
-    } catch { /* retried next round */ }
+    copied += (await syncCredentialGroup(members)).copied;
   }
+  return { copied };
+}
+
+// Copy the union of ONE person's fingerprints, cards and face template to
+// every machine in `members` ([{dev, u}]) that lacks them. Used by the
+// periodic credential sync and by the dashboard's per-person Fix button.
+export async function syncCredentialGroup(members) {
+  let copied = 0;
+  if (members.length < 2) return { copied };
+  const employeeNo = String(members[0].u.employeeNo);
+
+  // Fingerprints: union by finger slot.
+  try {
+    const sets = [];
+    for (const m of members) sets.push({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) });
+    const union = new Map();
+    for (const s of sets) for (const p of s.prints) if (!union.has(p.fingerPrintID)) union.set(p.fingerPrintID, p.fingerData);
+    for (const s of sets) {
+      const have = new Set(s.prints.map((p) => p.fingerPrintID));
+      for (const [fid, data] of union) {
+        if (have.has(fid)) continue;
+        const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
+        logSync(null, s.m.dev.id, 'sync-fingerprint', r.ok, { employeeNo, fingerPrintID: fid });
+        if (r.ok) copied++;
+      }
+    }
+  } catch { /* partial failure — retried next round */ }
+
+  // Cards: union of card numbers.
+  try {
+    const sets = [];
+    for (const m of members) sets.push({ m, cards: await isapi.readCards(m.dev, employeeNo) });
+    const union = new Set(sets.flatMap((s) => s.cards));
+    for (const s of sets) {
+      const have = new Set(s.cards);
+      for (const c of union) {
+        if (have.has(c)) continue;
+        const r = await isapi.addCard(s.m.dev, employeeNo, c);
+        logSync(null, s.m.dev.id, 'sync-card', r.ok, { employeeNo, cardNo: c });
+        if (r.ok) copied++;
+      }
+    }
+  } catch { /* retried next round */ }
+
+  // Faces: copy the recognition template to machines with no face enrolled.
+  try {
+    const withFace = members.filter((m) => Number(m.u.numOfFace) > 0);
+    const without = members.filter((m) => !Number(m.u.numOfFace));
+    if (withFace.length && without.length) {
+      const faces = await isapi.readFaces(withFace[0].dev, employeeNo);
+      if (faces.length) {
+        for (const m of without) {
+          const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
+          logSync(null, m.dev.id, 'sync-face', r.ok, { employeeNo });
+          if (r.ok) copied++;
+        }
+      }
+    }
+  } catch { /* retried next round */ }
   return { copied };
 }
 
