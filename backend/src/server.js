@@ -13,9 +13,13 @@ import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster } from './machineCache.js';
 import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck } from './scheduler.js';
+import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+
+app.disable('x-powered-by');
+app.use(securityHeaders);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -31,8 +35,10 @@ app.use(async (req, res, next) => {
   }
 });
 
+// Apply login rate limiter to auth routes
+app.use('/api/auth/login', loginRateLimiter);
 app.use('/api/auth', authRouter);
-app.use('/api/ext', extRouter); // external booking-system API (X-API-Key)
+app.use('/api/ext', apiRateLimiter, extRouter); // external booking-system API (X-API-Key)
 
 // Vercel Cron backstop (no session): checks all machines once a day even if
 // nobody opens the dashboard and the on-site server is down. Protected by
@@ -54,7 +60,7 @@ app.use('/api/cards', cardsRouter);
 app.use('/api/bookings-feed', bookingsRouter);
 
 // Push everything pending across all employees/devices.
-app.post('/api/sync', async (req, res) => {
+app.post('/api/sync', hardwareRateLimiter, async (req, res) => {
   try {
     const summary = await syncAllPending();
     // Also reconcile credentials (fingerprints/cards/faces) across machines now.
@@ -66,7 +72,7 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // Force an expiry check now.
-app.post('/api/expiry-check', async (req, res) => {
+app.post('/api/expiry-check', hardwareRateLimiter, async (req, res) => {
   res.json(await runExpiryPass());
 });
 
