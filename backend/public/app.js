@@ -309,12 +309,34 @@ async function dashboard() {
   if (current !== 'dashboard') return; // view changed while loading
   content.innerHTML = '';
 
-  const kpi = (icon, label, value, cls = '', sub = '') => `
+  const kpi = (icon, label, value, cls = '', sub = '', trend = null) => {
+    let trendBadge = '';
+    if (trend !== null && trend !== undefined) {
+      const isUp = trend >= 0;
+      const arrow = isUp ? '↑' : '↓';
+      const trendCls = isUp ? 'up' : 'down';
+      trendBadge = `<span class="stat-trend ${trendCls}">${arrow} ${isUp ? '+' : ''}${trend}%</span>`;
+    }
+    return `
     <div class="stat ${cls}">
-      <div class="stat-head"><span class="stat-icon">${ICONS[icon]}</span><span class="label">${label}</span></div>
+      <div class="stat-head">
+        <span class="stat-icon">${ICONS[icon]}</span>
+        <span class="label">${label}</span>
+        ${trendBadge}
+      </div>
       <div class="value">${value}</div>
       ${sub ? `<div class="sub">${sub}</div>` : ''}
     </div>`;
+  };
+
+  const getCredBadge = (action) => {
+    const act = String(action || '').toLowerCase();
+    if (act.includes('card') || act.includes('rfid')) return { icon: '💳', label: 'RFID Card', cls: 'cred-card' };
+    if (act.includes('face')) return { icon: '👤', label: 'Facial Scan', cls: 'cred-face' };
+    if (act.includes('finger')) return { icon: '👆', label: 'Fingerprint', cls: 'cred-finger' };
+    if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: '🔓', label: 'Remote Unlock', cls: 'cred-remote' };
+    return { icon: '🔑', label: 'Access Event', cls: 'cred-gen' };
+  };
 
   const machineRows = devs.length ? devs.map((d) => `
     <div class="list-row">
@@ -341,17 +363,18 @@ async function dashboard() {
     </div>`).join('')
     : '<div class="list-empty">No memberships expiring in the next 7 days.</div>';
 
-  const actIcon = (l) => (l.ok ? '<span class="act-dot ok"></span>' : '<span class="act-dot fail"></span>');
-  const actRows = logsList.length ? logsList.slice(0, 8).map((l) => `
-    <div class="list-row slim">
-      ${actIcon(l)}
-      <div class="list-main">
-        <span>${esc(prettyAction(l.action))}${l.device_name ? ` · <span class="muted">${esc(l.device_name)}</span>` : ''}</span>
-        <small class="hint">${esc(l.ts)}</small>
+  const actRows = logsList.length ? logsList.slice(0, 8).map((l) => {
+    const cred = getCredBadge(l.action);
+    return `
+    <div class="ticker-item animate-slide">
+      <div class="ticker-icon ${cred.cls}">${cred.icon}</div>
+      <div class="ticker-main">
+        <div class="ticker-person"><b>${esc(prettyAction(l.action))}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+        <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}</small></div>
       </div>
-      <span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'ok' : 'fail'}</span>
-    </div>`).join('')
-    : '<div class="list-empty">No activity yet.</div>';
+      <span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'Granted' : 'Denied'}</span>
+    </div>`;
+  }).join('') : '<div class="list-empty">No entry activity stream yet.</div>';
 
   const offline = devs.filter((d) => !d.online);
   const offlineBanner = offline.length
@@ -362,15 +385,17 @@ async function dashboard() {
     ? `<div class="notice-banner" id="dashBookingsBanner">${bookingsSummary.needingEnrollment} booking${bookingsSummary.needingEnrollment === 1 ? '' : 's'} need${bookingsSummary.needingEnrollment === 1 ? 's' : ''} people enrolled (fingerprints/cards) — open <b>Bookings</b> to add them.</div>`
     : '';
 
+  const trendText = s.trendPct !== undefined ? `${s.trendPct >= 0 ? '+' : ''}${s.trendPct}% vs yesterday` : '';
+
   content.appendChild(el(`<div>
     ${offlineBanner}
     ${bookingsBanner}
     <div id="dashConsistency"></div>
     <div class="stat-grid">
-      ${kpi('machine', 'Machines', s.devices)}
-      ${kpi('online', 'Online', s.devicesOnline, s.devicesOnline === s.devices && s.devices ? 'good' : s.devices ? 'warn' : '')}
+      ${kpi('machine', 'Machines', s.devices, '', `${s.devicesOnline || 0} online`)}
+      ${kpi('user', 'Active Users', s.active, 'good')}
+      ${kpi('online', 'Today Scans', s.todayScans || 0, 'good', trendText, s.trendPct)}
       ${kpi('card', 'Cards', s.cards ?? 0)}
-      ${kpi('user', 'Active', s.active, 'good')}
       ${kpi('clock', 'Expired', s.expired, s.expired ? 'warn' : '')}
       ${kpi('sync', 'Pending sync', s.pendingSync, s.pendingSync ? 'bad' : '')}
     </div>
@@ -389,10 +414,13 @@ async function dashboard() {
 
       <section class="panel">
         <header>
-          <h3>Recent activity</h3>
+          <h3><span class="live-dot"></span> Real-Time Entry Stream</h3>
           <div class="panel-actions"><button class="btn sm" id="dashGoLogs">View all →</button></div>
         </header>
-        <div class="panel-body">${actRows}</div>
+        <div class="panel-body" style="padding:10px;">${actRows}</div>
+      </section>
+    </div>
+  </div>`));
       </section>
     </div>
 

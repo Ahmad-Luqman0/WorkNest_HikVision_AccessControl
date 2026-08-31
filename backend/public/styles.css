@@ -1904,3 +1904,121 @@ select option {
 @media (max-width: 860px) {
   .progress-pop { left: 14px; right: 14px; width: auto; }
 }
+
+/* ---- KPI Stat Trend Badges ---- */
+.stat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stat-trend {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+.stat-trend.up {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.stat-trend.down {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/* ---- Live Entry Stream Ticker ---- */
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulseDot 1.8s infinite ease-in-out;
+  margin-right: 6px;
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+.ticker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--border);
+  background: var(--surface-card);
+  margin-bottom: 8px;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.ticker-item:hover {
+  background: var(--surface-card-hover);
+  border-color: var(--border-strong);
+}
+.ticker-item.animate-slide {
+  animation: tickerSlideIn 0.35s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+
+@keyframes tickerSlideIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ticker-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm, 8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+}
+.ticker-icon.cred-card { background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); }
+.ticker-icon.cred-face { background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.3); }
+.ticker-icon.cred-finger { background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); }
+.ticker-icon.cred-remote { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); }
+
+.ticker-main {
+  flex: 1;
+  min-width: 0;
+}
+.ticker-person {
+  font-size: 13.5px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ticker-cred-label {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+.ticker-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+[data-theme="light"] .ticker-item {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .ticker-person {
+  color: #0f172a;
+}
+[data-theme="light"] .ticker-cred-label {
+  background: #e2e8f0;
+  color: #334155;
+}

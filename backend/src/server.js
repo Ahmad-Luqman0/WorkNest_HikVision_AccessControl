@@ -531,7 +531,34 @@ app.post('/api/expiring/extend', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const rows = await sp('WN_HIK_Stats_Get');
-    res.json(rows[0] || {});
+    const base = rows[0] || {};
+
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+    const yest = new Date(now.getTime() - 86400000);
+    const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
+
+    const [todayRow, yestRow] = await Promise.all([
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [todayStr]),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [yestStr]),
+    ]);
+
+    const todayScans = todayRow?.n || 0;
+    const yestScans = yestRow?.n || 0;
+    let trendPct = 0;
+    if (yestScans > 0) {
+      trendPct = Math.round(((todayScans - yestScans) / yestScans) * 100);
+    } else if (todayScans > 0) {
+      trendPct = 100;
+    }
+
+    res.json({
+      ...base,
+      todayScans,
+      yestScans,
+      trendPct,
+    });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
