@@ -170,7 +170,7 @@ function groupSelectHtml(items) {
   return `<div class="grp-row">
     <small class="hint">Groups</small>
     ${[...groups.entries()].map(([g, n]) => chip(g, n)).join('')}
-    ${chip('*', items.length, 'Select all')}
+    ${dashRole === 'admin' ? chip('*', items.length, 'Select all') : ''}
   </div>`;
 }
 function wireGroupSelect(items, checkboxClass) {
@@ -1258,15 +1258,23 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       : hasAccess ? '<span class="badge synced">has access</span>'
         : m.present ? '<span class="badge blocked">blocked</span>'
           : '<span class="badge">no access</span>';
-    return `<label class="dev-check-item">
+
+    const displayName = (m.name && m.name !== m.host) ? m.name : (m.code ? `Machine ${m.code}` : `Machine #${m.device_id}`);
+    const hostHint = m.host || '';
+
+    return `<label class="dev-check-item acc-item">
       <input type="checkbox" class="acc-check" value="${m.device_id}" ${hasAccess ? 'checked' : ''} ${m.present === null ? 'disabled' : ''}>
-      <div class="dev-info">
-        <span class="dev-name">${esc(m.name)}</span>
-        <span class="dev-host">${esc(m.host)}</span>
+      <div class="dev-info-col">
+        <div class="dev-title-line">
+          <b class="dev-name">${esc(displayName)}</b>
+          ${hostHint ? `<small class="dev-host-hint">${esc(hostHint)}</small>` : ''}
+          ${state}
+        </div>
       </div>
-      ${state}
-      <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
-      <button type="button" class="btn sm acc-today" data-dev="${m.device_id}" ${m.present === null ? 'disabled' : ''} title="Access until tonight 23:59">Today</button>
+      <div class="dev-date-actions">
+        <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
+        <button type="button" class="btn sm acc-today" data-dev="${m.device_id}" ${m.present === null ? 'disabled' : ''} title="Access until tonight 23:59">Today</button>
+      </div>
     </label>`;
   }).join('');
   openModal(`
@@ -1282,6 +1290,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       <button class="btn primary" id="acc_save">Apply</button>
     </div>`);
   wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
+  limitRoomSelection('acc-check', r.machines.map((m) => ({ id: m.device_id, grp: m.grp })));
   wireChecklistFilter('acc_filter');
   // "Today" preset: access until tonight 23:59 on that machine.
   document.querySelectorAll('.acc-today').forEach((b) => b.addEventListener('click', () => {
