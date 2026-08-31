@@ -92,7 +92,16 @@ export async function getDeviceById(id) {
   return getRow('SELECT * FROM dbo.WN_HIK_Devices WHERE id=?', [Number(id)]);
 }
 export async function getAllDevices() {
-  return getRows('SELECT * FROM dbo.WN_HIK_Devices ORDER BY id');
+  // Everywhere machines are listed (Machines page, pickers, checklists):
+  // entrances first, then meeting rooms, then rooms in number order.
+  return getRows(
+    `SELECT * FROM dbo.WN_HIK_Devices
+     ORDER BY CASE
+       WHEN LOWER(grp) LIKE 'entrance%' THEN 0
+       WHEN name LIKE 'Meeting%' THEN 1
+       ELSE 2
+     END, TRY_CAST(code AS INT), name, id`
+  );
 }
 
 // Fire-and-forget activity log via the WN_HIK_Log_Write proc. Never throws.
