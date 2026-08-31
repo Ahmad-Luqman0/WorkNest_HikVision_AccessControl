@@ -129,23 +129,22 @@ devicesRouter.post('/users', async (req, res) => {
       validBegin: req.body.valid_begin || '2020-01-01T00:00:00',
       validEnd: req.body.valid_end || '2037-12-31T23:59:59',
     };
-    const results = [];
-    for (const dev of devs) {
+    const results = await Promise.all(devs.map(async (dev) => {
       try {
         const r = await isapi.upsertPerson(dev, record, 'add'); // add only — never overwrite
         logSync(null, dev.id, 'add-user', r.ok, { employeeNo, ...r });
-        if (!r.ok) { results.push({ device_id: dev.id, device: dev.name, ok: false, error: isapi.describe(r) }); continue; }
+        if (!r.ok) return { device_id: dev.id, device: dev.name, ok: false, error: isapi.describe(r) };
         let cardError;
         if (card_no) {
           const c = await isapi.addCard(dev, employeeNo, String(card_no).trim());
           logSync(null, dev.id, 'store-card', c.ok, { employeeNo, cardNo: card_no, ...c });
           if (!c.ok) cardError = isapi.describe(c);
         }
-        results.push({ device_id: dev.id, device: dev.name, ok: true, cardError });
+        return { device_id: dev.id, device: dev.name, ok: true, cardError };
       } catch (e) {
-        results.push({ device_id: dev.id, device: dev.name, ok: false, error: String(e.message || e) });
+        return { device_id: dev.id, device: dev.name, ok: false, error: String(e.message || e) };
       }
-    }
+    }));
     for (const dev of devs) invalidateRoster(dev.id);
     const okCount = results.filter((x) => x.ok).length;
     res.status(okCount ? 200 : 502).json({ ok: okCount > 0, employeeNo, name, results });
@@ -269,11 +268,12 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
       validBegin: person.Valid?.beginTime || '2020-01-01T00:00:00',
     };
     const devices = await getAllDevices();
-    const results = [];
-    for (const d of devices) {
+    // All machines in parallel — sequentially this took minutes with many
+    // machines (and died on Vercel's function time limit mid-way).
+    const results = await Promise.all(devices.map(async (d) => {
       let existing;
       try { existing = await isapi.getPerson(d, employeeNo); }
-      catch { results.push({ device_id: d.id, device: d.name, state: 'unreachable' }); continue; }
+      catch { return { device_id: d.id, device: d.name, state: 'unreachable' }; }
       const present = !!existing;
       const enabled = present && existing.Valid?.enable !== false;
       const want = wanted.has(d.id);
@@ -291,30 +291,29 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
           for (const c of cards) await isapi.addCard(d, employeeNo, c);
           for (const fp of prints) await isapi.addFingerprint(d, employeeNo, fp.fingerData, fp.fingerPrintID);
           logSync(null, d.id, 'access-grant', true, { employeeNo });
-          results.push({ device_id: d.id, device: d.name, state: 'granted' });
+          return { device_id: d.id, device: d.name, state: 'granted' };
         } else if (want && present && !enabled) {
           // Re-grant: un-block the existing enrollment.
           const r = await isapi.upsertPerson(d, { ...base, validEnd: endFor(existing), enabled: true }, 'modify');
           if (!r.ok) throw new Error(isapi.describe(r));
           logSync(null, d.id, 'access-grant', true, { employeeNo, unblocked: true });
-          results.push({ device_id: d.id, device: d.name, state: 'unblocked' });
+          return { device_id: d.id, device: d.name, state: 'unblocked' };
         } else if (!want && present && enabled) {
           // Revoke: block at the door but keep profile + credentials enrolled.
           const r = await isapi.upsertPerson(d, { ...base, validEnd: endFor(existing), enabled: false }, 'modify');
           logSync(null, d.id, 'access-revoke', r.ok, { employeeNo, blocked: true, ...r });
           if (!r.ok) throw new Error(isapi.describe(r));
-          results.push({ device_id: d.id, device: d.name, state: 'blocked' });
+          return { device_id: d.id, device: d.name, state: 'blocked' };
         } else if (want && present && enabled && dEnd && dEnd !== existing.Valid?.endTime) {
           const r = await isapi.upsertPerson(d, { ...base, validEnd: dEnd }, 'modify');
           if (!r.ok) throw new Error(isapi.describe(r));
-          results.push({ device_id: d.id, device: d.name, state: 'updated' });
-        } else {
-          results.push({ device_id: d.id, device: d.name, state: want ? 'unchanged' : (present ? 'blocked' : 'absent') });
+          return { device_id: d.id, device: d.name, state: 'updated' };
         }
+        return { device_id: d.id, device: d.name, state: want ? 'unchanged' : (present ? 'blocked' : 'absent') };
       } catch (e) {
-        results.push({ device_id: d.id, device: d.name, state: 'error', error: String(e.message || e) });
+        return { device_id: d.id, device: d.name, state: 'error', error: String(e.message || e) };
       }
-    }
+    }));
     invalidateRoster();
     res.json({ ok: true, results });
   } catch (e) {
@@ -653,10 +652,9 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
     const cards = await isapi.readCards(src, employeeNo);
     const prints = await isapi.readFingerprints(src, employeeNo);
 
-    const results = [];
-    for (const tid of targetIds) {
+    const results = await Promise.all(targetIds.map(async (tid) => {
       const dev = await getDeviceById(tid);
-      if (!dev) { results.push({ device_id: tid, state: 'error', error: 'target not found' }); continue; }
+      if (!dev) return { device_id: tid, state: 'error', error: 'target not found' };
       const detail = { cards: 0, fingerprints: 0 };
       try {
         const record = {
@@ -681,11 +679,11 @@ devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
           if (p.ok) detail.fingerprints++;
           logSync(null, dev.id, 'copy-fingerprint', p.ok, p);
         }
-        results.push({ device_id: tid, device: dev.name, state: 'copied', ...detail });
+        return { device_id: tid, device: dev.name, state: 'copied', ...detail };
       } catch (e) {
-        results.push({ device_id: tid, device: dev.name, state: 'error', error: String(e.message || e) });
+        return { device_id: tid, device: dev.name, state: 'error', error: String(e.message || e) };
       }
-    }
+    }));
     invalidateRoster();
     res.json({ ok: true, employeeNo, name: person.name, cards: cards.length, fingerprints: prints.length, results });
   } catch (e) {

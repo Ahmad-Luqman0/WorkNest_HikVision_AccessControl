@@ -1,8 +1,19 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
   ],
   "crons": [
-    { "path": "/api/cron/online-check", "schedule": "0 3 * * *" }
-  ]
+    {
+      "path": "/api/cron/online-check",
+      "schedule": "0 3 * * *"
+    }
+  ],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60
+    }
+  }
 }
