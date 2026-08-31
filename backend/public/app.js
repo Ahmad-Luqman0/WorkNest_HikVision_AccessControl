@@ -420,9 +420,6 @@ async function dashboard() {
         <div class="panel-body" style="padding:10px;">${actRows}</div>
       </section>
     </div>
-  </div>`));
-      </section>
-    </div>
 
     <section class="panel" style="margin-top:16px; height:auto; max-height:320px">
       <header>
