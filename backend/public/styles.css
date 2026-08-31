@@ -1535,6 +1535,106 @@ select option {
   color: #ffffff !important;
 }
 
+/* ---- Analytics & Hourly Charts ---- */
+.chart-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 240px;
+  padding-top: 20px;
+}
+
+.chart-bar-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+}
+
+.chart-bar {
+  flex: 1;
+  width: 100%;
+  max-width: 24px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  position: relative;
+}
+
+.chart-bar-fill {
+  width: 100%;
+  background: var(--accent-gradient);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: height 0.4s cubic-bezier(0.2, 0.8, 0.3, 1);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.chart-bar-item:hover .chart-bar-fill {
+  filter: brightness(1.2);
+}
+
+.chart-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-faint);
+  height: 16px;
+}
+
+/* Door Usage Meters */
+.usage-row {
+  margin-bottom: 16px;
+}
+
+.usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.usage-name {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.usage-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.progress-bar-bg {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6366f1 0%, #38bdf8 100%);
+  border-radius: 999px;
+  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+[data-theme="light"] .chart-bar {
+  background: #f1f5f9;
+}
+[data-theme="light"] .progress-bar-bg {
+  background: #f1f5f9;
+}
+[data-theme="light"] .usage-name {
+  color: #0f172a;
+}
+[data-theme="light"] .usage-val {
+  color: #475569;
+}
+
 /* ---- Booking enrollment prompt banner (dashboard) ---- */
 .notice-banner {
   background: var(--amber-bg);

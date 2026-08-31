@@ -116,6 +116,19 @@ export function logSync(employee_id, device_id, action, ok, detail) {
   }).catch((e) => console.error('[db] logSync failed:', e.message));
 }
 
+// Fire-and-forget admin audit log.
+export function logAudit(actor, action, target, ip, detail) {
+  const payload = typeof detail === 'string' ? detail : JSON.stringify(detail);
+  const fullAction = `AUDIT:${action}`;
+  sp('WN_HIK_Log_Write', {
+    employee_id: null,
+    device_id: null,
+    action: fullAction,
+    ok: 1,
+    detail: JSON.stringify({ actor: actor || 'system', target: target || '', ip: ip || '', info: payload }),
+  }).catch((e) => console.error('[db] logAudit failed:', e.message));
+}
+
 // Machines are provisioned in the DB. On startup, upsert entries from
 // data/machines.json (keyed by host) via the WN_HIK_Device_UpsertByHost proc.
 export async function seedDevices() {

@@ -471,6 +471,113 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+// Admin Audit Log API
+app.get('/api/audit-logs', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const logs = await getRows(
+      `SELECT TOP (${limit}) * FROM dbo.WN_HIK_Activity
+       ORDER BY id DESC`
+    );
+    const parsed = logs.map((l) => {
+      let info = {};
+      try { info = JSON.parse(l.detail || '{}'); } catch {}
+      return {
+        id: l.id,
+        ts: l.ts,
+        action: String(l.action).replace(/^AUDIT:/, ''),
+        actor: typeof info === 'object' && info?.actor ? info.actor : 'system',
+        target: typeof info === 'object' && info?.target ? info.target : (l.device_name || ''),
+        ip: typeof info === 'object' && info?.ip ? info.ip : '',
+        info: typeof info === 'object' && info?.info ? info.info : (l.detail || ''),
+        ok: l.ok,
+      };
+    });
+    res.json({ ok: true, logs: parsed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// Analytics & Occupancy Engine API
+app.get('/api/analytics', async (req, res) => {
+  try {
+    const [devices, stats, eventsResult, empsCount, cardsCount] = await Promise.all([
+      getAllDevices(),
+      sp('WN_HIK_Stats_Get'),
+      sp('WN_HIK_Activity_Recent', { limit: 500 }),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Employees WHERE status=\'active\''),
+      getRow('SELECT COUNT(DISTINCT card_no) AS n FROM dbo.WN_HIK_Employees WHERE card_no IS NOT NULL'),
+    ]);
+
+    const s = stats[0] || {};
+    const now = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+
+    // 1. Hourly Traffic Distribution (24 hours)
+    const hourlyDistribution = new Array(24).fill(0);
+    let todayTotal = 0;
+    for (const e of eventsResult) {
+      if (!e.ts) continue;
+      const d = new Date(e.ts);
+      if (!Number.isNaN(d.getTime())) {
+        const eDateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+        if (eDateStr === todayStr) {
+          todayTotal++;
+          hourlyDistribution[d.getHours()]++;
+        }
+      }
+    }
+
+    // 2. Door / Machine Usage Breakdown
+    const doorUsageMap = new Map();
+    for (const d of devices) doorUsageMap.set(d.name, 0);
+    for (const e of eventsResult) {
+      if (e.device_name && doorUsageMap.has(e.device_name)) {
+        doorUsageMap.set(e.device_name, doorUsageMap.get(e.device_name) + 1);
+      }
+    }
+    const totalDoorScans = [...doorUsageMap.values()].reduce((a, b) => a + b, 0) || 1;
+    const doorUsage = [...doorUsageMap.entries()]
+      .map(([name, count]) => ({ name, count, percent: Math.round((count / totalDoorScans) * 100) }))
+      .sort((a, b) => b.count - a.count);
+
+    // 3. Peak Hour
+    let peakHour = 9;
+    let maxPeak = 0;
+    hourlyDistribution.forEach((cnt, hr) => {
+      if (cnt > maxPeak) { maxPeak = cnt; peakHour = hr; }
+    });
+    const peakHourLabel = `${p2(peakHour)}:00 - ${p2(peakHour + 1)}:00`;
+
+    // 4. Estimated Live Headcount
+    const liveHeadcount = Math.max(0, Math.min(todayTotal, s.active || 0));
+
+    // 5. Credential Breakdown
+    const credentials = {
+      cards: cardsCount?.n || 0,
+      activeMembers: empsCount?.n || 0,
+      totalDevices: devices.length,
+    };
+
+    res.json({
+      ok: true,
+      liveHeadcount,
+      todayTotal,
+      peakHourLabel,
+      maxPeak,
+      hourlyDistribution,
+      doorUsage,
+      credentials,
+      devicesCount: devices.length,
+      onlineCount: s.devicesOnline || 0,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // 404 API & Global Error Handlers

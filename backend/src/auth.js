@@ -13,11 +13,16 @@
 // admin override (e.g. reset access from Vercel settings).
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import { sp } from './db.js';
+import { sp, logAudit } from './db.js';
 
 const COOKIE = 'wn_auth';
 const SESSION_DAYS = 7;
 const ROLES = ['admin', 'user'];
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  return forwarded ? forwarded.split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '127.0.0.1');
+}
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const h = crypto.scryptSync(String(password), salt, 32).toString('hex');
@@ -139,15 +144,21 @@ authRouter.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
   try {
     const user = await checkCredentials(String(username || ''), String(password || ''));
-    if (!user) return res.status(401).json({ ok: false, error: 'Wrong username or password' });
+    if (!user) {
+      logAudit('guest', 'LOGIN_FAILED', String(username || ''), getClientIp(req), 'Invalid credentials');
+      return res.status(401).json({ ok: false, error: 'Wrong username or password' });
+    }
     setCookie(res, req, await makeToken(user), SESSION_DAYS * 86400);
+    logAudit(user.username, 'LOGIN_SUCCESS', user.username, getClientIp(req), `Logged in as ${user.role}`);
     res.json({ ok: true, username: user.username, role: user.role });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
-authRouter.post('/logout', (req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  const auth = await sessionOf(req);
+  if (auth) logAudit(auth.username, 'LOGOUT', auth.username, getClientIp(req), 'Signed out');
   setCookie(res, req, '', 0);
   res.json({ ok: true });
 });
@@ -182,6 +193,7 @@ authRouter.post('/change-password', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'Current password is wrong' });
     }
     await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(String(nextPassword)), role: null });
+    logAudit(auth.username, 'CHANGE_PASSWORD', username, getClientIp(req), `Password updated for account ${username}`);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
@@ -206,7 +218,8 @@ authRouter.get('/users', async (req, res) => {
 });
 
 authRouter.post('/users', async (req, res) => {
-  if (!(await requireAdmin(req, res))) return;
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
   const username = String(req.body?.username || '').trim();
   const password = String(req.body?.password || '');
   const role = ROLES.includes(req.body?.role) ? req.body.role : 'user';
@@ -217,6 +230,7 @@ authRouter.post('/users', async (req, res) => {
       return res.status(409).json({ ok: false, error: `User "${username}" already exists` });
     }
     await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password), role });
+    logAudit(auth.username, 'CREATE_DASH_USER', username, getClientIp(req), `Created dashboard account (${role})`);
     res.json({ ok: true, username, role });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });

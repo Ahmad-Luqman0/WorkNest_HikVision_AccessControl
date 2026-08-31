@@ -196,7 +196,7 @@ function wireGroupSelect(items, checkboxClass) {
 }
 
 // ---- Router ----
-const views = { dashboard, devices, users, cards, logs, dashusers, bookings: bookingsView };
+const views = { dashboard, devices, users, cards, logs, analytics: analyticsView, audit: auditView, dashusers, bookings: bookingsView };
 let current = 'dashboard';
 let _autoTimer = null; // live-refresh timer for dashboard / activity views
 document.querySelectorAll('nav a').forEach((a) =>
@@ -212,7 +212,7 @@ function go(view) {
   current = view;
   setNav(false); // picking a page closes the mobile drawer
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
-  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', dashusers: 'Dashboard Users', bookings: 'Bookings' };
+  const names = { dashboard: 'Dashboard', devices: 'Machines', users: 'Users', cards: 'Cards', logs: 'Activity Log', analytics: 'Analytics & Occupancy', audit: 'Admin Audit Log', dashusers: 'Dashboard Users', bookings: 'Bookings' };
   const title = names[view] || 'Dashboard';
   $('#viewTitle').textContent = title;
   const breadcrumb = $('#viewBreadcrumb');
@@ -1920,5 +1920,116 @@ function resetDashPasswordModal(username, me) {
     if (me.ok && me.role === 'admin') $('#navDashUsers').style.display = '';
   } catch { /* not signed in yet — login overlay handles it */ }
 })();
+
+// ---- Analytics & Occupancy View ----
+async function analyticsView() {
+  clearInterval(_autoTimer);
+  content.innerHTML = '<div class="empty">Loading analytics engine…</div>';
+  const data = await api.get('/analytics');
+  if (current !== 'analytics') return;
+  if (!data.ok) { content.innerHTML = `<div class="empty">Failed to load analytics: ${esc(data.error)}</div>`; return; }
+
+  const kpi = (icon, label, value, cls = '', sub = '') => `
+    <div class="stat ${cls}">
+      <div class="stat-head"><span class="stat-icon">${ICONS[icon] || ''}</span><span class="label">${label}</span></div>
+      <div class="value">${value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
+    </div>`;
+
+  const maxVal = Math.max(1, ...data.hourlyDistribution);
+  const hourlyBars = data.hourlyDistribution.map((cnt, hr) => {
+    const pct = Math.round((cnt / maxVal) * 100);
+    const label = `${String(hr).padStart(2, '0')}:00`;
+    return `
+      <div class="chart-bar-item" title="${cnt} scans at ${label}">
+        <div class="chart-bar">
+          <div class="chart-bar-fill" style="height: ${Math.max(4, pct)}%"></div>
+        </div>
+        <span class="chart-label">${hr % 3 === 0 ? label : ''}</span>
+      </div>`;
+  }).join('');
+
+  const doorBars = data.doorUsage.slice(0, 8).map((d) => `
+    <div class="usage-row">
+      <div class="usage-head">
+        <span class="usage-name">${esc(d.name)}</span>
+        <span class="usage-val">${d.count} scans (${d.percent}%)</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" style="width: ${Math.max(3, d.percent)}%"></div>
+      </div>
+    </div>`).join('') || '<div class="list-empty">No door activity recorded today.</div>';
+
+  content.innerHTML = `<div>
+    <div class="stat-grid">
+      ${kpi('user', 'Live Occupancy', data.liveHeadcount, 'good', 'Estimated headcount on site')}
+      ${kpi('online', 'Today Scans', data.todayTotal, 'good', 'Total entries today')}
+      ${kpi('clock', 'Peak Hour', data.peakHourLabel, 'warn', `${data.maxPeak} scans during peak`)}
+      ${kpi('machine', 'Active Doors', `${data.onlineCount} / ${data.devicesCount}`, data.onlineCount === data.devicesCount ? 'good' : 'warn', 'Online terminals')}
+    </div>
+
+    <div class="panel-grid" style="margin-top:24px;">
+      <section class="panel" style="height:auto; min-height:380px;">
+        <header>
+          <h3>Hourly Traffic Distribution (Today)</h3>
+        </header>
+        <div class="panel-body" style="padding:22px;">
+          <div class="chart-container">
+            ${hourlyBars}
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" style="height:auto; min-height:380px;">
+        <header>
+          <h3>Top Door Terminal Usage</h3>
+        </header>
+        <div class="panel-body" style="padding:20px;">
+          ${doorBars}
+        </div>
+      </section>
+    </div>
+  </div>`;
+}
+
+// ---- Admin Audit Log View ----
+async function auditView() {
+  clearInterval(_autoTimer);
+  content.innerHTML = '<div class="empty">Loading admin audit trail…</div>';
+  const data = await api.get('/audit-logs?limit=200');
+  if (current !== 'audit') return;
+  if (!data.ok) { content.innerHTML = `<div class="empty">Failed to load audit trail: ${esc(data.error)}</div>`; return; }
+
+  const rows = data.logs.length ? data.logs.map((l) => {
+    const actCls = l.action.includes('SUCCESS') || l.action.includes('CREATE') ? 'synced' : l.action.includes('FAIL') || l.action.includes('DELETE') ? 'error' : 'pending';
+    return `
+      <tr>
+        <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
+        <td><b>${esc(l.actor)}</b></td>
+        <td><span class="badge ${actCls}">${esc(l.action)}</span></td>
+        <td>${esc(l.target || '—')}</td>
+        <td class="nowrap"><small class="hint">${esc(l.ip || '127.0.0.1')}</small></td>
+        <td><small class="hint">${esc(typeof l.info === 'string' ? l.info : JSON.stringify(l.info))}</small></td>
+      </tr>`;
+  }).join('') : '<tr><td colspan="6" class="list-empty">No admin audit events recorded yet.</td></tr>';
+
+  content.innerHTML = `<div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Admin / User</th>
+            <th>Action</th>
+            <th>Target Device / Account</th>
+            <th>IP Address</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
 
 go('dashboard');
