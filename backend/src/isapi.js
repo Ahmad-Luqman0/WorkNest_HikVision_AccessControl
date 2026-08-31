@@ -39,8 +39,8 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
 
 // ---- Connectivity / device info -------------------------------------------
 
-export async function getDeviceInfo(device) {
-  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json');
+export async function getDeviceInfo(device, { timeout = 2500 } = {}) {
+  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json', { timeout });
   if (!res.ok) throw new Error(`deviceInfo failed (${res.status}): ${res.text.slice(0, 200)}`);
   // Many MinMoe units ignore ?format=json and return XML — parse either shape.
   const j = res.json();
@@ -309,12 +309,13 @@ export async function readFingerprints(device, employeeNo) {
 }
 
 // Page through ALL cards enrolled on a device (cardNo + employeeNo pairs).
-export async function readAllCards(device, position = 0, maxResults = 30) {
+export async function readAllCards(device, position = 0, maxResults = 30, { timeout = 2500 } = {}) {
   const body = {
     CardInfoSearchCond: { searchID: 'hik-dash-cards', searchResultPosition: position, maxResults },
   };
   const res = await req(device, 'POST', '/ISAPI/AccessControl/CardInfo/Search?format=json', {
     json: body,
+    timeout,
   });
   if (!res.ok) throw new Error(`card search failed (${res.status})`);
   const s = (res.json() || {}).CardInfoSearch || {};

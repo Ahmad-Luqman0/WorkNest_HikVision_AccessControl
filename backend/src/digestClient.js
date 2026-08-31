@@ -1,16 +1,22 @@
 // Minimal HTTP client with HTTP Digest Authentication (RFC 2617, qop="auth").
-// Hikvision ISAPI endpoints require digest auth. No external deps — uses Node core.
+// Hikvision ISAPI endpoints require digest auth. Uses Keep-Alive connection pooling
+// and Digest Challenge Caching for maximum performance.
 import http from 'node:http';
 import https from 'node:https';
 import crypto from 'node:crypto';
 
 const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 
+// Reusable connection agents for Keep-Alive socket pooling across all terminals
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 64, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64, keepAliveMsecs: 30000, rejectUnauthorized: false });
+
+// Cache last known Digest Auth challenge per target to avoid 401 round-trips
+const challengeCache = new Map(); // key: `${hostname}:${port}:${username}` -> { challenge, ncCount }
+
 function parseAuthHeader(header) {
   const out = {};
-  // Strip leading "Digest "
   const raw = header.replace(/^Digest\s+/i, '');
-  // Split on commas that are not inside quotes
   const parts = raw.match(/(\w+)=("[^"]*"|[^,]*)/g) || [];
   for (const p of parts) {
     const idx = p.indexOf('=');
@@ -43,7 +49,9 @@ function buildDigestHeader({ username, password, method, uri, challenge, nc, cno
 
 function rawRequest({ hostname, port, protocol, method, path, headers, body, timeout }) {
   return new Promise((resolve, reject) => {
-    const lib = protocol === 'https:' ? https : http;
+    const isHttps = protocol === 'https:';
+    const lib = isHttps ? https : http;
+    const agent = isHttps ? httpsAgent : httpAgent;
     const req = lib.request(
       {
         hostname,
@@ -52,8 +60,8 @@ function rawRequest({ hostname, port, protocol, method, path, headers, body, tim
         path,
         headers,
         protocol,
-        timeout: timeout || 8000,
-        // Hikvision devices often use self-signed certs on https
+        agent,
+        timeout: timeout || 4000,
         rejectUnauthorized: false,
       },
       (res) => {
@@ -86,7 +94,7 @@ function rawRequest({ hostname, port, protocol, method, path, headers, body, tim
  * @param {Buffer|string} [opts.body]
  * @param {object} [opts.headers]
  * @param {number} [opts.timeout]
- * @returns {Promise<{status:number, headers:object, body:Buffer, text:string, json:function}>}
+ * @returns {Promise<{status:number, headers:object, body:Buffer, text:string, json:function, ok:boolean}>}
  */
 export async function digestRequest(opts) {
   const {
@@ -112,7 +120,43 @@ export async function digestRequest(opts) {
     ...(bodyBuf ? { 'Content-Length': bodyBuf.length } : {}),
   };
 
-  // 1st request — expect 401 challenge
+  const cacheKey = `${hostname}:${port}:${username}`;
+  const cached = challengeCache.get(cacheKey);
+
+  // Fast path: if we have a cached challenge, send the Digest header immediately
+  if (cached && cached.challenge) {
+    cached.ncCount = (cached.ncCount || 1) + 1;
+    const nc = String(cached.ncCount).padStart(8, '0');
+    const cnonce = crypto.randomBytes(8).toString('hex');
+    const authHeader = buildDigestHeader({
+      username,
+      password,
+      method,
+      uri: path,
+      challenge: cached.challenge,
+      nc,
+      cnonce,
+    });
+
+    const res = await rawRequest({
+      hostname,
+      port,
+      protocol,
+      method,
+      path,
+      headers: { ...baseHeaders, Authorization: authHeader },
+      body: bodyBuf,
+      timeout,
+    });
+
+    if (res.status !== 401) {
+      return decorate(res);
+    }
+    // If 401 returned, challenge expired or changed — invalidate and fall through
+    challengeCache.delete(cacheKey);
+  }
+
+  // 1st request — obtain challenge
   const first = await rawRequest({
     hostname,
     port,
@@ -130,7 +174,6 @@ export async function digestRequest(opts) {
 
   const wwwAuth = first.headers['www-authenticate'];
   if (!wwwAuth || !/digest/i.test(wwwAuth)) {
-    // Maybe basic auth device
     const basic = Buffer.from(`${username}:${password}`).toString('base64');
     const retry = await rawRequest({
       hostname,
@@ -146,6 +189,8 @@ export async function digestRequest(opts) {
   }
 
   const challenge = parseAuthHeader(wwwAuth);
+  challengeCache.set(cacheKey, { challenge, ncCount: 1 });
+
   const nc = '00000001';
   const cnonce = crypto.randomBytes(8).toString('hex');
   const authHeader = buildDigestHeader({
