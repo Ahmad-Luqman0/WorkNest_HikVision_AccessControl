@@ -279,6 +279,12 @@ const prettyAction = (a) => ACTION_LABELS[a] || a;
 
 async function dashboard() {
   api.post('/online-check').catch(() => {}); // fresh statuses on next auto-refresh tick
+  api.get('/consistency').then((c) => {
+    const slot = document.getElementById('dashConsistency');
+    if (current !== 'dashboard' || !slot || !c?.ok || !c.issues?.length) return;
+    slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
+    slot.firstElementChild.addEventListener('click', () => go('users'));
+  }).catch(() => {});
   // Live view: refresh every 30s while the dashboard is open (not over modals).
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
@@ -347,6 +353,7 @@ async function dashboard() {
   content.appendChild(el(`<div>
     ${offlineBanner}
     ${bookingsBanner}
+    <div id="dashConsistency"></div>
     <div class="stat-grid">
       ${kpi('machine', 'Machines', s.devices)}
       ${kpi('online', 'Online', s.devicesOnline, s.devicesOnline === s.devices && s.devices ? 'good' : s.devices ? 'warn' : '')}
@@ -671,7 +678,11 @@ async function loadUsersTable(devs) {
   let entries = [];
   const unreachable = [];
   if (all) {
-    const results = await Promise.all(devs.map(async (d) => ({ d, r: await api.get(`/devices/${d.id}/users`) })));
+    const rr = await api.get('/roster'); // one request — server queries all machines in parallel
+    const results = devs.map((d) => {
+      const row = rr.ok ? (rr.rosters || []).find((x) => x.device_id === d.id) : null;
+      return { d, r: row?.ok ? { ok: true, users: row.users } : { ok: false, error: row?.error || rr.error } };
+    });
     const map = new Map();
     for (const { d, r } of results) {
       if (!r.ok) { unreachable.push(d.name); continue; }
@@ -715,7 +726,32 @@ async function loadUsersTable(devs) {
         <button class="btn sm" data-menu="${i}">Actions ▾</button>
       </td></tr>`;
   }).join('');
-  holder.innerHTML = `${note}<div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  holder.innerHTML = `${note}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  // Central-truth check: machines are compared in the background and any
+  // credential disagreement (cards/fingerprints/faces) is flagged here.
+  if (all) api.get('/consistency').then((c) => {
+    if (current !== 'users' || !c?.ok || !document.getElementById('consistencyNote')) return;
+    if (!c.issues.length) return;
+    const flagged = new Set();
+    for (const iss of c.issues) {
+      if (iss.holders) for (const h of iss.holders) flagged.add(`${h.employeeNo}||${String(h.name || '').trim().toLowerCase()}`);
+      if (iss.employeeNo !== undefined) flagged.add(`${iss.employeeNo}||${String(iss.name || '').trim().toLowerCase()}`);
+    }
+    entries.forEach(({ u }, i) => {
+      const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+      if (!flagged.has(key)) return;
+      const cell = holder.querySelector(`tr[data-rowidx="${i}"] td:nth-last-child(2)`);
+      if (cell) cell.insertAdjacentHTML('beforeend', ' <span class="badge pending" title="Credentials differ between machines — see the notice above">differs</span>');
+    });
+    document.getElementById('consistencyNote').innerHTML = `
+      <div class="notice-banner" style="cursor:default">
+        <b>${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines</b> — the dashboard compared ${c.checked} reachable machine${c.checked === 1 ? '' : 's'}.
+        <details style="margin-top:6px"><summary style="cursor:pointer">Show details</summary>
+          <ul style="margin:8px 0 0 18px; padding:0">${c.issues.map((i) => `<li style="margin-bottom:4px">${esc(i.detail)}</li>`).join('')}</ul>
+        </details>
+      </div>`;
+  }).catch(() => {});
 
   holder.querySelectorAll('[data-profile]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userProfileModal(entries[Number(b.dataset.profile)]); }));
   // Whole row opens the profile — except clicks on buttons/links/inputs inside it.

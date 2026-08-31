@@ -256,6 +256,125 @@ app.get('/api/profile', async (req, res) => {
 // Memberships expiring within N days (default 7) plus already-expired ones,
 // computed live from the machines' rosters. People are matched across machines
 // by employee # + name; far-future "no expiry" dates never show up.
+// All machine rosters in one request. The browser caps parallel connections
+// per host, so 50+ per-machine fetches would serialize badly with many
+// offline machines; the server fans out in parallel instead.
+app.get('/api/roster', async (req, res) => {
+  const devices = await getAllDevices();
+  const rosters = await Promise.all(devices.map(async (dev) => {
+    try {
+      return { device_id: dev.id, ok: true, users: await getRoster(dev) };
+    } catch (e) {
+      return { device_id: dev.id, ok: false, error: String(e.message || e) };
+    }
+  }));
+  res.json({ ok: true, rosters });
+});
+
+// Central-truth check: compare every person's credentials across machines and
+// report disagreements. The auto-sync fixes what it can on its own; what it
+// CANNOT fix (e.g. one card owned by different users on different machines)
+// is exactly what this surfaces, so the dashboard stays the source of truth.
+app.get('/api/consistency', async (req, res) => {
+  try {
+    const devices = await getAllDevices();
+    const per = [];
+    await Promise.all(devices.map(async (dev) => {
+      try {
+        const users = await getRoster(dev);
+        const all = [];
+        let pos = 0;
+        for (let i = 0; i < 50; i++) {
+          const page = await isapi.readAllCards(dev, pos, 100);
+          all.push(...page.list);
+          if (!page.list.length || all.length >= page.total) break;
+          pos += page.list.length;
+        }
+        const cards = new Map();
+        for (const c of all) {
+          const emp = String(c.employeeNo);
+          if (!cards.has(emp)) cards.set(emp, []);
+          cards.get(emp).push(String(c.cardNo));
+        }
+        per.push({ dev, users, cards });
+      } catch { /* unreachable — skipped from the comparison */ }
+    }));
+    if (per.length < 2) return res.json({ ok: true, checked: per.length, issues: [] });
+
+    const owners = new Map(); // cardNo -> Map(personKey -> {employeeNo, name, devices[]})
+    const people = new Map(); // personKey -> {employeeNo, name, machines[]}
+    for (const { dev, users, cards } of per) {
+      for (const u of users) {
+        const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+        if (!people.has(key)) people.set(key, { employeeNo: String(u.employeeNo), name: u.name || '', machines: [] });
+        people.get(key).machines.push({
+          device: dev.name,
+          cards: cards.get(String(u.employeeNo)) || [],
+          fp: Number(u.numOfFP) || 0,
+          face: Number(u.numOfFace) || 0,
+        });
+        for (const no of cards.get(String(u.employeeNo)) || []) {
+          if (!owners.has(no)) owners.set(no, new Map());
+          if (!owners.get(no).has(key)) owners.get(no).set(key, { employeeNo: String(u.employeeNo), name: u.name || '', devices: [] });
+          owners.get(no).get(key).devices.push(dev.name);
+        }
+      }
+    }
+
+    const issues = [];
+    const conflictedCards = new Set();
+    // 1) One card number, different owners depending on the machine.
+    for (const [cardNo, hold] of owners) {
+      if (hold.size > 1) {
+        conflictedCards.add(cardNo);
+        const holders = [...hold.values()];
+        issues.push({
+          type: 'card-conflict', cardNo, holders,
+          detail: `Card ${cardNo} belongs to ${holders
+            .map((h) => `${h.name || '#' + h.employeeNo} on ${h.devices.join(', ')}`)
+            .join(' BUT to ')} — pick one owner; auto-sync cannot reconcile this.`,
+        });
+      }
+    }
+    // 2/3/4) Same person, different cards / fingerprints / face across machines.
+    for (const p of people.values()) {
+      if (p.machines.length < 2) continue;
+      const who = p.name || '#' + p.employeeNo;
+      const union = [...new Set(p.machines.flatMap((m) => m.cards))];
+      const missing = p.machines
+        .map((m) => ({ device: m.device, missing: union.filter((c) => !m.cards.includes(c)) }))
+        .filter((m) => m.missing.length);
+      if (missing.length) {
+        issues.push({
+          type: 'cards-differ', employeeNo: p.employeeNo, name: p.name, union, missing,
+          detail: `${who} holds ${union.length} card(s) in total but not on every machine: ` + missing
+            .map((m) => `${m.device} lacks ${m.missing.map((c) => conflictedCards.has(c) ? c + ' (owned by another user there)' : c).join(', ')}`)
+            .join('; ') + '.',
+        });
+      }
+      const fpMax = Math.max(...p.machines.map((m) => m.fp));
+      const fpMiss = p.machines.filter((m) => m.fp < fpMax);
+      if (fpMax && fpMiss.length) {
+        issues.push({
+          type: 'fp-differ', employeeNo: p.employeeNo, name: p.name,
+          detail: `${who} has ${fpMax} fingerprint(s) on some machines but fewer on ${fpMiss.map((m) => `${m.device} (${m.fp})`).join(', ')} — auto-sync should close this shortly.`,
+        });
+      }
+      const faceMax = Math.max(...p.machines.map((m) => m.face));
+      const faceMiss = p.machines.filter((m) => m.face < faceMax);
+      if (faceMax && faceMiss.length) {
+        issues.push({
+          type: 'face-differ', employeeNo: p.employeeNo, name: p.name,
+          detail: `${who} has a face enrolled on some machines but not on ${faceMiss.map((m) => m.device).join(', ')} — auto-sync should close this shortly.`,
+        });
+      }
+    }
+    res.json({ ok: true, checked: per.length, issues });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 app.get('/api/expiring', async (req, res) => {
   const horizonDays = Math.min(Number(req.query.days) || 7, 60);
   const devices = await getAllDevices();
