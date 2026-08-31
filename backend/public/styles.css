@@ -1774,3 +1774,39 @@ select option {
   from { transform: translateY(30px); opacity: 0.6; }
   to { transform: translateY(0); opacity: 1; }
 }
+
+/* ---- Floating progress bar for multi-machine operations ---- */
+.progress-pop {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 200;
+  background: var(--surface-card, #131a29);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.15));
+  border-radius: var(--radius-md, 12px);
+  padding: 14px 16px;
+  width: 300px;
+  box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, 0.45));
+}
+.progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main, #fff);
+  margin-bottom: 8px;
+}
+.progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  background: var(--accent-gradient, var(--accent, #6366f1));
+  transition: width 0.25s ease;
+}
+@media (max-width: 860px) {
+  .progress-pop { left: 14px; right: 14px; width: auto; }
+}

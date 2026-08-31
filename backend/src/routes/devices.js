@@ -267,7 +267,13 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
       admin: !!person.localUIRight,
       validBegin: person.Valid?.beginTime || '2020-01-01T00:00:00',
     };
-    const devices = await getAllDevices();
+    // only_ids: process just this subset (the UI batches machines into
+    // chunks so it can show real progress); device_ids stays the FULL
+    // wanted set, so untouched machines are never accidentally revoked.
+    const onlyIds = Array.isArray(req.body.only_ids) && req.body.only_ids.length
+      ? new Set(req.body.only_ids.map(Number))
+      : null;
+    const devices = (await getAllDevices()).filter((d) => !onlyIds || onlyIds.has(d.id));
     // All machines in parallel — sequentially this took minutes with many
     // machines (and died on Vercel's function time limit mid-way).
     const results = await Promise.all(devices.map(async (d) => {

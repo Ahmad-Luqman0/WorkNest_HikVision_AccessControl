@@ -815,12 +815,13 @@ async function deleteFaceAction(e, devs) {
 async function deleteUser(devsOn, employeeNo, name, devs) {
   const where = devsOn.map((d) => d.name).join(', ');
   if (!confirm(`Delete “${name || 'user ' + employeeNo}” (#${employeeNo}) from: ${where}? This removes them from the machine${devsOn.length > 1 ? 's' : ''}.`)) return;
-  toast('Deleting user…');
+  const bar = progressBar(devsOn.length, 'Deleting —');
   const fails = [];
-  for (const d of devsOn) {
+  await runBatched(devsOn, async (d) => {
     const r = await api.del(`/devices/${d.id}/users/${encodeURIComponent(employeeNo)}`);
     if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
-  }
+  }, bar, 6);
+  bar.close();
   toast(fails.length ? `Failed on ${fails.length} machine(s): ${fails[0]}` : `User deleted from ${devsOn.length} machine${devsOn.length > 1 ? 's' : ''}`, fails.length ? 'err' : 'ok');
   if ($('#u_table')) loadUsersTable(devs);
 }
@@ -1210,17 +1211,60 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       if (v) validEnds[inp.dataset.dev] = v;
     });
     closeModal();
-    toast('Applying machine access…');
-    const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
-      device_ids: ids,
-      valid_ends: validEnds,
-    });
-    if (!rr.ok) { toast(`Failed: ${rr.error || 'error'}`, 'err'); return; }
-    const errs = (rr.results || []).filter((x) => x.state === 'error');
-    const changed = (rr.results || []).filter((x) => ['granted', 'revoked', 'updated'].includes(x.state)).length;
+    // Batches of machines with a live progress bar — device_ids is always the
+    // FULL wanted set; only_ids limits which machines each request touches.
+    const allIds = r.machines.map((m) => m.device_id);
+    const chunks = [];
+    for (let i = 0; i < allIds.length; i += 8) chunks.push(allIds.slice(i, i + 8));
+    const bar = progressBar(allIds.length, 'Applying access —');
+    const results = [];
+    let reqError = null;
+    await runBatched(chunks, async (chunk) => {
+      const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
+        device_ids: ids,
+        valid_ends: validEnds,
+        only_ids: chunk,
+      });
+      if (rr.ok) results.push(...(rr.results || []));
+      else reqError = rr.error || 'error';
+    }, bar);
+    bar.close();
+    if (reqError && !results.length) { toast(`Failed: ${reqError}`, 'err'); return; }
+    const errs = results.filter((x) => x.state === 'error');
+    const changed = results.filter((x) => ['granted', 'unblocked', 'blocked', 'updated'].includes(x.state)).length;
     toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})`, errs.length ? 'err' : 'ok');
     if ($('#u_table')) loadUsersTable(devs);
   });
+}
+
+// Floating progress bar for long multi-machine operations ("5/52 machines").
+function progressBar(total, label) {
+  const el = document.createElement('div');
+  el.className = 'progress-pop';
+  el.innerHTML = '<div class="progress-label"></div><div class="progress-track"><div class="progress-fill"></div></div>';
+  document.body.appendChild(el);
+  let done = 0;
+  const paint = () => {
+    el.querySelector('.progress-label').textContent = `${label} ${done}/${total} machines`;
+    el.querySelector('.progress-fill').style.width = `${total ? Math.round((done / total) * 100) : 100}%`;
+  };
+  paint();
+  return {
+    tick(n = 1) { done += n; paint(); },
+    close() { el.remove(); },
+  };
+}
+
+// Run jobs with limited concurrency, ticking the bar as each finishes.
+async function runBatched(items, worker, bar, concurrency = 4) {
+  const queue = [...items];
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      await worker(item);
+      bar.tick(Array.isArray(item) ? item.length : 1);
+    }
+  }));
 }
 
 // Only one device-capture (card or fingerprint) may run at a time — the
