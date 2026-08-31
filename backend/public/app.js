@@ -1378,11 +1378,12 @@ function addUserModal(srcDev, devs, checkAll = false) {
     const hasCard = !!$('#au_card').value.trim();
     const checked = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
     sel.innerHTML =
-      (hasCard ? '<option value="">No fingerprint — card only</option>' : '') +
+      `<option value="">${hasCard ? 'No fingerprint — card only' : 'Skip fingerprint'}</option>` +
       devs.filter((d) => checked.includes(d.id))
         .map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
     else if (hasCard) sel.value = '';
+    else if (sel.options.length > 1) sel.selectedIndex = 1; // default: first ticked machine
   }
   document.querySelectorAll('.au-dev').forEach((c) => c.addEventListener('change', refreshFpOptions));
   $('#au_card').addEventListener('input', () => {
