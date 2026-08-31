@@ -1219,7 +1219,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       ${groupSelectHtml(devs)}
       <div class="device-checklist">${checks}</div>
     </div>
-    <div class="field"><label>Fingerprint machine <small class="hint">(after creating, this machine prompts for the finger)</small></label>
+    <div class="field"><label>Fingerprint machine <small class="hint">(after creating, this machine prompts for the finger — optional when an RFID card # is entered)</small></label>
       <select id="au_fpdev"></select>
     </div>
     <p class="hint">The same employee # is used on every selected machine. You can also tag a card later by tapping it (Tag card), or capture fingerprints any time.</p>
@@ -1229,15 +1229,25 @@ function addUserModal(srcDev, devs, checkAll = false) {
     </div>`);
   wireGroupSelect(devs, 'au-dev');
   // Fingerprint-capture machine list mirrors whichever machines are ticked.
+  // With an RFID card # entered, the fingerprint becomes optional — a
+  // "card only" choice appears (and is preselected when the card came first).
   function refreshFpOptions() {
     const sel = $('#au_fpdev');
     const prev = sel.value;
+    const hasCard = !!$('#au_card').value.trim();
     const checked = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
-    sel.innerHTML = devs.filter((d) => checked.includes(d.id))
-      .map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    sel.innerHTML =
+      (hasCard ? '<option value="">No fingerprint — card only</option>' : '') +
+      devs.filter((d) => checked.includes(d.id))
+        .map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+    else if (hasCard) sel.value = '';
   }
   document.querySelectorAll('.au-dev').forEach((c) => c.addEventListener('change', refreshFpOptions));
+  $('#au_card').addEventListener('input', () => {
+    refreshFpOptions();
+    if ($('#au_card').value.trim()) $('#au_fpdev').value = ''; // card entered → default to card only
+  });
   refreshFpOptions();
 
   $('#au_cancel').addEventListener('click', closeModal);
