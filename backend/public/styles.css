@@ -1499,14 +1499,41 @@ select option {
 .grp-chip.active svg { opacity: 1; }
 .grp-chip.active .grp-count { background: rgba(255, 255, 255, 0.25); }
 
-[data-theme="light"] .grp-chip {
-  color: #3730a3;
-  background: rgba(99, 102, 241, 0.08);
-  border-color: rgba(99, 102, 241, 0.4);
+[data-theme="light"] .grp-row .hint {
+  color: #475569;
+  font-weight: 700;
 }
-[data-theme="light"] .grp-chip:hover { background: rgba(99, 102, 241, 0.16); }
-[data-theme="light"] .grp-chip .grp-count { background: rgba(99, 102, 241, 0.18); }
-[data-theme="light"] .grp-chip.active { color: #ffffff; }
+[data-theme="light"] .grp-chip {
+  color: #3730a3 !important;
+  background: #eef2ff !important;
+  border: 1px solid #a5b4fc !important;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.1);
+}
+[data-theme="light"] .grp-chip svg {
+  stroke: #4338ca !important;
+}
+[data-theme="light"] .grp-chip .grp-count {
+  background: #c7d2fe !important;
+  color: #1e1b4b !important;
+}
+[data-theme="light"] .grp-chip:hover {
+  background: #e0e7ff !important;
+  border-color: #6366f1 !important;
+  color: #1e1b4b !important;
+}
+[data-theme="light"] .grp-chip.active {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35) !important;
+}
+[data-theme="light"] .grp-chip.active svg {
+  stroke: #ffffff !important;
+}
+[data-theme="light"] .grp-chip.active .grp-count {
+  background: rgba(255, 255, 255, 0.25) !important;
+  color: #ffffff !important;
+}
 
 /* ---- Booking enrollment prompt banner (dashboard) ---- */
 .notice-banner {
