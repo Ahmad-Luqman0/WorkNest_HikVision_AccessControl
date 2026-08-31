@@ -421,6 +421,24 @@ app.get('/api/consistency', async (req, res) => {
         }
       }
     }
+    // Same employee # under different names = duplicated rows on the Users
+    // page (people are matched by # AND name). Usually a rename that didn't
+    // reach every machine (some were offline).
+    const byNo = new Map();
+    for (const p of people.values()) {
+      if (!byNo.has(p.employeeNo)) byNo.set(p.employeeNo, []);
+      byNo.get(p.employeeNo).push(p);
+    }
+    for (const [no, variants] of byNo) {
+      if (variants.length > 1) {
+        issues.push({
+          type: 'name-split', employeeNo: no,
+          detail: `Employee #${no} has different names on different machines: ` +
+            variants.map((v) => `"${v.name || '(blank)'}" on ${v.machines.map((m) => m.device).join(', ')}`).join(' — vs — ') +
+            `. They show as separate rows until renamed to match: Actions → Edit name/# on the wrongly-named row.`,
+        });
+      }
+    }
     res.json({ ok: true, checked: per.length, issues });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
