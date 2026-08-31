@@ -1398,16 +1398,20 @@ function tagCard(entry, devs) {
 }
 
 function addUserModal(srcDev, devs, checkAll = false) {
-  const checks = devs.map((d) => `
+  const isEntrance = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+  const checks = devs.map((d) => {
+    const isChecked = isEntrance(d) || (!checkAll && d.id === srcDev.id);
+    const displayName = (d.name && d.name !== d.host) ? d.name : (d.code ? `Machine ${d.code}` : `Machine #${d.id}`);
+    return `
     <label class="dev-check-item">
-      <input type="checkbox" class="au-dev" value="${d.id}" ${!checkAll && d.id === srcDev.id ? 'checked' : ''}>
+      <input type="checkbox" class="au-dev" value="${d.id}" ${isChecked ? 'checked' : ''}>
       <div class="dev-info">
-        <span class="dev-name">${esc(d.name)}</span>
+        <span class="dev-name">${esc(displayName)}</span>
         ${d.location ? `<span class="dev-loc">${esc(d.location)}</span>` : ''}
       </div>
       <span class="dev-host">${esc(d.host)}</span>
-    </label>`
-  ).join('');
+    </label>`;
+  }).join('');
   openModal(`
     <h2>Add user</h2>
     <div class="two-col">
