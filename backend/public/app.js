@@ -1105,8 +1105,30 @@ async function userCardsModal(entry, devs) {
     <h2>Cards — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
     <p class="hint">Cards attached to this user on ${esc(on.map((d) => d.name).join(', '))}. Removing a card detaches it from every machine this user is on — their fingerprints and profile stay.</p>
     <div class="field" id="uc_list"><span class="muted">Loading cards…</span></div>
+    <div class="field"><label>Add a card <small class="hint">(typed — attached on every machine this user is on; or use Actions → Tag card to tap it on a reader)</small></label>
+      <div style="display:flex;gap:8px">
+        <input id="uc_new" placeholder="e.g. 0012345678" style="flex:1">
+        <button class="btn primary" id="uc_add">Attach card</button>
+      </div>
+    </div>
     <div class="modal-actions"><button class="btn" id="uc_close">Close</button></div>`);
   $('#uc_close').addEventListener('click', closeModal);
+  $('#uc_add').addEventListener('click', async () => {
+    const cardNo = $('#uc_new').value.trim();
+    if (!cardNo) { toast('Enter a card number', 'err'); return; }
+    toast(`Attaching card on ${on.length} machine${on.length === 1 ? '' : 's'}…`);
+    const results = await Promise.all(on.map(async (d) => ({
+      d, r: await api.post(`/devices/${d.id}/users/${encodeURIComponent(u.employeeNo)}/card`, { card_no: cardNo }),
+    })));
+    const fails = results.filter((x) => !x.r.ok);
+    toast(fails.length
+      ? `Failed on ${fails.map((f) => f.d.name).join(', ')}: ${fails[0].r.error || 'error'}`
+      : `Card ${cardNo} attached`, fails.length ? 'err' : 'ok');
+    $('#uc_new').value = '';
+    load();
+    if ($('#u_table')) loadUsersTable(devs);
+  });
+  $('#uc_new').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#uc_add').click(); });
   async function load() {
     const r = await api.get(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/cards`);
     const cardsList = r.ok ? r.cards : [];
