@@ -102,13 +102,43 @@
 
 [data-theme="light"] .hint,
 [data-theme="light"] small.hint,
+[data-theme="light"] .list-main small.hint,
 [data-theme="light"] .stat .sub,
 [data-theme="light"] .stat .label,
 [data-theme="light"] .panel h3,
 [data-theme="light"] .breadcrumb,
 [data-theme="light"] .crumb-current,
 [data-theme="light"] .brand-text .subtitle {
-  color: #334155;
+  color: #475569;
+}
+
+[data-theme="light"] .stat.good .value { color: #059669; }
+[data-theme="light"] .stat.warn .value { color: #d97706; }
+[data-theme="light"] .stat.bad .value { color: #dc2626; }
+
+[data-theme="light"] .stat.good .stat-icon { color: #059669; background: #dcfce7; }
+[data-theme="light"] .stat.warn .stat-icon { color: #d97706; background: #fef3c7; }
+[data-theme="light"] .stat.bad .stat-icon { color: #dc2626; background: #fee2e2; }
+
+/* Light Theme Banners High Contrast Overrides */
+[data-theme="light"] .offline-banner {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.08);
+}
+[data-theme="light"] .offline-banner b {
+  color: #7f1d1d;
+}
+
+[data-theme="light"] .notice-banner {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
+}
+[data-theme="light"] .notice-banner b {
+  color: #78350f;
 }
 
 [data-theme="light"] .nav-item {
