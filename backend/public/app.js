@@ -1177,6 +1177,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       const v = fromLocalInput(inp.value);
       if (v) validEnds[inp.dataset.dev] = v;
     });
+    closeModal();
     toast('Applying machine access…');
     const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
       device_ids: ids,
@@ -1186,7 +1187,6 @@ async function accessModal(srcDev, employeeNo, name, devs) {
     const errs = (rr.results || []).filter((x) => x.state === 'error');
     const changed = (rr.results || []).filter((x) => ['granted', 'revoked', 'updated'].includes(x.state)).length;
     toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})`, errs.length ? 'err' : 'ok');
-    closeModal();
     if ($('#u_table')) loadUsersTable(devs);
   });
 }
