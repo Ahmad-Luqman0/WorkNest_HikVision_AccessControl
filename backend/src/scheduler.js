@@ -64,6 +64,7 @@ export async function runClockSync() {
 // dashboard can show offline alerts.
 export async function runOnlineCheck() {
   const devices = await getAllDevices();
+  let changed = 0;
   await Promise.all(devices.map(async (dev) => {
     let up = false;
     try {
@@ -71,13 +72,14 @@ export async function runOnlineCheck() {
       up = true;
     } catch { up = false; }
     if (up) {
-      if (!dev.online) logSync(null, dev.id, 'online', true, 'machine is reachable again');
+      if (!dev.online) { changed++; logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1 });
     } else {
-      if (dev.online) logSync(null, dev.id, 'offline', false, 'machine stopped responding');
+      if (dev.online) { changed++; logSync(null, dev.id, 'offline', false, 'machine stopped responding'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
     }
   }));
+  return { checked: devices.length, changed };
 }
 
 // Keep credentials identical for the same person across machines. A person is

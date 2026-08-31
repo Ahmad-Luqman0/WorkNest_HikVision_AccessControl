@@ -278,6 +278,7 @@ const ACTION_LABELS = {
 const prettyAction = (a) => ACTION_LABELS[a] || a;
 
 async function dashboard() {
+  api.post('/online-check').catch(() => {}); // fresh statuses on next auto-refresh tick
   // Live view: refresh every 30s while the dashboard is open (not over modals).
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
@@ -490,6 +491,11 @@ async function devices() {
     if (!confirm('Delete this machine?')) return;
     await api.del(`/devices/${b.dataset.del}`); devices();
   }));
+  // Kick a live reachability check (works on Vercel too — no background jobs
+  // needed there); refresh the list only if any machine changed state.
+  api.post('/online-check').then((r) => {
+    if (r?.ok && r.changed && current === 'devices' && !document.querySelector('#modalBackdrop:not([hidden])')) devices();
+  }).catch(() => {});
 }
 
 // Live list of persons enrolled on a device (pulled straight from the terminal).

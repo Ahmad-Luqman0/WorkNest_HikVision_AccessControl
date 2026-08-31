@@ -12,7 +12,7 @@ import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync } from './scheduler.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck } from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -33,6 +33,21 @@ app.use(async (req, res, next) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/ext', extRouter); // external booking-system API (X-API-Key)
+
+// Vercel Cron backstop (no session): checks all machines once a day even if
+// nobody opens the dashboard and the on-site server is down. Protected by
+// CRON_SECRET when set (Vercel sends it as a Bearer token).
+app.get('/api/cron/online-check', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.get('authorization') !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    res.json({ ok: true, ...(await runOnlineCheck()) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 app.use('/api', requireAuth);   // everything else needs a logged-in session
 app.use('/api/devices', devicesRouter);
 app.use('/api/cards', cardsRouter);
@@ -53,6 +68,23 @@ app.post('/api/sync', async (req, res) => {
 // Force an expiry check now.
 app.post('/api/expiry-check', async (req, res) => {
   res.json(await runExpiryPass());
+});
+
+// Live machine reachability check, fired by the dashboard whenever someone is
+// viewing it — this is what keeps online status fresh on Vercel, where no
+// background scheduler runs. Throttled to once per minute across all viewers.
+app.post('/api/online-check', async (req, res) => {
+  try {
+    const last = await sp('WN_HIK_Settings_Get', { key: 'online_check_at' });
+    const now = Date.now();
+    if (Number(last[0]?.value) > now - 60000) {
+      return res.json({ ok: true, skipped: true, changed: 0 });
+    }
+    await sp('WN_HIK_Settings_Set', { key: 'online_check_at', value: String(now) });
+    res.json({ ok: true, ...(await runOnlineCheck()) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
 });
 
 // Recent activity log.
