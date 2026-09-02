@@ -1097,34 +1097,79 @@ async function userProfileModal(entry) {
   const body = $('#up_body');
   if (!body) return;
   if (!r.ok) { body.innerHTML = `<span class="muted">Failed: ${esc(r.error || 'error')}</span>`; return; }
+
+  let maxFP = 0;
+  let maxFace = 0;
+  const cardsSet = new Set();
+  let accessCount = 0;
+
+  for (const m of r.machines) {
+    if (m.present && m.enabled) accessCount++;
+    if (m.numOfFP) maxFP = Math.max(maxFP, m.numOfFP);
+    if (m.numOfFace) maxFace = Math.max(maxFace, m.numOfFace);
+    if (Array.isArray(m.cards)) {
+      for (const c of m.cards) cardsSet.add(c);
+    }
+  }
+
+  const credParts = [];
+  if (maxFP) credParts.push(`${maxFP} fingerprint${maxFP === 1 ? '' : 's'}`);
+  if (maxFace) credParts.push(`${maxFace} face`);
+  if (cardsSet.size) credParts.push(`Card${cardsSet.size === 1 ? '' : 's'}: ${[...cardsSet].join(', ')}`);
+  const credsSummary = credParts.length ? credParts.join(' · ') : 'No credentials enrolled';
+
   const rows = r.machines.map((m) => {
+    let dotClass = 'off';
+    let statusBadge = '<span class="badge">no access</span>';
+    let validStr = '—';
+
     if (m.present === null) {
-      return `<div class="list-row"><span class="status-dot off"></span>
-        <div class="list-main"><b>${esc(m.device)}</b><small class="hint">${esc(m.host)}</small></div>
-        <span class="badge offline">unreachable</span></div>`;
+      statusBadge = '<span class="badge offline">unreachable</span>';
+    } else if (m.present) {
+      dotClass = m.enabled ? 'on' : 'off';
+      statusBadge = m.enabled ? '<span class="badge synced">has access</span>' : '<span class="badge blocked">blocked</span>';
+      if (m.validEnd) {
+        validStr = esc(String(m.validEnd).replace('T', ' ').slice(0, 16));
+      }
     }
-    if (!m.present) {
-      return `<div class="list-row"><span class="status-dot off"></span>
-        <div class="list-main"><b>${esc(m.device)}</b><small class="hint">${esc(m.host)}</small></div>
-        <span class="badge">no access</span></div>`;
-    }
-    const creds = [
-      `${m.numOfFP} fingerprint${m.numOfFP === 1 ? '' : 's'}`,
-      `${m.numOfFace} face`,
-      m.cards.length ? `card${m.cards.length === 1 ? '' : 's'}: ${m.cards.join(', ')}` : 'no card',
-    ];
-    return `<div class="list-row">
-      <span class="status-dot ${m.enabled ? 'on' : 'off'}"></span>
-      <div class="list-main">
-        <b>${esc(m.device)}</b>
-        <small class="hint">valid ${esc((m.validBegin || '—').replace('T', ' '))} → ${esc((m.validEnd || '—').replace('T', ' '))}</small>
-        <small class="hint">${esc(creds.join(' · '))}</small>
-      </div>
-      ${m.admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}
-      ${m.enabled ? '<span class="badge synced">has access</span>' : '<span class="badge blocked">blocked</span>'}
-    </div>`;
+
+    const roleBadge = m.admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>';
+
+    return `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="status-dot ${dotClass}"></span>
+            <b>${esc(m.device)}</b>
+            <small class="hint">${esc(m.host || '')}</small>
+          </div>
+        </td>
+        <td class="nowrap"><small class="hint">${validStr}</small></td>
+        <td>${roleBadge}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
   }).join('');
-  body.innerHTML = `<div class="device-checklist" style="max-height:340px">${rows}</div>`;
+
+  body.innerHTML = `
+    <div class="profile-summary-bar">
+      <div class="psb-item"><span class="psb-label">Credentials:</span> <span class="psb-val">${esc(credsSummary)}</span></div>
+      <div class="psb-item"><span class="psb-label">Access:</span> <span class="psb-val">${accessCount} of ${r.machines.length} doors</span></div>
+    </div>
+    <div class="table-wrapper" style="max-height:340px; overflow-y:auto;">
+      <table class="profile-table">
+        <thead>
+          <tr>
+            <th>Machine / Door</th>
+            <th>Valid Until</th>
+            <th>Role</th>
+            <th>Access Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // Edit a user's name / employee # across every machine they exist on.
