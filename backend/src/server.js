@@ -566,8 +566,8 @@ app.get('/api/stats', async (req, res) => {
     const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
 
     const [todayRow, yestRow] = await Promise.all([
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Activity WHERE CAST(ts AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
     ]);
 
     const todayScans = todayRow?.n || 0;
@@ -599,10 +599,17 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/audit-logs', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const logs = await getRows(
-      `SELECT TOP (${limit}) * FROM dbo.WN_HIK_Activity
-       ORDER BY id DESC`
-    );
+    let logs = [];
+    try {
+      logs = await sp('WN_HIK_Activity_Recent', { limit });
+    } catch {
+      logs = await getRows(
+        `SELECT TOP (${limit}) l.*, d.name AS device_name
+         FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
+         LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
+         ORDER BY l.id DESC`
+      ).catch(() => []);
+    }
     const parsed = logs.map((l) => {
       let info = {};
       try { info = JSON.parse(l.detail || '{}'); } catch {}
@@ -610,7 +617,7 @@ app.get('/api/audit-logs', async (req, res) => {
         id: l.id,
         ts: l.ts,
         action: String(l.action).replace(/^AUDIT:/, ''),
-        actor: typeof info === 'object' && info?.actor ? info.actor : 'system',
+        actor: typeof info === 'object' && info?.actor ? info.actor : (String(l.action).startsWith('AUDIT:') ? 'admin' : 'system'),
         target: typeof info === 'object' && info?.target ? info.target : (l.device_name || ''),
         ip: typeof info === 'object' && info?.ip ? info.ip : '',
         info: typeof info === 'object' && info?.info ? info.info : (l.detail || ''),
