@@ -215,6 +215,12 @@ export async function replayPendingOps() {
           }, 'modify');
           if (!r.ok) throw new Error(isapi.describe(r));
         }
+      } else if (o.op === 'add-fp') {
+        const p = await isapi.getPerson(dev, emp);
+        if (p) {
+          const r = await isapi.addFingerprint(dev, emp, payload.fingerData, payload.fingerNo || 1);
+          if (!r.ok && !/alreadyexist/i.test(String(r.subStatusCode || ''))) throw new Error(isapi.describe(r));
+        }
       } else if (o.op === 'delete-user') {
         const r = await isapi.deletePerson(dev, emp);
         if (!r.ok && !/notExist/i.test(String(r.subStatusCode || ''))) throw new Error(isapi.describe(r));

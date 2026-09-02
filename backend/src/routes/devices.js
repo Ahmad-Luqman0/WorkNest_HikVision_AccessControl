@@ -583,24 +583,36 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', async (req, res
     const stored = await isapi.addFingerprint(dev, req.params.employeeNo, cap.fingerData, fingerNo);
     logSync(null, dev.id, 'store-fingerprint', stored.ok, stored);
     if (!stored.ok) return res.status(502).json({ ok: false, error: isapi.describe(stored) });
-    // Replicate the captured template to the user's other machines so one scan
-    // enrolls the finger everywhere.
-    const replicateIds = [...new Set((req.body?.replicate_device_ids || []).map(Number))]
-      .filter((id) => id && id !== dev.id);
-    const replicated = [];
-    for (const rid of replicateIds) {
-      const rdev = await getDeviceById(rid);
-      if (!rdev) continue;
-      try {
-        const rr = await isapi.addFingerprint(rdev, req.params.employeeNo, cap.fingerData, fingerNo);
-        logSync(null, rdev.id, 'store-fingerprint', rr.ok, rr);
-        replicated.push({ device: rdev.name, ok: rr.ok, error: rr.ok ? undefined : isapi.describe(rr) });
-      } catch (e) {
-        replicated.push({ device: rdev.name, ok: false, error: String(e.message || e) });
+    // Replicate the captured template to EVERY machine this person exists on
+    // (not just the ones a form had ticked — fingerprint templates cannot be
+    // read back from a machine later, so capture time is the only chance).
+    // Offline machines get the template queued and applied when they return.
+    const emp = String(req.params.employeeNo);
+    const requested = new Set((req.body?.replicate_device_ids || []).map(Number));
+    const all = (await getAllDevices()).filter((d) => d.id !== dev.id);
+    const replicated = await Promise.all(all.map(async (rdev) => {
+      let hasUser = requested.has(rdev.id);
+      if (!hasUser) {
+        try {
+          const users = await getRoster(rdev, 120000); // any reasonably fresh roster
+          hasUser = users.some((u) => String(u.employeeNo) === emp);
+        } catch { hasUser = false; /* offline and not explicitly requested */ }
       }
-    }
+      if (!hasUser) return null;
+      try {
+        const rr = await isapi.addFingerprint(rdev, emp, cap.fingerData, fingerNo);
+        logSync(null, rdev.id, 'store-fingerprint', rr.ok, rr);
+        return { device: rdev.name, ok: rr.ok, error: rr.ok ? undefined : isapi.describe(rr) };
+      } catch (e) {
+        if (isUnreachableErr(e)) {
+          await queueOp(rdev.id, 'add-fp', emp, { fingerData: cap.fingerData, fingerNo }).catch(() => {});
+          return { device: rdev.name, ok: true, queued: true };
+        }
+        return { device: rdev.name, ok: false, error: String(e.message || e) };
+      }
+    }));
     invalidateRoster();
-    res.json({ ok: true, quality: cap.quality, replicated });
+    res.json({ ok: true, quality: cap.quality, replicated: replicated.filter(Boolean) });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }
