@@ -35,6 +35,7 @@ export async function initDb() {
   pool = await new sql.ConnectionPool(config).connect();
   pool.on('error', (e) => console.error('[db] pool error:', e.message));
   await ensurePendingOps();
+  await ensureFpVault();
   await migrateFromSqliteIfEmpty();
   return pool;
 }
@@ -58,6 +59,40 @@ async function ensurePendingOps() {
   } catch (e) {
     console.error('[db] ensurePendingOps:', e.message);
   }
+}
+
+// Fingerprint templates cannot be read back from the machines, so every
+// captured template is vaulted here — that's what lets a machine that comes
+// online later (or a brand-new machine) receive the person's fingerprint
+// automatically, matched by employee # AND name.
+async function ensureFpVault() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_FpVault','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_FpVault (
+        id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_FpVault PRIMARY KEY,
+        employee_no NVARCHAR(32) NOT NULL,
+        name NVARCHAR(128) NOT NULL,
+        finger_no INT NOT NULL CONSTRAINT DF_WN_HIK_FpVault_no DEFAULT (1),
+        template NVARCHAR(MAX) NOT NULL,
+        updated_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_FpVault_upd DEFAULT (SYSDATETIME()),
+        CONSTRAINT UQ_WN_HIK_FpVault UNIQUE (employee_no, name, finger_no)
+      )`);
+  } catch (e) {
+    console.error('[db] ensureFpVault:', e.message);
+  }
+}
+
+export async function saveFpTemplate(employee_no, name, finger_no, template) {
+  const emp = String(employee_no);
+  const nm = String(name || '').trim();
+  await run('DELETE FROM dbo.WN_HIK_FpVault WHERE employee_no=? AND name=? AND finger_no=?', [emp, nm, Number(finger_no) || 1]);
+  await run('INSERT INTO dbo.WN_HIK_FpVault (employee_no, name, finger_no, template) VALUES (?,?,?,?)',
+    [emp, nm, Number(finger_no) || 1, String(template)]);
+}
+
+export async function getFpTemplates(employee_no, name) {
+  return getRows('SELECT finger_no, template FROM dbo.WN_HIK_FpVault WHERE employee_no=? AND name=?',
+    [String(employee_no), String(name || '').trim()]);
 }
 
 // Queue (or replace) a pending op for an offline machine.

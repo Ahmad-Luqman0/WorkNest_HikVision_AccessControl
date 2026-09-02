@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById, getRow, run, sp, logSync, queueOp, isUnreachableErr } from '../db.js';
+import { getAllDevices, getDeviceById, getRow, run, sp, logSync, queueOp, isUnreachableErr, saveFpTemplate } from '../db.js';
 import * as isapi from '../isapi.js';
 import { getRoster, invalidateRoster } from '../machineCache.js';
 
@@ -583,6 +583,12 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', async (req, res
     const stored = await isapi.addFingerprint(dev, req.params.employeeNo, cap.fingerData, fingerNo);
     logSync(null, dev.id, 'store-fingerprint', stored.ok, stored);
     if (!stored.ok) return res.status(502).json({ ok: false, error: isapi.describe(stored) });
+    // Vault the template so machines coming online later (or new machines)
+    // receive this fingerprint automatically — devices never export them.
+    try {
+      const person = await isapi.getPerson(dev, String(req.params.employeeNo)).catch(() => null);
+      await saveFpTemplate(req.params.employeeNo, person?.name || '', fingerNo, cap.fingerData);
+    } catch { /* vault is best-effort */ }
     // Replicate the captured template to EVERY machine this person exists on
     // (not just the ones a form had ticked — fingerprint templates cannot be
     // read back from a machine later, so capture time is the only chance).

@@ -3,7 +3,7 @@
 // Period natively — these jobs handle the extras (status flips, auto-delete,
 // keeping credentials identical everywhere).
 import cron from 'node-cron';
-import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr } from './db.js';
+import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
@@ -65,6 +65,7 @@ export async function runClockSync() {
 export async function runOnlineCheck() {
   const devices = await getAllDevices();
   let changed = 0;
+  const cameOnline = [];
   await Promise.all(devices.map(async (dev) => {
     let up = false;
     try {
@@ -72,14 +73,27 @@ export async function runOnlineCheck() {
       up = true;
     } catch { up = false; }
     if (up) {
-      if (!dev.online) { changed++; logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
+      if (!dev.online) { changed++; cameOnline.push(dev.name); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1 });
     } else {
       if (dev.online) { changed++; logSync(null, dev.id, 'offline', false, 'machine stopped responding'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
     }
   }));
-  return { checked: devices.length, changed };
+  // A machine that just came back gets reconciled right away: queued ops
+  // first, then the credential sync copies fingerprints/cards/faces for every
+  // person matched by employee # + name. (On serverless the watcher and the
+  // next online check pick this up instead of a background task.)
+  if (cameOnline.length && !process.env.VERCEL) {
+    (async () => {
+      try { await replayPendingOps(); } catch { /* retried by the watcher */ }
+      try {
+        const r = await runCredentialSync();
+        if (r.copied) console.log(`[online] ${cameOnline.join(', ')} back — synced ${r.copied} credential(s)`);
+      } catch { /* retried by the watcher */ }
+    })();
+  }
+  return { checked: devices.length, changed, cameOnline };
 }
 
 // Keep credentials identical for the same person across machines. A person is
@@ -124,13 +138,18 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   // ALL members so nothing is missed) — lets the UI batch for progress.
   const writable = (m) => !onlyDeviceIds || onlyDeviceIds.has(m.dev.id);
 
-  // Fingerprints: union by finger slot. Reads and writes fan out across
-  // machines in parallel (each machine still gets its calls one at a time).
+  // Fingerprints: union by finger slot. Machines can't export templates, so
+  // the DB vault (filled at capture time) is the primary source; anything a
+  // machine does export is unioned in too.
   try {
     const sets = await Promise.all(members.map(async (m) => ({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) })));
     const union = new Map();
+    try {
+      for (const v of await getFpTemplates(employeeNo, members[0].u.name)) union.set(Number(v.finger_no) || 1, v.template);
+    } catch { /* vault unavailable — machine reads only */ }
     for (const s of sets) for (const p of s.prints) if (!union.has(p.fingerPrintID)) union.set(p.fingerPrintID, p.fingerData);
     await Promise.all(sets.filter((s) => writable(s.m)).map(async (s) => {
+      if (Number(s.m.u.numOfFP) >= union.size && union.size) return; // already complete
       const have = new Set(s.prints.map((p) => p.fingerPrintID));
       for (const [fid, data] of union) {
         if (have.has(fid)) continue;
