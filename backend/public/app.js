@@ -765,7 +765,7 @@ async function loadUsersTable(devs) {
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
-      <td><small class="hint"><a class="link" data-cards="${i}" title="View / add cards">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
+      <td class="creds-cell" data-credidx="${i}" style="cursor:pointer" title="View / manage credentials"><small class="hint"><a class="link" data-cards="${i}">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
       <td class="row-actions">
         <button class="btn sm" data-menu="${i}">Actions ▾</button>
       </td></tr>`;
@@ -842,6 +842,13 @@ async function loadUsersTable(devs) {
     ]);
   }));
   holder.querySelectorAll('[data-cards]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userCardsModal(entries[Number(b.dataset.cards)], devs); }));
+  // The whole credentials cell (including the 'differs' badge and padding)
+  // opens the credentials manager — not the profile.
+  holder.querySelectorAll('td.creds-cell').forEach((td) => td.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (ev.target.closest('a')) return; // the link handler already fired
+    userCardsModal(entries[Number(td.dataset.credidx)], devs);
+  }));
 }
 
 async function deleteFaceAction(e, devs) {
