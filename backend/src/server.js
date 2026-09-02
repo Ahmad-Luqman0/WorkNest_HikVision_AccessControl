@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDb, getRow, run, sp, getAllDevices, getDeviceById, seedDevices, logSync } from './db.js';
+import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync } from './db.js';
 import * as isapi from './isapi.js';
 import { devicesRouter } from './routes/devices.js';
 import { cardsRouter } from './routes/cards.js';
