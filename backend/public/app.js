@@ -507,8 +507,8 @@ async function devices() {
         <button class="btn sm" data-open="${d.id}">Unlock</button>
         <button class="btn sm" data-users="${d.id}" data-name="${esc(d.name)}">Users</button>
         <button class="btn sm" data-test="${d.id}">Test</button>
-        <button class="btn sm" data-edit="${d.id}">Edit</button>
-        <button class="btn sm danger" data-del="${d.id}">Delete</button>
+        ${dashRole === 'admin' ? `<button class="btn sm" data-edit="${d.id}">Edit</button>
+        <button class="btn sm danger" data-del="${d.id}">Delete</button>` : ''}
       </td>
     </tr>`).join('');
   content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>

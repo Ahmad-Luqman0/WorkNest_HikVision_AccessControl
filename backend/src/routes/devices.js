@@ -76,6 +76,9 @@ devicesRouter.post('/', async (req, res) => {
 });
 
 devicesRouter.put('/:id', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Editing machines is admin-only.' });
+  }
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const fields = ['name', 'host', 'port', 'use_https', 'username', 'password', 'location', 'grp', 'code'];
@@ -94,6 +97,10 @@ devicesRouter.put('/:id', async (req, res) => {
 });
 
 devicesRouter.delete('/:id', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Deleting machines is admin-only.' });
+  }
+  logSync(null, Number(req.params.id), 'delete-machine', true, { by: req.auth?.username });
   await run('DELETE FROM dbo.WN_HIK_Devices WHERE id=?', [Number(req.params.id)]);
   res.json({ ok: true });
 });
