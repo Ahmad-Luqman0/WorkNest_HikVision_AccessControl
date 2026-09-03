@@ -1242,29 +1242,45 @@ async function userCardsModal(entry, devs) {
     const ids = chosen('#uc_fpdev');
     const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
     if (!confirm(`Delete ${u.name || 'this user'}'s fingerprint from ${where}? They keep cards, face and profile.`)) return;
-    toast('Deleting fingerprint…');
-    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-fingerprints`, { device_ids: ids });
-    const fails = (r.results || []).filter((x) => !x.ok);
-    toast(r.ok && !fails.length ? 'Fingerprint deleted' : `Failed on ${fails.map((f) => f.device).join(', ') || 'all'}`, r.ok && !fails.length ? 'ok' : 'err');
+    const chunksF = [];
+    for (let i = 0; i < ids.length; i += 8) chunksF.push(ids.slice(i, i + 8));
+    const bar = progressBar(ids.length, 'Deleting fingerprint —');
+    const fails = [];
+    await runBatched(chunksF, async (chunk) => {
+      const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-fingerprints`, { device_ids: chunk });
+      fails.push(...(r.results || []).filter((x) => !x.ok));
+      if (!r.ok && !r.results) fails.push({ device: 'request', error: r.error });
+    }, bar, 3);
+    bar.close();
+    toast(!fails.length ? 'Fingerprint deleted' : `Failed on ${fails.map((f) => f.device).join(', ')}`, !fails.length ? 'ok' : 'err');
     if ($('#u_table')) loadUsersTable(devs);
   });
   $('#uc_facedel').addEventListener('click', async () => {
     const ids = chosen('#uc_facedev');
     const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
     if (!confirm(`Delete ${u.name || 'this user'}'s face from ${where}? Face recognition stops there; fingerprints, cards and profile stay.`)) return;
-    toast('Deleting face…');
-    const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-face`, { device_ids: ids });
-    const fails = (r.results || []).filter((x) => !x.ok);
-    toast(r.ok && !fails.length ? 'Face deleted' : `Failed on ${fails.map((f) => f.device).join(', ') || 'all'}`, r.ok && !fails.length ? 'ok' : 'err');
+    const chunksFc = [];
+    for (let i = 0; i < ids.length; i += 8) chunksFc.push(ids.slice(i, i + 8));
+    const bar = progressBar(ids.length, 'Deleting face —');
+    const fails = [];
+    await runBatched(chunksFc, async (chunk) => {
+      const r = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/delete-face`, { device_ids: chunk });
+      fails.push(...(r.results || []).filter((x) => !x.ok));
+      if (!r.ok && !r.results) fails.push({ device: 'request', error: r.error });
+    }, bar, 3);
+    bar.close();
+    toast(!fails.length ? 'Face deleted' : `Failed on ${fails.map((f) => f.device).join(', ')}`, !fails.length ? 'ok' : 'err');
     if ($('#u_table')) loadUsersTable(devs);
   });
   $('#uc_add').addEventListener('click', async () => {
     const cardNo = $('#uc_new').value.trim();
     if (!cardNo) { toast('Enter a card number', 'err'); return; }
-    toast(`Attaching card on ${on.length} machine${on.length === 1 ? '' : 's'}…`);
-    const results = await Promise.all(on.map(async (d) => ({
-      d, r: await api.post(`/devices/${d.id}/users/${encodeURIComponent(u.employeeNo)}/card`, { card_no: cardNo }),
-    })));
+    const bar = progressBar(on.length, `Attaching card ${cardNo} —`);
+    const results = [];
+    await runBatched(on, async (d) => {
+      results.push({ d, r: await api.post(`/devices/${d.id}/users/${encodeURIComponent(u.employeeNo)}/card`, { card_no: cardNo }) });
+    }, bar, 6);
+    bar.close();
     const fails = results.filter((x) => !x.r.ok);
     toast(fails.length
       ? `Failed on ${fails.map((f) => f.d.name).join(', ')}: ${fails[0].r.error || 'error'}`
@@ -1288,9 +1304,16 @@ async function userCardsModal(entry, devs) {
     $('#uc_list').querySelectorAll('[data-rmcard]').forEach((b) => b.addEventListener('click', async () => {
       const cardNo = b.dataset.rmcard;
       if (!confirm(`Remove card ${cardNo} from ${u.name || 'this user'}?\n\nIt is detached on: ${on.map((d) => d.name).join(', ')}.`)) return;
-      toast('Removing card…');
-      const rr = await api.post('/devices/card/delete', { card_no: cardNo, device_ids: on.map((d) => d.id) });
-      const fails = (rr.results || []).filter((x) => !x.ok);
+      const ids = on.map((d) => d.id);
+      const chunks = [];
+      for (let i = 0; i < ids.length; i += 8) chunks.push(ids.slice(i, i + 8));
+      const bar = progressBar(ids.length, `Removing card ${cardNo} —`);
+      const fails = [];
+      await runBatched(chunks, async (chunk) => {
+        const rr = await api.post('/devices/card/delete', { card_no: cardNo, device_ids: chunk });
+        fails.push(...(rr.results || []).filter((x) => !x.ok));
+      }, bar, 3);
+      bar.close();
       toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}` : 'Card removed', fails.length ? 'err' : 'ok');
       load();
       if ($('#u_table')) loadUsersTable(devs);
@@ -1361,15 +1384,30 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       if (v) validEnds[inp.dataset.dev] = v;
     });
     closeModal();
-    toast('Applying machine access…');
-    const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
-      device_ids: ids,
-      valid_ends: validEnds,
-    });
-    if (!rr.ok) { toast(`Failed: ${rr.error || 'error'}`, 'err'); return; }
-    const errs = (rr.results || []).filter((x) => x.state === 'error');
-    const changed = (rr.results || []).filter((x) => ['granted', 'revoked', 'updated'].includes(x.state)).length;
-    toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})`, errs.length ? 'err' : 'ok');
+    // Batches of machines with a live progress bar; device_ids is always the
+    // FULL wanted set, only_ids limits which machines each request touches.
+    const allIds = r.machines.map((m) => m.device_id);
+    const chunks = [];
+    for (let i = 0; i < allIds.length; i += 8) chunks.push(allIds.slice(i, i + 8));
+    const bar = progressBar(allIds.length, 'Applying access —');
+    const results = [];
+    let reqError = null;
+    await runBatched(chunks, async (chunk) => {
+      const rr = await api.post(`/devices/${srcDev.id}/users/${encodeURIComponent(employeeNo)}/access`, {
+        device_ids: ids,
+        valid_ends: validEnds,
+        only_ids: chunk,
+      });
+      if (rr.ok) results.push(...(rr.results || []));
+      else reqError = rr.error || 'error';
+    }, bar, 4);
+    bar.close();
+    if (reqError && !results.length) { toast(`Failed: ${reqError}`, 'err'); return; }
+    const errs = results.filter((x) => x.state === 'error');
+    const queued = results.filter((x) => x.state === 'queued').length;
+    const changed = results.filter((x) => ['granted', 'unblocked', 'blocked', 'updated'].includes(x.state)).length;
+    const extra = queued ? ` · ${queued} offline queued (auto-applies when back)` : '';
+    toast(errs.length ? `${changed} changed, ${errs.length} failed: ${errs.map((e) => e.device).join(', ')}${extra}` : `Access updated (${changed} change${changed === 1 ? '' : 's'})${extra}`, errs.length ? 'err' : 'ok');
     if ($('#u_table')) loadUsersTable(devs);
   });
 }
@@ -1410,12 +1448,13 @@ let captureBusy = false;
 
 async function setRole(devsOn, employeeNo, role, devs) {
   const targets = Array.isArray(devsOn) ? devsOn : [devsOn];
-  toast(`Setting ${role === 'admin' ? 'Admin' : 'User'} access…`);
+  const bar = progressBar(targets.length, `Setting ${role === 'admin' ? 'Admin' : 'User'} —`);
   const fails = [];
-  for (const d of targets) {
+  await runBatched(targets, async (d) => {
     const r = await api.post(`/devices/${d.id}/users/${encodeURIComponent(employeeNo)}/role`, { role });
     if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
-  }
+  }, bar, 6);
+  bar.close();
   toast(
     fails.length ? `Failed on ${fails.length} machine(s): ${fails[0]}`
       : `Now ${role === 'admin' ? 'Admin' : 'User'}${targets.length > 1 ? ` on ${targets.length} machines` : ''}`,
