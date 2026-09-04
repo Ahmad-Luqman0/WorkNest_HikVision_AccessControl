@@ -762,7 +762,8 @@ async function loadUsersTable(devs) {
     const tenantRooms = on.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
     return `<tr class="clickable-row" data-rowidx="${i}" title="View full profile">
       <td>${esc(u.employeeNo)}</td>
-      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a>${tenantRooms.map((d) => ` <span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join('')}</td>
+      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
+      <td>${tenantRooms.length ? tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ') : '<small class="hint">—</small>'}</td>
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
@@ -771,7 +772,7 @@ async function loadUsersTable(devs) {
         <button class="btn sm" data-menu="${i}">Actions ▾</button>
       </td></tr>`;
   }).join('');
-  holder.innerHTML = `${note}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  holder.innerHTML = `${note}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
   // Central-truth check: machines are compared in the background and any
   // credential disagreement (cards/fingerprints/faces) is flagged here.
