@@ -66,6 +66,7 @@ export async function runOnlineCheck() {
   const devices = await getAllDevices();
   let changed = 0;
   const cameOnline = [];
+  const cameOnlineDevs = [];
   await Promise.all(devices.map(async (dev) => {
     let up = false;
     try {
@@ -73,7 +74,7 @@ export async function runOnlineCheck() {
       up = true;
     } catch { up = false; }
     if (up) {
-      if (!dev.online) { changed++; cameOnline.push(dev.name); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
+      if (!dev.online) { changed++; cameOnline.push(dev.name); cameOnlineDevs.push(dev); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1 });
     } else {
       if (dev.online) { changed++; logSync(null, dev.id, 'offline', false, 'machine stopped responding'); }
@@ -86,6 +87,14 @@ export async function runOnlineCheck() {
   // next online check pick this up instead of a background task.)
   if (cameOnline.length && !process.env.VERCEL) {
     (async () => {
+      // Clock first: a machine that was offline missed the daily 04:00 sync,
+      // and a drifted clock makes valid people look expired at the door.
+      await Promise.all(cameOnlineDevs.map(async (d) => {
+        try {
+          const r = await isapi.setDeviceTime(d);
+          logSync(null, d.id, 'time-sync', r.ok, 'clock set after coming online');
+        } catch { /* next daily sync catches it */ }
+      }));
       try { await replayPendingOps(); } catch { /* retried by the watcher */ }
       try {
         const r = await runCredentialSync();
