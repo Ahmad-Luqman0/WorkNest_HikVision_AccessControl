@@ -776,7 +776,24 @@ async function loadUsersTable(devs) {
       <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
       <td class="nowrap">${roomCell}</td>
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
-      ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
+      ${all ? (() => {
+        const full = on.map((d) => d.name).join(', ');
+        const entr = on.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
+        const totalDevs = devs.length;
+        let cell;
+        if (totalDevs > 1 && on.length >= totalDevs) {
+          cell = `<span class="badge admin" title="${esc(full)}">All machines (${on.length})</span>`;
+        } else if (on.length <= 2) {
+          cell = `<small class="hint">${esc(full)}</small>`;
+        } else {
+          const allEntr = entr.length && entr.length === devs.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance')).length;
+          const rest = on.length - (allEntr ? entr.length : 1);
+          cell = allEntr
+            ? `<span class="badge admin">Entrances (${entr.length})</span> <span class="badge" title="${esc(full)}">+${rest} more</span>`
+            : `<small class="hint">${esc(on[0].name)}</small> <span class="badge" title="${esc(full)}">+${rest} more</span>`;
+        }
+        return `<td class="nowrap">${cell}</td>`;
+      })() : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
       <td class="creds-cell" data-credidx="${i}" style="cursor:pointer" title="View / manage credentials"><small class="hint"><a class="link" data-cards="${i}">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
       <td class="row-actions">
