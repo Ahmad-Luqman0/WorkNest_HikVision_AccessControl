@@ -32,12 +32,8 @@ function showLogin() {
   const overlay = el(`<div id="loginOverlay" class="login-overlay">
     <form class="login-card" id="loginForm">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-        <div class="logo-icon" style="width:44px;height:44px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="10" rx="2" />
-            <circle cx="12" cy="16" r="1.5" fill="currentColor" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
+        <div class="logo-icon" style="width:44px;height:44px;background:#101c3d;padding:0;overflow:hidden">
+          <img src="/logo.svg" alt="WorkNest" style="width:100%;height:100%;display:block" />
         </div>
         <div>
           <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:-0.03em;">WorkNest Access</h2>
