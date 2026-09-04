@@ -782,14 +782,14 @@ async function loadUsersTable(devs) {
         const totalDevs = devs.length;
         let cell;
         if (totalDevs > 1 && on.length >= totalDevs) {
-          cell = `<span class="badge admin" title="${esc(full)}">All machines (${on.length})</span>`;
+          cell = `<span class="badge" title="${esc(full)}">All machines (${on.length})</span>`;
         } else if (on.length <= 2) {
           cell = `<small class="hint">${esc(full)}</small>`;
         } else {
           const allEntr = entr.length && entr.length === devs.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance')).length;
           const rest = on.length - (allEntr ? entr.length : 1);
           cell = allEntr
-            ? `<span class="badge admin">Entrances (${entr.length})</span> <span class="badge" title="${esc(full)}">+${rest} more</span>`
+            ? `<span class="badge">Entrances (${entr.length})</span> <span class="badge" title="${esc(full)}">+${rest} more</span>`
             : `<small class="hint">${esc(on[0].name)}</small> <span class="badge" title="${esc(full)}">+${rest} more</span>`;
         }
         return `<td class="nowrap">${cell}</td>`;
