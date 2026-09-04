@@ -759,11 +759,22 @@ async function loadUsersTable(devs) {
     const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
     const blocked = u.Valid?.enable === false;
     const admin = !!u.localUIRight;
-    const tenantRooms = on.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
+    const isRoomDev = (d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+    const totalRooms = devs.filter(isRoomDev).length;
+    const tenantRooms = on.filter(isRoomDev);
+    const roomList = tenantRooms.map((d) => 'room ' + d.code).join(', ');
+    // Keep the Room cell to ONE line: 1-2 rooms show as badges, everything-
+    // selected collapses to "All rooms", and anything in between shows the
+    // first room + a "+N more" badge (hover for the full list).
+    let roomCell;
+    if (!tenantRooms.length) roomCell = '<small class="hint">—</small>';
+    else if (totalRooms > 1 && tenantRooms.length >= totalRooms) roomCell = `<span class="badge admin" title="${esc(roomList)}">All rooms (${tenantRooms.length})</span>`;
+    else if (tenantRooms.length > 2) roomCell = `<span class="badge admin">room ${esc(tenantRooms[0].code)}</span> <span class="badge admin" title="${esc(roomList)}">+${tenantRooms.length - 1} more</span>`;
+    else roomCell = tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ');
     return `<tr class="clickable-row" data-rowidx="${i}" title="View full profile">
       <td>${esc(u.employeeNo)}</td>
       <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
-      <td>${tenantRooms.length ? tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ') : '<small class="hint">—</small>'}</td>
+      <td class="nowrap">${roomCell}</td>
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
