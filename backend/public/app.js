@@ -716,7 +716,7 @@ async function loadUsersTable(devs) {
   const holder = $('#u_table');
   if (!holder) return;
   const all = _usersDevId === 'all';
-  holder.innerHTML = '<div class="muted">Loading users…</div>';
+  holder.innerHTML = skeletonTable(['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']);
 
   // entries: one row per person — u = device record, on = machines they exist on
   let entries = [];
@@ -1425,6 +1425,15 @@ async function accessModal(srcDev, employeeNo, name, devs) {
   });
 }
 
+// Structured skeleton table shown while real rows load — same columns as
+// the data that replaces it, shimmering placeholder cells.
+function skeletonTable(headers, rows = 6) {
+  const widths = [55, 80, 65, 90, 70, 60];
+  const body = Array.from({ length: rows }, (_, r) => `<tr>${headers.map((h, c) =>
+    `<td><span class="skel-cell" style="width:${h === '' ? 34 : widths[(r + c) % widths.length]}%"></span></td>`).join('')}</tr>`).join('');
+  return `<div class="table-wrapper"><table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 // Floating progress bar for long multi-machine operations ("5/52 machines").
 function progressBar(total, label) {
   const el = document.createElement('div');
@@ -1952,7 +1961,7 @@ async function loadLogTable(silent = false) {
   _logBusy = true;
   try {
     if (_logMode === 'system') {
-      if (!silent) holder.innerHTML = '<div class="muted">Loading…</div>';
+      if (!silent) holder.innerHTML = skeletonTable(['Time', 'Person', 'Machine', 'Method', 'Event']);
       const list = await api.get('/logs');
       if (!$('#log_table') || _logMode !== 'system' || current !== 'logs') return;
       if (!Array.isArray(list)) return;
@@ -1972,7 +1981,7 @@ async function loadLogTable(silent = false) {
     }
 
     // Machine entries — read live from each machine's own event memory.
-    if (!silent && !_logEvents) holder.innerHTML = '<div class="muted">Loading entries from machines…</div>';
+    if (!silent && !_logEvents) holder.innerHTML = skeletonTable(['Time', 'Person', 'Machine', 'Method', 'Event'], 8);
     const r = await api.get('/events?limit=80');
     if (!$('#log_table') || _logMode !== 'entries' || current !== 'logs') return;
     if (!r.ok) {
@@ -2041,7 +2050,7 @@ const fmtDT = (v) => String(v || '—').replace('T', ' ').slice(0, 16);
 
 async function bookingsView() {
   $('#viewActions').innerHTML = '';
-  content.innerHTML = '<div class="muted">Loading bookings…</div>';
+  content.innerHTML = skeletonTable(['Booking', 'Space', 'Period', 'People', '']);
   const r = await api.get('/bookings-feed');
   if (current !== 'bookings') return; // view changed while loading
   if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">Couldn't load bookings: ${esc(r.error || 'error')}</div>`; return; }
@@ -2150,7 +2159,7 @@ async function dashusers() {
   }
   $('#viewActions').innerHTML = '<button class="btn primary" id="du_add">+ Add user</button>';
   $('#du_add').addEventListener('click', () => addDashUserModal());
-  content.innerHTML = '<div class="muted">Loading accounts…</div>';
+  content.innerHTML = skeletonTable(['Username', 'Role', 'Created', '']);
   const r = await api.get('/auth/users');
   if (current !== 'dashusers') return; // view changed while loading
   if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">${esc(r.error || 'Failed to load accounts')}</div>`; return; }

@@ -2125,3 +2125,52 @@ select option {
 [data-theme="light"] .psb-val {
   color: #0f172a;
 }
+
+
+/* =========================================================================
+   Table polish layer — sticky headers that actually stick, skeleton
+   loaders, iconed empty states. Overrides only; theme tokens untouched.
+   ========================================================================= */
+
+th { white-space: nowrap; }
+
+/* Numeric utility: right-aligned, lined-up digits. */
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Desktop: page tables scroll inside their card so the sticky header works
+   (the page itself scrolling never let `position: sticky` engage). */
+@media (min-width: 861px) {
+  .content-body > .table-wrapper,
+  .content-body #u_table .table-wrapper,
+  .content-body #log_table .table-wrapper {
+    max-height: calc(100dvh - 225px);
+    overflow: auto;
+  }
+}
+
+/* Shimmering skeleton rows shown while a table loads. */
+.skel-cell {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--border-strong) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: skelShimmer 1.3s ease-in-out infinite;
+}
+@keyframes skelShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Empty state: centered icon above the message. */
+.empty::before {
+  content: '';
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 14px;
+  background: var(--text-faint, var(--text-muted));
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-6l-2 3h-4l-2-3H2'/%3E%3Cpath d='M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-6l-2 3h-4l-2-3H2'/%3E%3Cpath d='M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z'/%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: 0.55;
+}
