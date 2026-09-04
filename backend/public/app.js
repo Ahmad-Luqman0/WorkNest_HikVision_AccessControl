@@ -739,13 +739,19 @@ async function loadUsersTable(devs) {
       }
     }
     entries = [...map.values()].sort((a, b) =>
+      // machine admins first, then by employee #, then name
+      ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
       ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
       String(a.u.name || '').localeCompare(String(b.u.name || '')));
   } else {
     const srcDev = devs.find((d) => d.id == _usersDevId);
     const r = await api.get(`/devices/${_usersDevId}/users`);
     if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't reach ${esc(srcDev.name)}: ${esc(r.error || 'error')}</div>`; return; }
-    entries = r.users.map((u) => ({ u, on: [srcDev] }));
+    entries = r.users
+      .map((u) => ({ u, on: [srcDev] }))
+      .sort((a, b) =>
+        ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
+        ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)));
   }
 
   const note = unreachable.length ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(unreachable.join(', '))} — their users are not shown.</p>` : '';
