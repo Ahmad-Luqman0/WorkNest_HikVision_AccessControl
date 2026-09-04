@@ -759,9 +759,10 @@ async function loadUsersTable(devs) {
     const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
     const blocked = u.Valid?.enable === false;
     const admin = !!u.localUIRight;
+    const tenantRooms = on.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
     return `<tr class="clickable-row" data-rowidx="${i}" title="View full profile">
       <td>${esc(u.employeeNo)}</td>
-      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
+      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a>${tenantRooms.map((d) => ` <span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join('')}</td>
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? `<td><small class="hint">${on.map((d) => esc(d.name)).join(', ')}</small></td>` : ''}
       <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
@@ -1520,6 +1521,13 @@ function addUserModal(srcDev, devs, checkAll = false) {
       <div class="field"><label>Access from</label><input id="au_begin" type="datetime-local"></div>
       <div class="field"><label>Access until</label><input id="au_end" type="datetime-local"></div>
     </div>
+    <div class="field"><label>Tenant of room <small class="hint">(picks that room's machine below — entrances + their room, fingerprint works on both)</small></label>
+      <select id="au_room">
+        <option value="">— not a room tenant —</option>
+        ${devs.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
+          .map((d) => `<option value="${d.id}">Room ${esc(d.code)}${d.name && d.name !== 'Room ' + d.code ? ' — ' + esc(d.name) : ''}</option>`).join('')}
+      </select>
+    </div>
     <div class="field"><label>Create on machines <small class="hint">(pick one or more)</small></label>
       ${groupSelectHtml(devs)}
       <input id="au_filter" placeholder="Search machines… e.g. 315" autocomplete="off" style="margin:8px 0">
@@ -1535,6 +1543,19 @@ function addUserModal(srcDev, devs, checkAll = false) {
     </div>`);
   wireGroupSelect(devs, 'au-dev');
   limitRoomSelection('au-dev', devs);
+  // Tenant dropdown drives the checklist: their room + the full Entrance
+  // group get ticked (other rooms unticked), so fingerprint/card access
+  // covers the entrances and their own door.
+  $('#au_room')?.addEventListener('change', () => {
+    const roomId = String($('#au_room').value);
+    const isEntr = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+    document.querySelectorAll('.au-dev').forEach((c) => {
+      const d = devs.find((x) => String(x.id) === String(c.value));
+      if (!d) return;
+      const want = isEntr(d) ? true : String(d.id) === roomId ? true : roomId ? false : c.checked;
+      if (c.checked !== want) { c.checked = want; c.dispatchEvent(new Event('change')); }
+    });
+  });
   wireChecklistFilter('au_filter');
   // Show the auto-generated employee # (checked across all machines + DB).
   $('#au_no').placeholder = 'auto…';
