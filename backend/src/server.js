@@ -692,6 +692,32 @@ app.get('/api/analytics', async (req, res) => {
       totalDevices: devices.length,
     };
 
+    // 6. Top users by real door scans today, read from the machines' own
+    //    event memory (only reachable machines contribute).
+    const userScanMap = new Map();
+    await Promise.all(devices.filter((d) => d.online).map(async (dev) => {
+      try {
+        const head = await isapi.searchEvents(dev, 0, 1);
+        if (!head.total) return;
+        const pos = Math.max(0, head.total - 120);
+        const page = await isapi.searchEvents(dev, pos, 120);
+        for (const e of page.list) {
+          if (!e.time || String(e.time).slice(0, 10) !== todayStr) continue;
+          const emp = String(e.employeeNoString || '').trim();
+          const nm = String(e.name || '').trim();
+          if (!emp && !nm) continue; // door events without a person (timeouts etc.)
+          const key = `${emp}||${nm.toLowerCase()}`;
+          if (!userScanMap.has(key)) userScanMap.set(key, { name: nm, employeeNo: emp, count: 0 });
+          userScanMap.get(key).count++;
+        }
+      } catch { /* unreachable — skip */ }
+    }));
+    const totalUserScans = [...userScanMap.values()].reduce((a, b) => a + b.count, 0) || 1;
+    const userScans = [...userScanMap.values()]
+      .map((u) => ({ ...u, percent: Math.round((u.count / totalUserScans) * 100) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
     res.json({
       ok: true,
       liveHeadcount,
@@ -703,6 +729,7 @@ app.get('/api/analytics', async (req, res) => {
       credentials,
       devicesCount: devices.length,
       onlineCount: s.devicesOnline || 0,
+      userScans,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });

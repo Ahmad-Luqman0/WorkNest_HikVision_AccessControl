@@ -2367,6 +2367,24 @@ async function analyticsView() {
         </div>
       </section>
     </div>
+
+    <section class="panel" style="height:auto; margin-top:24px;">
+      <header>
+        <h3>Scans by User (Today)</h3>
+      </header>
+      <div class="panel-body" style="padding:20px;">
+        ${(data.userScans || []).map((u) => `
+          <div class="usage-row">
+            <div class="usage-head">
+              <span class="usage-name">${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo || '—')}</small></span>
+              <span class="usage-val">${u.count} scan${u.count === 1 ? '' : 's'} (${u.percent}%)</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" style="width: ${Math.max(3, u.percent)}%"></div>
+            </div>
+          </div>`).join('') || '<div class="list-empty">No user scans recorded today.</div>'}
+      </div>
+    </section>
   </div>`;
 }
 
