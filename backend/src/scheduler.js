@@ -215,11 +215,19 @@ export async function archiveEvents() {
     try {
       const head = await isapi.searchEvents(dev, 0, 1);
       if (!head.total) return;
-      const pos = Math.max(0, head.total - 200);
-      const page = await isapi.searchEvents(dev, pos, 200);
+      // The firmware caps event pages at 30 results regardless of maxResults —
+      // walk the tail page by page or the newest events are never seen.
+      let pos = Math.max(0, head.total - 210);
+      const recent = [];
+      while (pos < head.total && recent.length < 400) {
+        const page = await isapi.searchEvents(dev, pos, 30);
+        if (!page.list.length) break;
+        recent.push(...page.list);
+        pos += page.list.length;
+      }
       const maxRow = await getRow('SELECT MAX(serial_no) AS m FROM dbo.WN_HIK_Events WHERE device_id=?', [dev.id]);
       const lastSerial = Number(maxRow?.m) || 0;
-      for (const e of page.list) {
+      for (const e of recent) {
         const serial = Number(e.serialNo) || null;
         if (serial && serial <= lastSerial) continue;
         const t = String(e.time || '').slice(0, 19);

@@ -117,9 +117,15 @@ app.get('/api/events', async (req, res) => {
     try {
       const head = await isapi.searchEvents(dev, 0, 1);
       if (!head.total) return;
-      const pos = Math.max(0, head.total - limit);
-      const page = await isapi.searchEvents(dev, pos, limit);
-      for (const e of page.list) events.push({ device: dev.name, device_id: dev.id, ...e });
+      // Firmware caps pages at 30 — walk the tail so the NEWEST events are
+      // included (a single big request silently returned an older window).
+      let pos = Math.max(0, head.total - limit);
+      while (pos < head.total) {
+        const page = await isapi.searchEvents(dev, pos, 30);
+        if (!page.list.length) break;
+        for (const e of page.list) events.push({ device: dev.name, device_id: dev.id, ...e });
+        pos += page.list.length;
+      }
     } catch {
       unreachable.push(dev.name);
     }
