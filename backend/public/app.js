@@ -286,6 +286,12 @@ const ACTION_LABELS = {
 const prettyAction = (a) => ACTION_LABELS[a] || a;
 
 async function dashboard() {
+  // Instant shell — the page appears immediately while live data loads.
+  if (!content.querySelector('.stat-grid')) {
+    content.innerHTML = `<div><div class="stat-grid">${Array.from({ length: 6 }, () =>
+      '<div class="stat"><div class="stat-head"><span class="skel-cell" style="width:60%"></span></div><div class="value"><span class="skel-cell" style="width:40%;height:22px"></span></div></div>').join('')}</div>
+      ${skeletonTable(['', '', ''], 4)}</div>`;
+  }
   api.post('/online-check').catch(() => {}); // fresh statuses on next auto-refresh tick
   api.get('/consistency').then((c) => {
     const slot = document.getElementById('dashConsistency');

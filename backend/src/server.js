@@ -24,6 +24,18 @@ app.use(securityHeaders);
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Static assets are served BEFORE anything that needs the database — a cold
+// serverless instance used to connect to SQL Server before even index.html
+// could load, adding seconds to first paint.
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders(res, filePath) {
+    // App code must revalidate on every load (deploys show up immediately);
+    // images/icons rarely change and may cache for a day.
+    if (/\.(js|css|html)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    else if (/\.(png|jpg|jpeg|svg|ico)$/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=86400');
+  },
+}));
+
 // On serverless (Vercel) there is no startup phase — make sure the DB pool
 // exists before any request is handled. initDb() caches, so this is a no-op
 // after the first call.
@@ -744,13 +756,7 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(__dirname, '..', 'public'), {
-  // Browsers must revalidate app.js/styles.css on every load — stale cached
-  // UI after a deploy looked like bugs that were already fixed.
-  setHeaders(res, filePath) {
-    if (/\.(js|css|html)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
-  },
-}));
+
 
 // 404 API & Global Error Handlers
 app.use(notFoundHandler);

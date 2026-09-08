@@ -15,5 +15,8 @@
     "api/index.js": {
       "maxDuration": 60
     }
-  }
+  },
+  "regions": [
+    "bom1"
+  ]
 }
