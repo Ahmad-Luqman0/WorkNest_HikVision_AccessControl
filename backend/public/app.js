@@ -865,7 +865,7 @@ async function loadUsersTable(devs) {
       ['View profile', () => userProfileModal(e)],
       ['Edit name / #', () => editUserModal(e, devs)],
       ['Machine access', () => accessModal(e.on[0], e.u.employeeNo, e.u.name || '', devs)],
-      ...(dashRole === 'admin' ? [[admin ? 'Make user' : 'Make admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)]] : []),
+      ...(dashRole === 'admin' ? [[admin ? 'Change role: Admin → User' : 'Change role: User → Admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)]] : []),
       ['Tag card', () => tagCard(e, devs)],
       ['Capture fingerprint', () => captureFpModal(e, devs)],
       e.u.numOfFace ? ['Delete face', () => deleteFaceAction(e, devs), true] : ['Enroll face', () => enrollFace(e, devs)],
