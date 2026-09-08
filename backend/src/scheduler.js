@@ -206,6 +206,39 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   return { copied };
 }
 
+// Copy each online machine's recent door events into the permanent
+// WN_HIK_Events archive (deduplicated by the device's own event serial).
+export async function archiveEvents() {
+  const devices = (await getAllDevices()).filter((d) => d.online);
+  let saved = 0;
+  await Promise.all(devices.map(async (dev) => {
+    try {
+      const head = await isapi.searchEvents(dev, 0, 1);
+      if (!head.total) return;
+      const pos = Math.max(0, head.total - 200);
+      const page = await isapi.searchEvents(dev, pos, 200);
+      const maxRow = await getRow('SELECT MAX(serial_no) AS m FROM dbo.WN_HIK_Events WHERE device_id=?', [dev.id]);
+      const lastSerial = Number(maxRow?.m) || 0;
+      for (const e of page.list) {
+        const serial = Number(e.serialNo) || null;
+        if (serial && serial <= lastSerial) continue;
+        const t = String(e.time || '').slice(0, 19);
+        if (!t || t.length < 19) continue;
+        try {
+          await run(
+            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, minor, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?)',
+            [dev.id, dev.name, e.employeeNoString ? String(e.employeeNoString) : null, e.name || null,
+             e.cardNo ? String(e.cardNo) : null, Number(e.minor) || null, serial, t]
+          );
+          saved++;
+        } catch { /* duplicate serial — already archived */ }
+      }
+    } catch { /* machine went away mid-run — next cycle */ }
+  }));
+  if (saved) console.log(`[archive] stored ${saved} new door event(s)`);
+  return { saved };
+}
+
 // Replay queued operations against machines that are back online. Ops for
 // still-offline machines stay queued; an op that keeps failing on a live
 // machine is dropped (and logged) after 8 attempts.
@@ -324,6 +357,7 @@ export async function runRosterWatch() {
 export function startScheduler() {
   // Every 5 minutes: expiry, retry errored syncs, then credential sync.
   cron.schedule('*/5 * * * *', async () => {
+    try { await archiveEvents(); } catch (e) { console.error('[scheduler] event archive failed:', e); }
     try {
       const r = await migrateRenewedBookings();
       if (r.migrated) console.log(`[scheduler] booking renewal carried over ${r.migrated} attendee(s)`);

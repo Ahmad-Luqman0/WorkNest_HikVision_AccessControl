@@ -36,6 +36,7 @@ export async function initDb() {
   pool.on('error', (e) => console.error('[db] pool error:', e.message));
   await ensurePendingOps();
   await ensureFpVault();
+  await ensureEventsTable();
   await migrateFromSqliteIfEmpty();
   return pool;
 }
@@ -58,6 +59,34 @@ async function ensurePendingOps() {
       )`);
   } catch (e) {
     console.error('[db] ensurePendingOps:', e.message);
+  }
+}
+
+// Permanent archive of door events. The machines keep only a limited event
+// memory that rolls over — this table is what makes attendance history,
+// date-range analytics and per-user reports possible.
+async function ensureEventsTable() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_Events','U') IS NULL
+      BEGIN
+        CREATE TABLE dbo.WN_HIK_Events (
+          id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_Events PRIMARY KEY,
+          device_id INT NOT NULL,
+          device_name NVARCHAR(100) NULL,
+          employee_no NVARCHAR(32) NULL,
+          name NVARCHAR(128) NULL,
+          card_no NVARCHAR(32) NULL,
+          minor INT NULL,
+          serial_no BIGINT NULL,
+          event_time DATETIME2(0) NOT NULL,
+          created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Events_created DEFAULT (SYSDATETIME())
+        );
+        CREATE INDEX IX_WN_HIK_Events_time ON dbo.WN_HIK_Events (event_time);
+        CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no) WHERE serial_no IS NOT NULL;
+      END`);
+  } catch (e) {
+    console.error('[db] ensureEventsTable:', e.message);
   }
 }
 

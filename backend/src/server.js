@@ -12,7 +12,7 @@ import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps } from './scheduler.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
@@ -633,6 +633,26 @@ app.get('/api/audit-logs', async (req, res) => {
 // Analytics & Occupancy Engine API
 app.get('/api/analytics', async (req, res) => {
   try {
+    // Pull fresh events into the permanent archive first (throttled to once
+    // a minute across viewers) so the numbers below are up to date.
+    try {
+      const last = await sp('WN_HIK_Settings_Get', { key: 'events_archived_at' });
+      if (!(Number(last[0]?.value) > Date.now() - 60000)) {
+        await sp('WN_HIK_Settings_Set', { key: 'events_archived_at', value: String(Date.now()) });
+        await archiveEvents();
+      }
+    } catch { /* archive refresh is best-effort */ }
+
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const nowD = new Date();
+    const pd = (n) => String(n).padStart(2, '0');
+    const todayISO = `${nowD.getFullYear()}-${pd(nowD.getMonth() + 1)}-${pd(nowD.getDate())}`;
+    const from = DATE_RE.test(String(req.query.from || '')) ? String(req.query.from) : todayISO;
+    const to = DATE_RE.test(String(req.query.to || '')) ? String(req.query.to) : todayISO;
+    const rangeEvents = await getRows(
+      'SELECT device_name, employee_no, name, minor, event_time FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time BETWEEN ? AND ?',
+      [`${from}T00:00:00`, `${to}T23:59:59`]
+    );
     const [devices, stats, eventsResult, empsCount, cardsCount] = await Promise.all([
       getAllDevices(),
       sp('WN_HIK_Stats_Get'),
@@ -646,28 +666,19 @@ app.get('/api/analytics', async (req, res) => {
     const p2 = (n) => String(n).padStart(2, '0');
     const todayStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
 
-    // 1. Hourly Traffic Distribution (24 hours)
+    // 1. Hourly Traffic Distribution — real archived door events in range
     const hourlyDistribution = new Array(24).fill(0);
-    let todayTotal = 0;
-    for (const e of eventsResult) {
-      if (!e.ts) continue;
-      const d = new Date(e.ts);
-      if (!Number.isNaN(d.getTime())) {
-        const eDateStr = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-        if (eDateStr === todayStr) {
-          todayTotal++;
-          hourlyDistribution[d.getHours()]++;
-        }
-      }
+    let todayTotal = rangeEvents.length;
+    for (const e of rangeEvents) {
+      const hr = Number(String(e.event_time).slice(11, 13));
+      if (!Number.isNaN(hr)) hourlyDistribution[hr]++;
     }
 
-    // 2. Door / Machine Usage Breakdown
+    // 2. Door / Machine Usage Breakdown — archived events in range
     const doorUsageMap = new Map();
-    for (const d of devices) doorUsageMap.set(d.name, 0);
-    for (const e of eventsResult) {
-      if (e.device_name && doorUsageMap.has(e.device_name)) {
-        doorUsageMap.set(e.device_name, doorUsageMap.get(e.device_name) + 1);
-      }
+    for (const e of rangeEvents) {
+      if (!e.device_name) continue;
+      doorUsageMap.set(e.device_name, (doorUsageMap.get(e.device_name) || 0) + 1);
     }
     const totalDoorScans = [...doorUsageMap.values()].reduce((a, b) => a + b, 0) || 1;
     const doorUsage = [...doorUsageMap.entries()]
@@ -692,26 +703,16 @@ app.get('/api/analytics', async (req, res) => {
       totalDevices: devices.length,
     };
 
-    // 6. Top users by real door scans today, read from the machines' own
-    //    event memory (only reachable machines contribute).
+    // 6. Top users by archived door scans in range.
     const userScanMap = new Map();
-    await Promise.all(devices.filter((d) => d.online).map(async (dev) => {
-      try {
-        const head = await isapi.searchEvents(dev, 0, 1);
-        if (!head.total) return;
-        const pos = Math.max(0, head.total - 120);
-        const page = await isapi.searchEvents(dev, pos, 120);
-        for (const e of page.list) {
-          if (!e.time || String(e.time).slice(0, 10) !== todayStr) continue;
-          const emp = String(e.employeeNoString || '').trim();
-          const nm = String(e.name || '').trim();
-          if (!emp && !nm) continue; // door events without a person (timeouts etc.)
-          const key = `${emp}||${nm.toLowerCase()}`;
-          if (!userScanMap.has(key)) userScanMap.set(key, { name: nm, employeeNo: emp, count: 0 });
-          userScanMap.get(key).count++;
-        }
-      } catch { /* unreachable — skip */ }
-    }));
+    for (const e of rangeEvents) {
+      const emp = String(e.employee_no || '').trim();
+      const nm = String(e.name || '').trim();
+      if (!emp && !nm) continue; // events without a person (timeouts, unknown cards)
+      const key = `${emp}||${nm.toLowerCase()}`;
+      if (!userScanMap.has(key)) userScanMap.set(key, { name: nm, employeeNo: emp, count: 0 });
+      userScanMap.get(key).count++;
+    }
     const totalUserScans = [...userScanMap.values()].reduce((a, b) => a + b.count, 0) || 1;
     const userScans = [...userScanMap.values()]
       .map((u) => ({ ...u, percent: Math.round((u.count / totalUserScans) * 100) }))
@@ -730,6 +731,7 @@ app.get('/api/analytics', async (req, res) => {
       devicesCount: devices.length,
       onlineCount: s.devicesOnline || 0,
       userScans,
+      range: { from, to },
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });

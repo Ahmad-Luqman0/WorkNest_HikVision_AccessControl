@@ -2300,12 +2300,29 @@ function limitRoomSelection(checkboxClass, devsList) {
 }
 
 // ---- Analytics & Occupancy View ----
+let _anRange = { preset: 'today', from: null, to: null };
+function anRangeDates() {
+  const p = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const now = new Date();
+  const shift = (days) => { const d = new Date(now); d.setDate(d.getDate() - days); return d; };
+  switch (_anRange.preset) {
+    case 'yesterday': return { from: iso(shift(1)), to: iso(shift(1)) };
+    case '7d': return { from: iso(shift(6)), to: iso(now) };
+    case '30d': return { from: iso(shift(29)), to: iso(now) };
+    case 'custom': return { from: _anRange.from || iso(now), to: _anRange.to || iso(now) };
+    default: return { from: iso(now), to: iso(now) };
+  }
+}
+
 async function analyticsView() {
   clearInterval(_autoTimer);
   content.innerHTML = '<div class="empty">Loading analytics engine…</div>';
-  const data = await api.get('/analytics');
+  const { from, to } = anRangeDates();
+  const data = await api.get(`/analytics?from=${from}&to=${to}`);
   if (current !== 'analytics') return;
   if (!data.ok) { content.innerHTML = `<div class="empty">Failed to load analytics: ${esc(data.error)}</div>`; return; }
+  const rangeLabel = from === to ? from : `${from} → ${to}`;
 
   const kpi = (icon, label, value, cls = '', sub = '') => `
     <div class="stat ${cls}">
@@ -2339,9 +2356,23 @@ async function analyticsView() {
     </div>`).join('') || '<div class="list-empty">No door activity recorded today.</div>';
 
   content.innerHTML = `<div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:18px">
+      <label class="hint" style="font-weight:600">Period</label>
+      <select id="an_preset">
+        <option value="today" ${_anRange.preset === 'today' ? 'selected' : ''}>Today</option>
+        <option value="yesterday" ${_anRange.preset === 'yesterday' ? 'selected' : ''}>Yesterday</option>
+        <option value="7d" ${_anRange.preset === '7d' ? 'selected' : ''}>Last 7 days</option>
+        <option value="30d" ${_anRange.preset === '30d' ? 'selected' : ''}>Last 30 days</option>
+        <option value="custom" ${_anRange.preset === 'custom' ? 'selected' : ''}>Custom range…</option>
+      </select>
+      <input id="an_from" type="date" value="${_anRange.from || from}" style="${_anRange.preset === 'custom' ? '' : 'display:none'}">
+      <input id="an_to" type="date" value="${_anRange.to || to}" style="${_anRange.preset === 'custom' ? '' : 'display:none'}">
+      <button class="btn sm" id="an_apply" style="${_anRange.preset === 'custom' ? '' : 'display:none'}">Apply</button>
+      <small class="hint">Showing ${esc(rangeLabel)} · from the permanent entry archive</small>
+    </div>
     <div class="stat-grid">
       ${kpi('user', 'Live Occupancy', data.liveHeadcount, 'good', 'Estimated headcount on site')}
-      ${kpi('online', 'Today Scans', data.todayTotal, 'good', 'Total entries today')}
+      ${kpi('online', 'Entries', data.todayTotal, 'good', `Archived door events · ${esc(rangeLabel)}`)}
       ${kpi('clock', 'Peak Hour', data.peakHourLabel, 'warn', `${data.maxPeak} scans during peak`)}
       ${kpi('machine', 'Active Doors', `${data.onlineCount} / ${data.devicesCount}`, data.onlineCount === data.devicesCount ? 'good' : 'warn', 'Online terminals')}
     </div>
@@ -2349,7 +2380,7 @@ async function analyticsView() {
     <div class="panel-grid" style="margin-top:24px;">
       <section class="panel" style="height:auto; min-height:380px;">
         <header>
-          <h3>Hourly Traffic Distribution (Today)</h3>
+          <h3>Hourly Traffic Distribution</h3>
         </header>
         <div class="panel-body" style="padding:22px;">
           <div class="chart-container">
@@ -2370,7 +2401,7 @@ async function analyticsView() {
 
     <section class="panel" style="height:auto; margin-top:24px;">
       <header>
-        <h3>Scans by User (Today)</h3>
+        <h3>Scans by User</h3>
       </header>
       <div class="panel-body" style="padding:20px;">
         ${(data.userScans || []).map((u) => `
@@ -2386,6 +2417,16 @@ async function analyticsView() {
       </div>
     </section>
   </div>`;
+  $('#an_preset').addEventListener('change', () => {
+    _anRange.preset = $('#an_preset').value;
+    if (_anRange.preset !== 'custom') analyticsView();
+    else ['an_from', 'an_to', 'an_apply'].forEach((id) => { $('#' + id).style.display = ''; });
+  });
+  $('#an_apply').addEventListener('click', () => {
+    _anRange.from = $('#an_from').value || null;
+    _anRange.to = $('#an_to').value || null;
+    analyticsView();
+  });
 }
 
 // ---- Admin Audit Log View ----
