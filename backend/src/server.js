@@ -352,39 +352,6 @@ app.get('/api/roster', async (req, res) => {
   const devices = await getAllDevices();
   const isAdmin = (req.auth?.role || 'user') === 'admin';
 
-  if (process.env.VERCEL) {
-    try {
-      const allGrants = await getRows(
-        `SELECT g.device_id, e.employee_no AS employeeNo, e.name, e.card_no, e.valid_begin, e.valid_end, e.status
-         FROM dbo.WN_HIK_AccessGrants g
-         JOIN dbo.WN_HIK_Employees e ON e.id = g.employee_id
-         WHERE g.sync_state != 'removing'
-         ORDER BY e.employee_no ASC`
-      );
-      const byDev = new Map();
-      for (const row of allGrants) {
-        if (!byDev.has(row.device_id)) byDev.set(row.device_id, []);
-        byDev.get(row.device_id).push({
-          employeeNo: row.employeeNo,
-          name: row.name,
-          numOfCard: row.card_no ? 1 : 0,
-          Valid: {
-            enable: row.status !== 'expired',
-            beginTime: row.valid_begin ? String(row.valid_begin) : null,
-            endTime: row.valid_end ? String(row.valid_end) : null,
-          },
-        });
-      }
-      const rosters = devices.map((dev) => ({
-        device_id: dev.id,
-        ok: true,
-        users: byDev.get(dev.id) || [],
-        fromDb: true,
-      }));
-      return res.json({ ok: true, rosters });
-    } catch {}
-  }
-
   const rosters = await Promise.all(devices.map(async (dev) => {
     try {
       if (!dev.online) throw new Error('Device is offline');
