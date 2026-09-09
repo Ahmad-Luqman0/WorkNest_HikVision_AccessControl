@@ -2537,6 +2537,9 @@ function addUserModal(srcDev, devs, checkAll = false) {
 
 // ---- Cards ---- 
 async function cards() {
+  if (!content.querySelector('table')) {
+    content.innerHTML = skeletonTable(['Card #', 'Access until', 'Assigned to', 'Access', ''], 6);
+  }
   const [list, devs] = await Promise.all([api.get('/cards'), api.get('/devices')]);
   if (current !== 'cards') return; // view changed while loading
   $('#viewActions').innerHTML = '<button class="btn primary" id="addCard">+ Add card</button>';

@@ -72,6 +72,11 @@ export async function runClockSync() {
 // Ping every machine; update online/last_seen and log transitions so the
 // dashboard can show offline alerts.
 export async function runOnlineCheck() {
+  if (process.env.VERCEL) {
+    // Cloud serverless cannot route to private LAN IPs (192.168.x.x).
+    // Online statuses are maintained in SQL Server by the on-prem background agent.
+    return { checked: 0, changed: 0, cameOnline: [] };
+  }
   const devices = await getAllDevices();
   let changed = 0;
   const cameOnline = [];
