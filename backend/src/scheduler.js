@@ -226,14 +226,14 @@ export async function archiveEvents() {
   let saved = 0;
   await Promise.all(devices.map(async (dev) => {
     try {
-      const head = await isapi.searchEvents(dev, 0, 1);
+      const head = await isapi.searchEvents(dev, 0, 1, { timeout: 2000 });
       if (!head.total) return;
       // The firmware caps event pages at 30 results regardless of maxResults —
-      // walk the tail page by page or the newest events are never seen.
-      let pos = Math.max(0, head.total - 210);
+      // walk the tail with a strict limit so background jobs don't stall.
+      let pos = Math.max(0, head.total - 60);
       const recent = [];
-      while (pos < head.total && recent.length < 400) {
-        const page = await isapi.searchEvents(dev, pos, 30);
+      while (pos < head.total && recent.length < 90) {
+        const page = await isapi.searchEvents(dev, pos, 30, { timeout: 2000 });
         if (!page.list.length) break;
         recent.push(...page.list);
         pos += page.list.length;

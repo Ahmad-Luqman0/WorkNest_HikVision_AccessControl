@@ -741,13 +741,14 @@ app.get('/api/audit-logs', async (req, res) => {
 // Analytics & Occupancy Engine API
 app.get('/api/analytics', async (req, res) => {
   try {
-    // Pull fresh events into the permanent archive first (throttled to once
-    // a minute across viewers) so the numbers below are up to date.
+    // Pull fresh events into the permanent archive in the background (throttled
+    // to once a minute across viewers) without blocking the HTTP response.
     try {
       const last = await sp('WN_HIK_Settings_Get', { key: 'events_archived_at' });
       if (!(Number(last[0]?.value) > Date.now() - 60000)) {
         await sp('WN_HIK_Settings_Set', { key: 'events_archived_at', value: String(Date.now()) });
-        await archiveEvents();
+        // Fire-and-forget in background, never block client HTTP response
+        archiveEvents().catch(() => {});
       }
     } catch { /* archive refresh is best-effort */ }
 
