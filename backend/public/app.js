@@ -675,6 +675,8 @@ const ICONS = {
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8a8 8 0 0 0-14.5-2M4 16a8 8 0 0 0 14.5 2"/><path d="M20 3v5h-5M4 21v-5h5"/></svg>',
   unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.8-1.3"/></svg>',
+  analytics: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
 };
 
 const ACTION_LABELS = {
@@ -767,8 +769,8 @@ async function dashboard() {
         </p>
         <div class="exec-actions">
           <button class="btn sm primary" id="heroDayPass">+ Day Pass</button>
-          <button class="btn sm" id="heroQuickUnlock">⚡ Quick Unlock Door</button>
-          <button class="btn sm" id="heroAnalytics">📊 Live Analytics →</button>
+          <button class="btn sm" id="heroQuickUnlock">${ICONS.unlock} Quick Unlock</button>
+          <button class="btn sm" id="heroAnalytics">${ICONS.analytics} Live Analytics →</button>
         </div>
       </div>
 
@@ -1426,10 +1428,10 @@ async function loadUsersTable(devs) {
     <div class="floating-action-dock" id="floatingActionDock">
       <div class="dock-counter"><span class="dock-counter-dot"></span> <b id="dockSelectedCount">0</b> selected</div>
       <div class="dock-divider"></div>
-      <button class="dock-btn primary" id="dockExtendBtn">⏱ Extend 30 Days</button>
-      <button class="dock-btn" id="dockExportBtn">📥 Export CSV</button>
+      <button class="dock-btn primary" id="dockExtendBtn">${ICONS.clock} Extend 30 Days</button>
+      <button class="dock-btn" id="dockExportBtn">${ICONS.download} Export CSV</button>
       <div class="dock-divider"></div>
-      <button class="dock-btn ghost" id="dockClearBtn">✕ Clear</button>
+      <button class="dock-btn ghost" id="dockClearBtn">Clear</button>
     </div>
   `;
 

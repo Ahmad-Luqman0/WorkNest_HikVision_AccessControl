@@ -2801,5 +2801,16 @@ tr.selected-row {
   color: var(--text-main);
   background: rgba(255, 255, 255, 0.06);
 }
+.dock-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+.btn.sm svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 
 
