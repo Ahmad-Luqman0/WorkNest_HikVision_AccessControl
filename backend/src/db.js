@@ -37,6 +37,7 @@ export async function initDb() {
   await ensurePendingOps();
   await ensureFpVault();
   await ensureEventsTable();
+  await ensureDevCache();
   await migrateFromSqliteIfEmpty();
   return pool;
 }
@@ -59,6 +60,24 @@ async function ensurePendingOps() {
       )`);
   } catch (e) {
     console.error('[db] ensurePendingOps:', e.message);
+  }
+}
+
+// Shared machine-data snapshots. Serverless instances each start with an
+// empty in-memory cache, so without this every page load re-scanned all
+// machines over the WAN (~10-25s). One instance scans, everyone reuses.
+async function ensureDevCache() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_DevCache','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_DevCache (
+        device_id INT NOT NULL CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY,
+        roster NVARCHAR(MAX) NULL,
+        roster_at DATETIME2(0) NULL,
+        cards NVARCHAR(MAX) NULL,
+        cards_at DATETIME2(0) NULL
+      )`);
+  } catch (e) {
+    console.error('[db] ensureDevCache:', e.message);
   }
 }
 

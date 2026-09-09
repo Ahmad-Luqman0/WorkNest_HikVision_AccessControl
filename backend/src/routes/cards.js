@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getRow, getRows, run, sp, getAllDevices, logSync } from '../db.js';
 import { syncEmployee } from '../sync.js';
 import * as isapi from '../isapi.js';
-import { getRoster } from '../machineCache.js';
+import { getRoster, getCardTable } from '../machineCache.js';
 
 export const cardsRouter = Router();
 
@@ -29,49 +29,51 @@ async function cardRows() {
   return Promise.all(rows.map(withGrants));
 }
 
-// List all cards with their machines + sync state, enriched with LIVE holder
-// info read from every machine: which user holds this card number, and where.
+// List all cards with their machines + sync state, enriched with holder
+// info read from the database (falling back to hardware scan only if needed on-prem).
 cardsRouter.get('/', async (req, res) => {
   try {
     let registry = await cardRows();
-    const devices = await getAllDevices();
     const holders = new Map(); // cardNo -> [{ device, device_id, employeeNo, name }]
-    await Promise.all(devices.map(async (dev) => {
-      try {
-        const all = [];
-        let pos = 0;
-        for (let i = 0; i < 50; i++) {
-          const page = await isapi.readAllCards(dev, pos, 100);
-          all.push(...page.list);
-          if (!page.list.length || all.length >= page.total) break;
-          pos += page.list.length;
-        }
-        // Holder names come from the cached roster — no per-user round trips.
-        const roster = await getRoster(dev).catch(() => []);
-        const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
-        for (const c of all) {
-          const no = String(c.cardNo);
-          const emp = String(c.employeeNo);
-          if (!holders.has(no)) holders.set(no, []);
-          holders.get(no).push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
-        }
-      } catch { /* unreachable machine — skip */ }
-    }));
 
-    // Auto-register card numbers discovered on the machines (e.g. tagged at a
-    // reader or enrolled at the machine) so every real card shows in this menu.
-    const known = new Set(registry.map((r) => String(r.card_no)));
-    let added = false;
-    for (const no of holders.keys()) {
-      if (known.has(no)) continue;
-      const empNo = await nextEmployeeNo();
-      await sp('WN_HIK_Card_Register', {
-        employee_no: String(empNo), name: `Card ${no}`, card_no: no,
-        valid_begin: null, valid_end: null, auto_delete: 0,
-      });
-      added = true;
+    // Fast DB-backed holder resolution so the Cards page loads in ~10ms
+    try {
+      const holderRows = await getRows(
+        `SELECT e.employee_no AS employeeNo, e.name, e.card_no AS cardNo, d.name AS device, d.id AS device_id
+         FROM dbo.WN_HIK_Employees e
+         JOIN dbo.WN_HIK_AccessGrants g ON g.employee_id = e.id
+         JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
+         WHERE e.card_no IS NOT NULL AND (e.kind != 'card' OR e.kind IS NULL) AND g.sync_state != 'removing'`
+      );
+      for (const h of holderRows) {
+        const no = String(h.cardNo);
+        if (!holders.has(no)) holders.set(no, []);
+        holders.get(no).push({
+          device: h.device,
+          device_id: h.device_id,
+          employeeNo: String(h.employeeNo),
+          name: h.name || null,
+        });
+      }
+    } catch {}
+
+    // Only scan hardware directly if running on-prem and no DB holders were found
+    if (!process.env.VERCEL && holders.size === 0) {
+      const devices = (await getAllDevices()).filter((d) => d.online);
+      await Promise.all(devices.map(async (dev) => {
+        try {
+          const all = await getCardTable(dev);
+          const roster = await getRoster(dev).catch(() => []);
+          const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
+          for (const c of all) {
+            const no = String(c.cardNo);
+            const emp = String(c.employeeNo);
+            if (!holders.has(no)) holders.set(no, []);
+            holders.get(no).push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
+          }
+        } catch { /* unreachable machine — skip */ }
+      }));
     }
-    if (added) registry = await cardRows();
 
     res.json(registry.map((r) => ({
       ...r,
@@ -140,14 +142,7 @@ cardsRouter.put('/:id', async (req, res) => {
       const devices = await getAllDevices();
       for (const dev of devices) {
         try {
-          const all = [];
-          let pos = 0;
-          for (let i = 0; i < 50; i++) {
-            const page = await isapi.readAllCards(dev, pos, 100);
-            all.push(...page.list);
-            if (!page.list.length || all.length >= page.total) break;
-            pos += page.list.length;
-          }
+          const all = await getCardTable(dev, 60000);
           for (const c of all) {
             if (String(c.cardNo) !== String(fresh.card_no)) continue;
             if (String(c.employeeNo) === String(fresh.employee_no)) continue; // own backing record

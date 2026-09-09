@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getAllDevices, getDeviceById, getRow, run, sp, logSync, logAudit, queueOp, isUnreachableErr, saveFpTemplate } from '../db.js';
 import * as isapi from '../isapi.js';
-import { getRoster, invalidateRoster } from '../machineCache.js';
+import { getRoster, getCardTable, invalidateRoster } from '../machineCache.js';
 
 export const devicesRouter = Router();
 
@@ -137,14 +137,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
     // machine — not one call per user).
     let cardsBy = new Map();
     try {
-      const all = [];
-      let pos = 0;
-      for (let i = 0; i < 50; i++) {
-        const page = await isapi.readAllCards(dev, pos, 100, { timeout: 2000 });
-        all.push(...page.list);
-        if (!page.list.length || all.length >= page.total) break;
-        pos += page.list.length;
-      }
+      const all = await getCardTable(dev);
       for (const c of all) {
         const emp = String(c.employeeNo);
         if (!cardsBy.has(emp)) cardsBy.set(emp, []);
