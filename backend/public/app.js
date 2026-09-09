@@ -1962,7 +1962,27 @@ async function userProfileModal(entry) {
   const { u } = entry;
   openModal(`
     <h2>${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
-    <div class="field" id="up_body"><span class="muted">Loading profile from machines…</span></div>
+    <div class="field" id="up_body" style="padding: 6px 0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 10px;">
+        <span style="font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;color:var(--text, #f1f5f9);">
+          <span class="status-dot on" style="width:7px;height:7px;background:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,0.7);"></span>
+          Querying profile & credentials from machines…
+        </span>
+        <span class="hint" style="font-size:11px;">Please wait</span>
+      </div>
+      <div class="loading-bar-container" style="height:6px;margin:0 0 16px 0;box-shadow:0 0 10px rgba(99,102,241,0.25);">
+        <div class="loading-bar-indeterminate"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:14px;">
+        <span class="skel-cell" style="flex:1;height:38px;border-radius:8px;"></span>
+        <span class="skel-cell" style="flex:1;height:38px;border-radius:8px;"></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.85;"></span>
+        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.65;"></span>
+        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.45;"></span>
+      </div>
+    </div>
     <div class="modal-actions"><button class="btn" id="up_close">Close</button></div>`);
   $('#up_close').addEventListener('click', closeModal);
   const r = await api.get(`/profile?employeeNo=${encodeURIComponent(u.employeeNo)}&name=${encodeURIComponent(u.name || '')}`);

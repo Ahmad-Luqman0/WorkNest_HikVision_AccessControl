@@ -1779,6 +1779,7 @@ select option {
   background: linear-gradient(90deg, #6366f1 0%, #38bdf8 50%, #6366f1 100%);
   background-size: 200% 100%;
   border-radius: 999px;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
   animation: loadingBarSlide 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   width: 45%;
 }
