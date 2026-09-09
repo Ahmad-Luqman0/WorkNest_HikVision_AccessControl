@@ -741,8 +741,10 @@ async function loadUsersTable(devs) {
       }
     }
     entries = [...map.values()].sort((a, b) =>
-      // machine admins first, then by employee #, then name
+      // machine admins first, then by how many machines they can access
+      // (all accesses first, down to entrance + one room), then employee #
       ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
+      (b.on.length - a.on.length) ||
       ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
       String(a.u.name || '').localeCompare(String(b.u.name || '')));
   } else {
