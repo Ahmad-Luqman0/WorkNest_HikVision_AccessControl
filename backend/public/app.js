@@ -2241,7 +2241,7 @@ async function accessModal(srcDev, employeeNo, name, devs) {
         </div>
       </div>
       <div class="dev-date-actions">
-        <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
+        <input type="datetime-local" class="acc-end" data-dev="${m.device_id}" data-orig="${toLocalInput(m.valid_end)}" value="${toLocalInput(m.valid_end)}" ${m.present === null ? 'disabled' : ''} title="Access until on this machine">
         <button type="button" class="btn sm acc-today" data-dev="${m.device_id}" ${m.present === null ? 'disabled' : ''} title="Access until tonight 23:59">Today</button>
       </div>
     </label>`;
@@ -2276,10 +2276,22 @@ async function accessModal(srcDev, employeeNo, name, devs) {
       const v = fromLocalInput(inp.value);
       if (v) validEnds[inp.dataset.dev] = v;
     });
+    // Only machines whose state actually changed need visiting: a ticked box
+    // that was unticked (or vice versa), or an edited deadline. Granting one
+    // room used to crawl through all 55 machines.
+    const wantedSet = new Set(ids);
+    const endChanged = new Set();
+    document.querySelectorAll('.acc-end').forEach((inp) => {
+      if (!inp.disabled && inp.value !== inp.dataset.orig) endChanged.add(Number(inp.dataset.dev));
+    });
+    const allIds = r.machines.filter((m) => {
+      const had = m.present === true && m.enabled !== false;
+      const want = wantedSet.has(m.device_id);
+      if (m.present === null) return want; // offline: queue a grant only if wanted
+      return want !== had || (want && endChanged.has(m.device_id));
+    }).map((m) => m.device_id);
     closeModal();
-    // Batches of machines with a live progress bar; device_ids is always the
-    // FULL wanted set, only_ids limits which machines each request touches.
-    const allIds = r.machines.map((m) => m.device_id);
+    if (!allIds.length) { toast('No access changes to apply', 'ok'); return; }
     const chunks = [];
     for (let i = 0; i < allIds.length; i += 8) chunks.push(allIds.slice(i, i + 8));
     const bar = progressBar(allIds.length, 'Applying access —');
@@ -3470,9 +3482,9 @@ async function showUserAnalyticsBreakdown(empNo, name) {
       <span class="uab-gate-chip">
         <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:7px;height:7px;"></span>
         ${esc(g.name)}
-        ${g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : ''}
+        ${g.directEnroll ? '<small class="hint" style="margin-left:4px;font-style:italic;">(device enrolled)</small>' : (g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : '')}
       </span>
-    `).join('') || '<span class="hint">No specific access gates provisioned in database.</span>';
+    `).join('') || '<span class="hint">Enrolled on local terminal; no centralized access group assigned yet.</span>';
 
     // Recent scans table
     const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
