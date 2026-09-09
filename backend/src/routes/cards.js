@@ -57,23 +57,26 @@ cardsRouter.get('/', async (req, res) => {
       }
     } catch {}
 
-    // Only scan hardware directly if running on-prem and no DB holders were found
-    if (!process.env.VERCEL && holders.size === 0) {
-      const devices = (await getAllDevices()).filter((d) => d.online);
-      await Promise.all(devices.map(async (dev) => {
-        try {
-          const all = await getCardTable(dev);
-          const roster = await getRoster(dev).catch(() => []);
-          const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
-          for (const c of all) {
-            const no = String(c.cardNo);
-            const emp = String(c.employeeNo);
-            if (!holders.has(no)) holders.set(no, []);
-            holders.get(no).push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
+    // Machine truth ALWAYS runs — card assignments live on the machines, and
+    // the DB rows above only cover dashboard-managed visitor/card records.
+    // Snapshot-backed reads make this milliseconds when warm (Vercel too).
+    const devices = (await getAllDevices()).filter((d) => d.online);
+    await Promise.all(devices.map(async (dev) => {
+      try {
+        const all = await getCardTable(dev);
+        const roster = await getRoster(dev).catch(() => []);
+        const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
+        for (const c of all) {
+          const no = String(c.cardNo);
+          const emp = String(c.employeeNo);
+          if (!holders.has(no)) holders.set(no, []);
+          const list = holders.get(no);
+          if (!list.some((h) => h.device_id === dev.id && h.employeeNo === emp)) {
+            list.push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
           }
-        } catch { /* unreachable machine — skip */ }
-      }));
-    }
+        }
+      } catch { /* unreachable machine — skip */ }
+    }));
 
     res.json(registry.map((r) => ({
       ...r,
