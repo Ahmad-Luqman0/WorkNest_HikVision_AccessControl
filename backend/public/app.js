@@ -967,24 +967,96 @@ async function dashboard() {
   wireDashActions(devs);
 }
 
+function quickUnlockModal(devs) {
+  if (!devs || !devs.length) { toast('No devices configured', 'err'); return; }
+
+  const doorItems = devs.map((d) => `
+    <div class="list-row" style="padding:10px 14px; margin-bottom:8px; border-radius:10px; background:var(--surface-card); border:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+        <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
+        <div style="min-width:0;">
+          <b style="font-size:14px; color:var(--text-main); display:block; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${esc(d.name)}</b>
+          <small class="hint" style="font-family:ui-monospace, monospace; font-size:11px;">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
+        </div>
+      </div>
+      <button class="btn sm ${d.online ? 'primary' : ''}" data-modal-unlock="${d.id}" data-devname="${esc(d.name)}" ${d.online ? '' : 'disabled'} title="${d.online ? 'Unlock this door' : 'Device is offline'}">
+        ${ICONS.unlock} Unlock
+      </button>
+    </div>
+  `).join('');
+
+  openModal(`
+    <div style="max-width:480px; width:100%;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <div style="width:40px; height:40px; border-radius:10px; background:rgba(99, 102, 241, 0.15); color:var(--accent); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+          ${ICONS.unlock}
+        </div>
+        <div>
+          <h2 style="margin:0; font-size:18px; font-weight:700;">Select Door to Unlock</h2>
+          <p class="hint" style="margin:2px 0 0;">Choose a terminal below to send an immediate unlock signal:</p>
+        </div>
+      </div>
+
+      <div style="max-height:340px; overflow-y:auto; margin:16px 0; padding-right:4px;">
+        ${doorItems}
+      </div>
+
+      <div class="modal-actions" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center;">
+        <button class="btn" id="modalUnlockAll" style="font-size:12px;">Unlock All Doors</button>
+        <button class="btn" id="modalUnlockClose">Close</button>
+      </div>
+    </div>
+  `);
+
+  $('#modalUnlockClose')?.addEventListener('click', closeModal);
+
+  $('#modalUnlockAll')?.addEventListener('click', async () => {
+    closeModal();
+    const ok = await confirmDialog({
+      title: 'Fleet Door Unlock',
+      message: `Unlock the door on ALL ${devs.length} machine${devs.length === 1 ? '' : 's'} now?`,
+      confirmText: 'Unlock All Doors',
+      danger: true
+    });
+    if (!ok) return;
+    toast('Unlocking all doors…');
+    const r = await api.post('/devices/door', { cmd: 'open' });
+    const failed = (r.results || []).filter((x) => !x.ok);
+    toast(failed.length ? `Unlocked ${r.okCount}/${r.total}` : `Unlocked all ${r.okCount}`, failed.length ? 'err' : 'ok');
+  });
+
+  document.querySelectorAll('[data-modal-unlock]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const devId = btn.dataset.modalUnlock;
+      const devName = btn.dataset.devname;
+      btn.disabled = true;
+      btn.textContent = 'Unlocking…';
+      toast(`Unlocking ${devName}…`);
+      try {
+        const r = await api.post(`/devices/${devId}/door`, { cmd: 'open' });
+        if (r.ok) {
+          toast(`Door unlocked at ${devName}`, 'ok');
+          closeModal();
+        } else {
+          toast(`Failed: ${r.error || 'error'}`, 'err');
+          btn.disabled = false;
+          btn.innerHTML = `${ICONS.unlock} Unlock`;
+        }
+      } catch (e) {
+        toast(`Error: ${e.message || e}`, 'err');
+        btn.disabled = false;
+        btn.innerHTML = `${ICONS.unlock} Unlock`;
+      }
+    });
+  });
+}
+
 function wireDashActions(devs) {
   $('#dashGoMachines')?.addEventListener('click', () => go('devices'));
   $('#dashGoLogs')?.addEventListener('click', () => go('logs'));
   $('#dashGoUsers')?.addEventListener('click', () => go('users'));
   $('#heroDayPass')?.addEventListener('click', () => dayPassModal(devs));
-  $('#heroQuickUnlock')?.addEventListener('click', async () => {
-    const target = devs.find((d) => d.online) || devs[0];
-    if (!target) { toast('No devices configured', 'err'); return; }
-    const ok = await confirmDialog({
-      title: 'Quick Unlock Door',
-      message: `Unlock the door at “${target.name}” now?`,
-      confirmText: 'Unlock Door'
-    });
-    if (!ok) return;
-    toast(`Unlocking ${target.name}…`);
-    const r = await api.post(`/devices/${target.id}/door`, { cmd: 'open' });
-    toast(r.ok ? `Door unlocked at ${target.name}` : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
-  });
+  $('#heroQuickUnlock')?.addEventListener('click', () => quickUnlockModal(devs));
   $('#heroAnalytics')?.addEventListener('click', () => go('analytics'));
   const bb = $('#dashBookingsBanner');
   if (bb) bb.addEventListener('click', () => go('bookings'));
