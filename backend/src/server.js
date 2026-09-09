@@ -925,7 +925,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       emp = await getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE name = ?', [nameQuery]).catch(() => null);
     }
 
-    // 2. Assigned devices/doors from AccessGrants
+    // 2. Assigned devices/doors from AccessGrants (or derived from active terminal events)
     let grants = [];
     if (emp?.id) {
       grants = await getRows(
@@ -939,6 +939,21 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
 
     const empNo = emp?.employee_no || rawEmpNo;
     const empName = emp?.name || nameQuery;
+
+    if (grants.length === 0) {
+      // If user was enrolled directly on a physical terminal (not provisioned via web dashboard),
+      // discover the gates/terminals they are authorized on from event logs
+      const activeDevs = await getRows(
+        `SELECT DISTINCT d.id, d.name, d.location, d.grp, d.online
+         FROM dbo.WN_HIK_Events e WITH (NOLOCK)
+         JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = e.device_id OR d.name = e.device_name
+         WHERE (e.employee_no = ? OR (e.employee_no IS NULL AND e.name = ?))`,
+        [empNo, empName]
+      ).catch(() => []);
+      if (activeDevs.length > 0) {
+        grants = activeDevs.map((d) => ({ ...d, directEnroll: true }));
+      }
+    }
 
     // 3. User scan breakdown per door in range
     const doorBreakdown = await getRows(
