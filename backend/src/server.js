@@ -982,8 +982,8 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       grants,
       totalScans,
       allTimeScans: Number(allTimeRow?.total) || totalScans,
-      firstScan: metaRow?.first_scan ? new Date(metaRow.first_scan).toISOString() : null,
-      lastScan: metaRow?.last_scan ? new Date(metaRow.last_scan).toISOString() : null,
+      firstScan: metaRow?.first_scan ? String(metaRow.first_scan) : null,
+      lastScan: metaRow?.last_scan ? String(metaRow.last_scan) : null,
       peakHourLabel: peakVal > 0 ? `${p2(peakHr)}:00 - ${p2(peakHr + 1)}:00 (${peakVal} scans)` : '—',
       doors: doorBreakdown.map((d) => ({
         name: d.name || 'Terminal',
@@ -994,7 +994,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       recentEvents: recentEvents.map((e) => ({
         id: e.id,
         device: e.device_name || 'Terminal',
-        time: e.event_time ? new Date(e.event_time).toISOString() : null,
+        time: e.event_time ? String(e.event_time) : null,
         cardNo: e.card_no,
         minor: e.minor,
       })),
