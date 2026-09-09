@@ -868,6 +868,143 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
+// Single user deep analytics breakdown (scan history, doors, peak times, and recent logs)
+app.get('/api/analytics/user/:employeeNo', async (req, res) => {
+  try {
+    const rawEmpNo = String(req.params.employeeNo || '').trim();
+    const nameQuery = String(req.query.name || '').trim();
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const nowD = new Date();
+    const today = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}-${p2(nowD.getDate())}`;
+    const from = DATE_RE.test(String(req.query.from || '')) ? req.query.from : today;
+    const to = DATE_RE.test(String(req.query.to || '')) ? req.query.to : today;
+
+    // 1. Employee profile from DB
+    let emp = null;
+    if (rawEmpNo && rawEmpNo !== 'null' && rawEmpNo !== 'undefined') {
+      emp = await getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE employee_no = ?', [rawEmpNo]).catch(() => null);
+    }
+    if (!emp && nameQuery) {
+      emp = await getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE name = ?', [nameQuery]).catch(() => null);
+    }
+
+    // 2. Assigned devices/doors from AccessGrants
+    let grants = [];
+    if (emp?.id) {
+      grants = await getRows(
+        `SELECT d.id, d.name, d.location, d.grp, d.online
+         FROM dbo.WN_HIK_AccessGrants g
+         JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
+         WHERE g.employee_id = ?`,
+        [emp.id]
+      ).catch(() => []);
+    }
+
+    const empNo = emp?.employee_no || rawEmpNo;
+    const empName = emp?.name || nameQuery;
+
+    // 3. User scan breakdown per door in range
+    const doorBreakdown = await getRows(
+      `SELECT device_name AS name, COUNT(*) AS count
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+         AND event_time BETWEEN ? AND ?
+       GROUP BY device_name
+       ORDER BY count DESC`,
+      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+    ).catch(() => []);
+
+    // 4. Hourly distribution for user
+    const hourlyRows = await getRows(
+      `SELECT DATEPART(hour, event_time) AS hr, COUNT(*) AS count
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+         AND event_time BETWEEN ? AND ?
+       GROUP BY DATEPART(hour, event_time)`,
+      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+    ).catch(() => []);
+
+    const hourly = new Array(24).fill(0);
+    let peakHr = 0;
+    let peakVal = 0;
+    for (const r of hourlyRows) {
+      const h = Number(r.hr);
+      if (!Number.isNaN(h) && h >= 0 && h < 24) {
+        const cnt = Number(r.count) || 0;
+        hourly[h] = cnt;
+        if (cnt > peakVal) {
+          peakVal = cnt;
+          peakHr = h;
+        }
+      }
+    }
+
+    // 5. Total scans, first scan, last scan in range
+    const metaRow = await getRow(
+      `SELECT COUNT(*) AS total, MIN(event_time) AS first_scan, MAX(event_time) AS last_scan
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+         AND event_time BETWEEN ? AND ?`,
+      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+    ).catch(() => ({ total: 0, first_scan: null, last_scan: null }));
+
+    // 6. Recent scan event log entries (latest 30)
+    const recentEvents = await getRows(
+      `SELECT TOP 30 id, device_name, event_time, card_no, minor
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+         AND event_time BETWEEN ? AND ?
+       ORDER BY event_time DESC`,
+      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+    ).catch(() => []);
+
+    // 7. All-time total scans
+    const allTimeRow = await getRow(
+      `SELECT COUNT(*) AS total
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))`,
+      [empNo, empName]
+    ).catch(() => ({ total: 0 }));
+
+    const totalScans = Number(metaRow?.total) || 0;
+
+    res.json({
+      ok: true,
+      user: {
+        employeeNo: empNo,
+        name: empName || `User ${empNo}`,
+        cardNo: emp?.card_no || (recentEvents.find((e) => e.card_no)?.card_no) || '',
+        roomNo: emp?.room_no || '',
+        status: emp?.status || 'active',
+        validBegin: emp?.valid_begin,
+        validEnd: emp?.valid_end,
+      },
+      grants,
+      totalScans,
+      allTimeScans: Number(allTimeRow?.total) || totalScans,
+      firstScan: metaRow?.first_scan ? new Date(metaRow.first_scan).toISOString() : null,
+      lastScan: metaRow?.last_scan ? new Date(metaRow.last_scan).toISOString() : null,
+      peakHourLabel: peakVal > 0 ? `${p2(peakHr)}:00 - ${p2(peakHr + 1)}:00 (${peakVal} scans)` : '—',
+      doors: doorBreakdown.map((d) => ({
+        name: d.name || 'Terminal',
+        count: Number(d.count) || 0,
+        percent: totalScans > 0 ? Math.round(((Number(d.count) || 0) / totalScans) * 100) : 0,
+      })),
+      hourly,
+      recentEvents: recentEvents.map((e) => ({
+        id: e.id,
+        device: e.device_name || 'Terminal',
+        time: e.event_time ? new Date(e.event_time).toISOString() : null,
+        cardNo: e.card_no,
+        minor: e.minor,
+      })),
+      range: { from, to },
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 
 
 // 404 API & Global Error Handlers

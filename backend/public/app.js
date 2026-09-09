@@ -3286,27 +3286,41 @@ async function analyticsView() {
     </div>
 
     <section class="panel" style="height:auto; margin-top:24px;">
-      <header>
+      <header style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3>Scans by User</h3>
+        <small class="hint" style="font-size:12px;">Click a user to inspect detailed activity breakdown</small>
       </header>
       <div class="panel-body" style="padding:20px;">
         ${(data.userScans || []).map((u) => `
-          <div class="usage-row">
+          <div class="usage-row clickable" data-user-emp="${esc(u.employeeNo)}" data-user-name="${esc(u.name)}">
             <div class="usage-head">
               <span class="usage-name" style="display:flex;align-items:center;gap:8px">
                 ${renderAvatar(u.name, 'sm')}
                 <span><b>${esc(u.name || 'User ' + u.employeeNo)}</b> <small class="hint">${copyableBadge(u.employeeNo)}</small></span>
               </span>
-              <span class="usage-val">${u.count} scan${u.count === 1 ? '' : 's'} (${u.percent}%)</span>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span class="usage-val tabular-nums">${u.count} scan${u.count === 1 ? '' : 's'} (${u.percent}%)</span>
+                <svg class="usage-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+              </div>
             </div>
             <div class="progress-bar-bg">
               <div class="progress-bar-fill" style="width: ${Math.max(3, u.percent)}%"></div>
             </div>
-          </div>`).join('') || '<div class="list-empty">No user scans recorded today.</div>'}
+          </div>`).join('') || '<div class="list-empty">No user scans recorded in this period.</div>'}
       </div>
     </section>
   </div>`;
   wireBezierChart();
+
+  content.querySelectorAll('.usage-row.clickable').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.copy-btn')) return;
+      const emp = row.dataset.userEmp;
+      const nm = row.dataset.userName;
+      showUserAnalyticsBreakdown(emp, nm);
+    });
+  });
+
   $('#an_preset').addEventListener('change', () => {
     _anRange.preset = $('#an_preset').value;
     if (_anRange.preset !== 'custom') analyticsView();
@@ -3317,6 +3331,195 @@ async function analyticsView() {
     _anRange.to = $('#an_to').value || null;
     analyticsView();
   });
+}
+
+// Interactive breakdown modal when a user is clicked in "Scans by User"
+async function showUserAnalyticsBreakdown(empNo, name) {
+  openModal(`
+    <div style="max-width: 680px; width: 100%; max-height: 85vh; overflow-y: auto; padding-right: 4px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;gap:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          ${renderAvatar(name, 'md')}
+          <div>
+            <h2 style="margin:0;font-size:18px;font-weight:700;">${esc(name || 'User ' + empNo)}</h2>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+              ${copyableBadge(empNo)}
+              <span class="badge" style="font-size:11px;">Activity Breakdown</span>
+            </div>
+          </div>
+        </div>
+        <button class="btn sm" id="uab_close_top" style="padding:4px 8px;border-radius:6px;" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div id="uab_body">
+        <div style="display:flex;gap:12px;margin-bottom:16px;">
+          <span class="skel-cell" style="flex:1;height:68px;border-radius:10px;"></span>
+          <span class="skel-cell" style="flex:1;height:68px;border-radius:10px;"></span>
+          <span class="skel-cell" style="flex:1;height:68px;border-radius:10px;"></span>
+        </div>
+        <span class="skel-cell" style="width:100%;height:140px;border-radius:10px;display:block;margin-bottom:16px;"></span>
+        <span class="skel-cell" style="width:100%;height:120px;border-radius:10px;display:block;"></span>
+      </div>
+
+      <div class="modal-actions" style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
+        <div id="uab_footer_left"></div>
+        <button class="btn primary" id="uab_close">Done</button>
+      </div>
+    </div>
+  `);
+
+  $('#uab_close_top')?.addEventListener('click', closeModal);
+  $('#uab_close')?.addEventListener('click', closeModal);
+
+  const from = _anRange.from || '';
+  const to = _anRange.to || '';
+  const r = await api.get(`/analytics/user/${encodeURIComponent(empNo || '0')}?name=${encodeURIComponent(name || '')}&from=${from}&to=${to}`);
+  const body = $('#uab_body');
+  if (!body) return;
+
+  if (!r?.ok) {
+    body.innerHTML = `<div class="empty">Failed to load user breakdown: ${esc(r?.error || 'error')}</div>`;
+    return;
+  }
+
+  const u = r.user || {};
+  const statusBadge = u.status === 'expired' 
+    ? '<span class="badge error">Expired</span>' 
+    : '<span class="badge synced">Active Member</span>';
+  const roomBadge = u.roomNo ? `<span class="badge">Room ${esc(u.roomNo)}</span>` : '';
+  const cardBadge = u.cardNo ? `<span class="badge monospace">Card: ${copyableBadge(u.cardNo)}</span>` : '<span class="badge">No card registered</span>';
+
+  // Format first / last scan
+  const formatScanTime = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(11, 16);
+    return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+  };
+
+  const firstStr = formatScanTime(r.firstScan);
+  const lastStr = formatScanTime(r.lastScan);
+
+  // Door list
+  const doorRows = (r.doors || []).map((d) => `
+    <div class="usage-row" style="margin-bottom:10px;">
+      <div class="usage-head" style="margin-bottom:4px;">
+        <span class="usage-name" style="font-size:12.5px;font-weight:600;">${esc(d.name)}</span>
+        <span class="usage-val tabular-nums" style="font-size:12px;">${d.count} scan${d.count === 1 ? '' : 's'} (${d.percent}%)</span>
+      </div>
+      <div class="progress-bar-bg" style="height:6px;">
+        <div class="progress-bar-fill" style="width:${Math.max(4, d.percent)}%;"></div>
+      </div>
+    </div>
+  `).join('') || '<div class="hint" style="padding:6px 0;">No door scans recorded in this date range.</div>';
+
+  // Grants / Accessible Gates chips
+  const grantChips = (r.grants || []).map((g) => `
+    <span class="uab-gate-chip">
+      <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:7px;height:7px;"></span>
+      ${esc(g.name)}
+      ${g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : ''}
+    </span>
+  `).join('') || '<span class="hint">No specific access gates provisioned in database.</span>';
+
+  // Recent scans table
+  const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
+    const d = e.time ? new Date(e.time) : null;
+    const timeStr = d && !isNaN(d.getTime()) 
+      ? `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
+      : (e.time ? String(e.time).replace('T', ' ').slice(11, 19) : '—');
+    const dateStr = d && !isNaN(d.getTime())
+      ? `${d.toLocaleString([], { month: 'short', day: 'numeric' })}`
+      : (e.time ? String(e.time).slice(5, 10) : '—');
+    return `
+      <tr>
+        <td class="nowrap"><span class="tabular-nums" style="font-weight:600;">${timeStr}</span> <small class="hint">${dateStr}</small></td>
+        <td><b>${esc(e.device)}</b></td>
+        <td class="nowrap">${e.cardNo ? copyableBadge(e.cardNo) : '<small class="hint">Biometric</small>'}</td>
+        <td class="nowrap"><span class="badge synced">Granted</span></td>
+      </tr>
+    `;
+  }).join('') || '<tr><td colspan="4" class="list-empty" style="padding:16px;">No recent scan logs found for this user.</td></tr>';
+
+  body.innerHTML = `
+    <!-- Top Meta Badges -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+      ${statusBadge}
+      ${roomBadge}
+      ${cardBadge}
+      ${u.validEnd ? `<span class="badge"><small class="hint">Valid until: </small>${esc(String(u.validEnd).replace('T', ' ').slice(0, 10))}</span>` : ''}
+    </div>
+
+    <!-- Stat Highlights -->
+    <div class="uab-stat-grid">
+      <div class="uab-stat-box">
+        <div class="uab-stat-label">Scans (Range)</div>
+        <div class="uab-stat-val">${r.totalScans}</div>
+        <div class="uab-stat-sub">${r.allTimeScans} all-time recorded</div>
+      </div>
+      <div class="uab-stat-box">
+        <div class="uab-stat-label">Peak Hour</div>
+        <div class="uab-stat-val" style="font-size:14px;line-height:1.4;">${esc(r.peakHourLabel)}</div>
+        <div class="uab-stat-sub">Highest activity window</div>
+      </div>
+      <div class="uab-stat-box">
+        <div class="uab-stat-label">First & Last Scan</div>
+        <div class="uab-stat-val" style="font-size:14px;line-height:1.4;">${firstStr} / ${lastStr}</div>
+        <div class="uab-stat-sub">Activity interval</div>
+      </div>
+    </div>
+
+    <!-- Scans by Door / Terminal Breakdown -->
+    <div class="uab-section-title">
+      <span>Terminal / Door Breakdown</span>
+      <span class="tabular-nums">${r.doors ? r.doors.length : 0} door${r.doors && r.doors.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="uab-doors-list">
+      ${doorRows}
+    </div>
+
+    <!-- Authorized Gates / Doors -->
+    <div class="uab-section-title">
+      <span>Assigned Access Permissions</span>
+      <span class="tabular-nums">${r.grants ? r.grants.length : 0} gates</span>
+    </div>
+    <div class="uab-gate-chips">
+      ${grantChips}
+    </div>
+
+    <!-- Recent Scans Timeline Table -->
+    <div class="uab-section-title">
+      <span>Recent Scan Activity Log</span>
+      <span class="hint">Latest entries</span>
+    </div>
+    <div class="table-wrapper" style="max-height:220px;overflow-y:auto;border-radius:10px;border:1px solid var(--border);">
+      <table class="uab-recent-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Terminal / Door</th>
+            <th>Credential</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${recentRows}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  // Left action: jump to users view
+  const footerLeft = $('#uab_footer_left');
+  if (footerLeft && (empNo || u.employeeNo)) {
+    footerLeft.innerHTML = `<button class="btn sm" id="uab_jump_user">Manage in Users</button>`;
+    $('#uab_jump_user')?.addEventListener('click', () => {
+      closeModal();
+      go('users');
+    });
+  }
 }
 
 // ---- Admin Audit Log View ----
