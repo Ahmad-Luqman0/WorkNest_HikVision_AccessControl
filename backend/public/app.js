@@ -188,11 +188,13 @@ function onLiveActivityEvent(entry) {
       if (emptyNotice) emptyNotice.remove();
 
       const cred = getCredBadge(entry.action);
+      const who = entry.name || prettyAction(entry.action);
+      const avatar = renderAvatar(who, 'md');
       const row = el(`
         <div class="ticker-item live-incoming">
-          <div class="ticker-icon ${cred.cls}">${cred.icon}</div>
+          ${avatar}
           <div class="ticker-main">
-            <div class="ticker-person"><b>${esc(prettyAction(entry.action))}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+            <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
             <div class="ticker-sub"><small class="hint">${esc(new Date().toLocaleTimeString())}</small></div>
           </div>
           <span class="badge ${entry.ok ? 'synced' : 'error'}">${entry.ok ? 'Granted' : 'Denied'}</span>
@@ -229,6 +231,291 @@ function initTheme() {
   }
 }
 initTheme();
+
+// ---- Initials Avatars & Polish Utilities ----
+function getInitials(name) {
+  if (!name || typeof name !== 'string') return 'G';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'G';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function nameThemeHash(name) {
+  let hash = 0;
+  const str = String(name || 'User');
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % 8;
+}
+
+function renderAvatar(name, size = 'sm') {
+  const inits = getInitials(name);
+  const theme = nameThemeHash(name);
+  return `<span class="avatar-badge ${size} avatar-theme-${theme}" title="${esc(name || 'Member')}">${esc(inits)}</span>`;
+}
+
+// ---- Copy to Clipboard Helpers ----
+const COPY_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+const CHECK_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+function copyableBadge(text, display = null) {
+  if (text === null || text === undefined || text === '') return '<small class="hint">—</small>';
+  const showText = display !== null ? display : text;
+  return `<span class="copyable-badge" data-copy="${esc(String(text))}" title="Click to copy">${esc(String(showText))} ${COPY_SVG}</span>`;
+}
+
+function initCopyHandler() {
+  document.addEventListener('click', async (e) => {
+    const badge = e.target.closest('.copyable-badge');
+    if (!badge || badge.classList.contains('copied')) return;
+    const text = badge.dataset.copy;
+    if (!text) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      const origHtml = badge.innerHTML;
+      badge.classList.add('copied');
+      badge.innerHTML = `<span>Copied!</span> ${CHECK_SVG}`;
+      setTimeout(() => {
+        badge.classList.remove('copied');
+        badge.innerHTML = origHtml;
+      }, 1400);
+    } catch {
+      toast('Copied to clipboard: ' + text);
+    }
+  });
+}
+initCopyHandler();
+
+// ---- Interactive Bezier Area Chart Generator ----
+function generateBezierAreaChartSvg(dataPoints, width = 740, height = 240) {
+  const padLeft = 40;
+  const padRight = 20;
+  const padTop = 20;
+  const padBottom = 30;
+  const chartW = width - padLeft - padRight;
+  const chartH = height - padTop - padBottom;
+  
+  const safeData = Array.isArray(dataPoints) && dataPoints.length === 24 ? dataPoints : Array(24).fill(0);
+  const maxVal = Math.max(5, ...safeData);
+  const n = safeData.length;
+  
+  const coords = safeData.map((val, i) => {
+    const x = padLeft + (i / (n - 1)) * chartW;
+    const y = padTop + chartH - (val / maxVal) * chartH;
+    return { x, y, val, hr: i };
+  });
+
+  let pathD = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = i > 0 ? coords[i - 1] : coords[i];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = i !== coords.length - 2 ? coords[i + 2] : p2;
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    pathD += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+
+  const areaD = `${pathD} L ${coords[coords.length - 1].x.toFixed(1)} ${(padTop + chartH).toFixed(1)} L ${coords[0].x.toFixed(1)} ${(padTop + chartH).toFixed(1)} Z`;
+
+  const gridLines = [0.25, 0.5, 0.75, 1].map((lvl) => {
+    const y = padTop + chartH - lvl * chartH;
+    const label = Math.round(lvl * maxVal);
+    return `
+      <line class="chart-grid-line" x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" />
+      <text class="chart-axis-label" x="${padLeft - 8}" y="${y + 4}" text-anchor="end">${label}</text>
+    `;
+  }).join('');
+
+  const xLabels = [0, 4, 8, 12, 16, 20, 23].map((hr) => {
+    const pt = coords[hr];
+    const label = `${String(hr).padStart(2, '0')}:00`;
+    return `<text class="chart-axis-label" x="${pt.x}" y="${height - 8}" text-anchor="middle">${label}</text>`;
+  }).join('');
+
+  const ptsJson = JSON.stringify(coords.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y), val: c.val, hr: c.hr })));
+
+  return `
+    <div class="bezier-chart-wrap" id="analyticsBezierWrap" data-coords='${ptsJson}'>
+      <svg class="bezier-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="areaTrafficGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.38" />
+            <stop offset="60%" stop-color="#8b5cf6" stop-opacity="0.12" />
+            <stop offset="100%" stop-color="#6366f1" stop-opacity="0.0" />
+          </linearGradient>
+          <filter id="lineGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#6366f1" flood-opacity="0.5"/>
+          </filter>
+        </defs>
+        ${gridLines}
+        <path d="${areaD}" fill="url(#areaTrafficGrad)" />
+        <path d="${pathD}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#lineGlow)" />
+        <line class="chart-guide-line" id="chartGuideLine" x1="0" y1="${padTop}" x2="0" y2="${padTop + chartH}" />
+        <circle class="chart-hover-dot" id="chartHoverDot" cx="0" cy="0" r="5" />
+      </svg>
+      <div class="chart-tooltip-glass" id="chartTooltip"></div>
+    </div>
+  `;
+}
+
+function wireBezierChart() {
+  const wrap = $('#analyticsBezierWrap');
+  if (!wrap) return;
+  const raw = wrap.dataset.coords;
+  if (!raw) return;
+  try {
+    const coords = JSON.parse(raw);
+    const guide = $('#chartGuideLine');
+    const dot = $('#chartHoverDot');
+    const tt = $('#chartTooltip');
+
+    wrap.addEventListener('mousemove', (e) => {
+      const rect = wrap.getBoundingClientRect();
+      const svgRatio = 740 / rect.width;
+      const mouseSvgX = (e.clientX - rect.left) * svgRatio;
+
+      let closest = coords[0];
+      let minDiff = Infinity;
+      for (const c of coords) {
+        const diff = Math.abs(c.x - mouseSvgX);
+        if (diff < minDiff) { minDiff = diff; closest = c; }
+      }
+
+      if (guide && dot && tt) {
+        guide.setAttribute('x1', closest.x);
+        guide.setAttribute('x2', closest.x);
+        guide.style.opacity = '1';
+
+        dot.setAttribute('cx', closest.x);
+        dot.setAttribute('cy', closest.y);
+        dot.style.opacity = '1';
+
+        const hrStr = `${String(closest.hr).padStart(2, '0')}:00`;
+        tt.innerHTML = `<span class="tt-time">${hrStr}</span> <span class="tt-val">${closest.val} scan${closest.val === 1 ? '' : 's'}</span>`;
+        tt.style.left = `${(closest.x / 740) * 100}%`;
+        tt.style.top = `${(closest.y / 240) * 100}%`;
+        tt.style.opacity = '1';
+      }
+    });
+
+    wrap.addEventListener('mouseleave', () => {
+      if (guide) guide.style.opacity = '0';
+      if (dot) dot.style.opacity = '0';
+      if (tt) tt.style.opacity = '0';
+    });
+  } catch {}
+}
+
+// ---- Space Utilization Donut Generator ----
+function renderSpaceDonut(doorUsage, todayTotal) {
+  const safeDoors = Array.isArray(doorUsage) ? doorUsage.slice(0, 6) : [];
+  if (!safeDoors.length) return '<div class="list-empty">No door activity recorded in this period.</div>';
+
+  const colors = ['#6366f1', '#10b981', '#38bdf8', '#f59e0b', '#a855f7', '#ec4899'];
+  const radius = 46;
+  const circ = 2 * Math.PI * radius; // ~289.02
+
+  let accumulated = 0;
+  const segments = safeDoors.map((d, i) => {
+    const pct = d.percent || 0;
+    const strokeLen = (pct / 100) * circ;
+    const strokeDash = `${strokeLen.toFixed(1)} ${circ.toFixed(1)}`;
+    const strokeOffset = (-accumulated).toFixed(1);
+    accumulated += strokeLen;
+    const color = colors[i % colors.length];
+    return `<circle cx="65" cy="65" r="${radius}" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${strokeDash}" stroke-dashoffset="${strokeOffset}" opacity="0.9" />`;
+  }).join('');
+
+  const legend = safeDoors.map((d, i) => {
+    const color = colors[i % colors.length];
+    return `
+      <div class="usage-row" style="margin-bottom:8px">
+        <div class="usage-head">
+          <span class="usage-name" style="display:flex;align-items:center;gap:6px">
+            <span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>
+            ${esc(d.name)}
+          </span>
+          <span class="usage-val">${d.count} (${d.percent}%)</span>
+        </div>
+        <div class="progress-bar-bg" style="height:5px">
+          <div class="progress-bar-fill" style="width:${Math.max(3, d.percent)}%; background:${color}"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="utilization-donut-card">
+      <div class="utilization-donut-box">
+        <svg class="utilization-donut-svg" viewBox="0 0 130 130">
+          <circle cx="65" cy="65" r="${radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="12" />
+          ${segments}
+        </svg>
+        <div class="utilization-donut-center">
+          <div class="utilization-donut-total">${todayTotal || 0}</div>
+          <div class="utilization-donut-sub">Total Scans</div>
+        </div>
+      </div>
+      <div class="utilization-legend-list">
+        ${legend}
+      </div>
+    </div>
+  `;
+}
+
+// ---- CSV Export Utility ----
+function exportUsersCsv(exportEntries) {
+  if (!exportEntries || !exportEntries.length) { toast('No members to export', 'err'); return; }
+  const headers = ['Employee No', 'Name', 'Room Access', 'Role', 'Machines', 'Valid Until', 'Cards', 'Fingerprints', 'Faces', 'Status'];
+  const csvRows = [headers.join(',')];
+  for (const { u, on } of exportEntries) {
+    const blocked = u.Valid?.enable === false ? 'Blocked' : 'Active';
+    const role = u.localUIRight ? 'Admin' : 'User';
+    const machines = on.map((d) => d.name).join('; ');
+    const rooms = on.map((d) => d.code ? 'Room ' + d.code : d.name).join('; ');
+    const validUntil = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : 'Unlimited';
+    const row = [
+      `"${String(u.employeeNo || '').replace(/"/g, '""')}"`,
+      `"${String(u.name || '').replace(/"/g, '""')}"`,
+      `"${rooms.replace(/"/g, '""')}"`,
+      `"${role}"`,
+      `"${machines.replace(/"/g, '""')}"`,
+      `"${validUntil}"`,
+      u.numOfCard || 0,
+      u.numOfFP || 0,
+      u.numOfFace || 0,
+      `"${blocked}"`
+    ];
+    csvRows.push(row.join(','));
+  }
+  const blob = new Blob([csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `worknest_users_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${exportEntries.length} members to CSV`, 'ok');
+}
 
 // ---- Floating row menu (one shared instance, fixed-positioned so table
 // overflow can't clip it) ----
@@ -455,12 +742,70 @@ async function dashboard() {
   const trendText = s.trendPct !== undefined ? `${s.trendPct >= 0 ? '+' : ''}${s.trendPct}% vs yesterday` : '';
   const sparkSvg = miniSparklineSvg(analyticsData?.hourlyDistribution || []);
 
+  const nowHour = new Date().getHours();
+  const greeting = nowHour < 12 ? 'Good morning' : nowHour < 17 ? 'Good afternoon' : 'Good evening';
+  const offlineCount = devs.filter((d) => !d.online).length;
+  const isHealthy = offlineCount === 0 && totalMachines > 0;
+  const liveHeadcount = (analyticsData?.liveHeadcount !== undefined)
+    ? analyticsData.liveHeadcount
+    : Math.min(s.todayScans || 0, s.active || 0);
+  const totalCapacity = Math.max(50, s.active || 50);
+  const occupancyPct = Math.min(100, Math.round((liveHeadcount / totalCapacity) * 100));
+  const ringCircumference = 238.76;
+  const ringOffset = (ringCircumference * (1 - occupancyPct / 100)).toFixed(1);
+
+  const heroHtml = `
+    <div class="exec-hero" id="dashExecHero">
+      <div class="exec-hero-left">
+        <div class="exec-greeting-badge ${isHealthy ? '' : 'alert'}" id="heroBadge">
+          <span class="live-dot" style="${isHealthy ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span>
+          ${isHealthy ? 'All Systems Nominal' : `${offlineCount} Terminal${offlineCount > 1 ? 's' : ''} Offline`}
+        </div>
+        <h2 class="exec-greeting-title" id="heroTitle">${greeting}, Admin</h2>
+        <p class="exec-greeting-sub" id="heroSub">
+          <b>${onlineMachines} of ${totalMachines}</b> devices operational · <b>${s.active || 0}</b> active members · <b>${s.todayScans || 0}</b> scans recorded today.
+        </p>
+        <div class="exec-actions">
+          <button class="btn sm primary" id="heroDayPass">+ Day Pass</button>
+          <button class="btn sm" id="heroQuickUnlock">⚡ Quick Unlock Door</button>
+          <button class="btn sm" id="heroAnalytics">📊 Live Analytics →</button>
+        </div>
+      </div>
+
+      <div class="exec-hero-right">
+        <div class="occupancy-ring-box" title="Estimated live occupancy based on access scans today">
+          <svg class="occupancy-ring-svg" viewBox="0 0 92 92">
+            <defs>
+              <linearGradient id="occupancyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#6366f1" />
+                <stop offset="100%" stop-color="#10b981" />
+              </linearGradient>
+            </defs>
+            <circle class="occupancy-ring-bg" cx="46" cy="46" r="38"></circle>
+            <circle class="occupancy-ring-fill" id="occupancyRingFill" cx="46" cy="46" r="38"
+              stroke-dasharray="${ringCircumference}"
+              stroke-dashoffset="${ringOffset}"></circle>
+          </svg>
+          <div class="occupancy-ring-meta">
+            <div class="occupancy-ring-pct" id="occupancyRingPct">${occupancyPct}%</div>
+            <div class="occupancy-ring-label">Capacity</div>
+          </div>
+        </div>
+        <div class="occupancy-details">
+          <div class="occupancy-details-val" id="occupancyHeadcountVal">${liveHeadcount} Members Live</div>
+          <div class="occupancy-details-sub" id="occupancyCapacitySub">Capacity target: ${totalCapacity}</div>
+          <div class="occupancy-details-sub" style="color:var(--accent); font-weight:600">Peak: ${esc(analyticsData?.peakHourLabel || '14:00')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
   const machineRows = devs.length ? devs.map((d) => `
     <div class="list-row">
       <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
       <div class="list-main">
         <b>${esc(d.name)}</b>
-        <small class="hint">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
+        <small class="hint">${copyableBadge(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
       </div>
       <span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span>
       <button class="btn sm" data-dash-unlock="${d.id}">Unlock</button>
@@ -473,7 +818,7 @@ async function dashboard() {
       <span class="status-dot ${it.status === 'expired' ? 'off' : 'on'}"></span>
       <div class="list-main">
         <b>${esc(it.name || 'User ' + it.employeeNo)}</b>
-        <small class="hint">#${esc(it.employeeNo)} · ${esc(it.on.map((x) => x.device).join(', '))}</small>
+        <small class="hint">${copyableBadge(it.employeeNo)} · ${esc(it.on.map((x) => x.device).join(', '))}</small>
       </div>
       <span class="badge ${it.status === 'expired' ? 'expired' : 'pending'}">${it.status === 'expired' ? 'expired' : 'ends ' + esc(String(it.minEnd).replace('T', ' ').slice(0, 16))}</span>
       <button class="btn sm" data-extend="${esc(it.employeeNo)}" data-ename="${esc(it.name || '')}">Extend 30 days</button>
@@ -482,11 +827,13 @@ async function dashboard() {
 
   const actRows = logsList.length ? logsList.slice(0, 8).map((l) => {
     const cred = getCredBadge(l.action);
+    const who = l.employee_name || prettyAction(l.action);
+    const avatar = renderAvatar(who, 'md');
     return `
     <div class="ticker-item animate-slide">
-      <div class="ticker-icon ${cred.cls}">${cred.icon}</div>
+      ${avatar}
       <div class="ticker-main">
-        <div class="ticker-person"><b>${esc(prettyAction(l.action))}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+        <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
         <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}</small></div>
       </div>
       <span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'Granted' : 'Denied'}</span>
@@ -505,6 +852,24 @@ async function dashboard() {
   // Non-destructive DOM update: if container already exists, patch elements in place
   const existingWrapper = $('#dashWrapper');
   if (existingWrapper && current === 'dashboard') {
+    const heroBadge = $('#heroBadge');
+    if (heroBadge) {
+      heroBadge.className = `exec-greeting-badge ${isHealthy ? '' : 'alert'}`;
+      heroBadge.innerHTML = `<span class="live-dot" style="${isHealthy ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span> ${isHealthy ? 'All Systems Nominal' : `${offlineCount} Terminal${offlineCount > 1 ? 's' : ''} Offline`}`;
+    }
+    const heroTitle = $('#heroTitle');
+    if (heroTitle) heroTitle.textContent = `${greeting}, Admin`;
+    const heroSub = $('#heroSub');
+    if (heroSub) heroSub.innerHTML = `<b>${onlineMachines} of ${totalMachines}</b> devices operational · <b>${s.active || 0}</b> active members · <b>${s.todayScans || 0}</b> scans recorded today.`;
+    const ringEl = $('#occupancyRingFill');
+    if (ringEl) ringEl.style.strokeDashoffset = `${ringOffset}`;
+    const pctEl = $('#occupancyRingPct');
+    if (pctEl) pctEl.textContent = `${occupancyPct}%`;
+    const hcEl = $('#occupancyHeadcountVal');
+    if (hcEl) hcEl.textContent = `${liveHeadcount} Members Live`;
+    const capEl = $('#occupancyCapacitySub');
+    if (capEl) capEl.textContent = `Capacity target: ${totalCapacity}`;
+
     $('#dashOfflineBanner').innerHTML = offlineHtml;
     $('#dashBookingsSlot').innerHTML = bookingsHtml;
     $('#kpiMachinesVal').textContent = totalMachines;
@@ -550,6 +915,7 @@ async function dashboard() {
   };
 
   content.appendChild(el(`<div id="dashWrapper">
+    ${heroHtml}
     <div id="dashOfflineBanner">${offlineHtml}</div>
     <div id="dashBookingsSlot">${bookingsHtml}</div>
     <div id="dashConsistency"></div>
@@ -603,6 +969,21 @@ function wireDashActions(devs) {
   $('#dashGoMachines')?.addEventListener('click', () => go('devices'));
   $('#dashGoLogs')?.addEventListener('click', () => go('logs'));
   $('#dashGoUsers')?.addEventListener('click', () => go('users'));
+  $('#heroDayPass')?.addEventListener('click', () => dayPassModal(devs));
+  $('#heroQuickUnlock')?.addEventListener('click', async () => {
+    const target = devs.find((d) => d.online) || devs[0];
+    if (!target) { toast('No devices configured', 'err'); return; }
+    const ok = await confirmDialog({
+      title: 'Quick Unlock Door',
+      message: `Unlock the door at “${target.name}” now?`,
+      confirmText: 'Unlock Door'
+    });
+    if (!ok) return;
+    toast(`Unlocking ${target.name}…`);
+    const r = await api.post(`/devices/${target.id}/door`, { cmd: 'open' });
+    toast(r.ok ? `Door unlocked at ${target.name}` : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+  });
+  $('#heroAnalytics')?.addEventListener('click', () => go('analytics'));
   const bb = $('#dashBookingsBanner');
   if (bb) bb.addEventListener('click', () => go('bookings'));
 
@@ -990,8 +1371,16 @@ async function loadUsersTable(devs) {
     else if (tenantRooms.length > 2) roomCell = `<span class="badge admin">room ${esc(tenantRooms[0].code)}</span> <span class="badge admin" title="${esc(roomList)}">+${tenantRooms.length - 1} more</span>`;
     else roomCell = tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ');
     return `<tr class="clickable-row" data-rowidx="${i}" data-blocked="${blocked ? '1' : '0'}" data-admin="${admin ? '1' : '0'}" data-hascard="${u.numOfCard ? '1' : '0'}" title="View full profile">
-      <td>${esc(u.employeeNo)}</td>
-      <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
+      <td style="text-align:center; width:36px;"><input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}"></td>
+      <td>${copyableBadge(u.employeeNo)}</td>
+      <td>
+        <div class="user-identity">
+          ${renderAvatar(u.name, 'sm')}
+          <div class="user-identity-names">
+            <a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a>
+          </div>
+        </div>
+      </td>
       <td class="nowrap">${roomCell}</td>
       <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
       ${all ? (() => {
@@ -1033,7 +1422,109 @@ async function loadUsersTable(devs) {
     </div>
   `;
 
-  holder.innerHTML = `${note}${filterBarHtml}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const dockHtml = `
+    <div class="floating-action-dock" id="floatingActionDock">
+      <div class="dock-counter"><span class="dock-counter-dot"></span> <b id="dockSelectedCount">0</b> selected</div>
+      <div class="dock-divider"></div>
+      <button class="dock-btn primary" id="dockExtendBtn">⏱ Extend 30 Days</button>
+      <button class="dock-btn" id="dockExportBtn">📥 Export CSV</button>
+      <div class="dock-divider"></div>
+      <button class="dock-btn ghost" id="dockClearBtn">✕ Clear</button>
+    </div>
+  `;
+
+  holder.innerHTML = `${note}${filterBarHtml}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${dockHtml}`;
+
+  const _selectedUserIndices = new Set();
+  const dock = $('#floatingActionDock');
+  const countEl = $('#dockSelectedCount');
+  const selectAllCb = $('#userSelectAll');
+
+  const updateDock = () => {
+    const count = _selectedUserIndices.size;
+    if (countEl) countEl.textContent = count;
+    if (dock) {
+      if (count > 0) dock.classList.add('visible');
+      else dock.classList.remove('visible');
+    }
+    if (selectAllCb) {
+      const visibleRows = holder.querySelectorAll('tbody tr:not([style*="display: none"])');
+      const checkedVisible = holder.querySelectorAll('tbody tr:not([style*="display: none"]) .user-row-cb:checked');
+      selectAllCb.checked = visibleRows.length > 0 && checkedVisible.length === visibleRows.length;
+    }
+  };
+
+  holder.querySelectorAll('.user-row-cb').forEach((cb) => {
+    cb.addEventListener('change', (ev) => {
+      ev.stopPropagation();
+      const idx = Number(cb.dataset.cbidx);
+      const row = cb.closest('tr');
+      if (cb.checked) {
+        _selectedUserIndices.add(idx);
+        row?.classList.add('selected-row');
+      } else {
+        _selectedUserIndices.delete(idx);
+        row?.classList.remove('selected-row');
+      }
+      updateDock();
+    });
+  });
+
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', () => {
+      const check = selectAllCb.checked;
+      holder.querySelectorAll('tbody tr').forEach((tr) => {
+        if (tr.style.display === 'none') return;
+        const idx = Number(tr.dataset.rowidx);
+        const cb = tr.querySelector('.user-row-cb');
+        if (cb) cb.checked = check;
+        if (check) {
+          _selectedUserIndices.add(idx);
+          tr.classList.add('selected-row');
+        } else {
+          _selectedUserIndices.delete(idx);
+          tr.classList.remove('selected-row');
+        }
+      });
+      updateDock();
+    });
+  }
+
+  $('#dockClearBtn')?.addEventListener('click', () => {
+    _selectedUserIndices.clear();
+    holder.querySelectorAll('.user-row-cb').forEach((cb) => { cb.checked = false; });
+    holder.querySelectorAll('tbody tr').forEach((tr) => tr.classList.remove('selected-row'));
+    if (selectAllCb) selectAllCb.checked = false;
+    updateDock();
+  });
+
+  $('#dockExtendBtn')?.addEventListener('click', async () => {
+    const selected = [..._selectedUserIndices].map((i) => entries[i]).filter(Boolean);
+    if (!selected.length) return;
+    const ok = await confirmDialog({
+      title: 'Extend Selected Access',
+      message: `Extend access by 30 days for ${selected.length} selected member${selected.length === 1 ? '' : 's'} on all their provisioned machines?`,
+      confirmText: `Extend ${selected.length} Members`
+    });
+    if (!ok) return;
+    toast(`Extending access for ${selected.length} member(s)…`);
+    let successCount = 0;
+    for (const it of selected) {
+      try {
+        const r = await api.post('/expiring/extend', { employeeNo: it.u.employeeNo, name: it.u.name || undefined, days: 30 });
+        if (r.ok) successCount++;
+      } catch {}
+    }
+    toast(`Successfully extended ${successCount} of ${selected.length} members`, successCount ? 'ok' : 'err');
+    loadUsersTable(devs);
+  });
+
+  $('#dockExportBtn')?.addEventListener('click', () => {
+    const selected = _selectedUserIndices.size > 0
+      ? [..._selectedUserIndices].map((i) => entries[i]).filter(Boolean)
+      : entries;
+    exportUsersCsv(selected);
+  });
 
   holder.querySelectorAll('#userFilterBar .filter-chip').forEach((chip) => {
     chip.addEventListener('click', () => {
@@ -1047,6 +1538,7 @@ async function loadUsersTable(devs) {
         else if (filter === 'cards') show = tr.dataset.hascard === '1';
         tr.style.display = show ? '' : 'none';
       });
+      updateDock();
     });
   });
 
@@ -2341,7 +2833,14 @@ function renderEntries() {
     const denied = EVENT_DENIED.has(e.minor);
     return `<tr>
       <td class="nowrap"><small class="hint">${esc(String(e.time || '').slice(0, 19).replace('T', ' '))}</small></td>
-      <td><b>${esc(who)}</b>${e.employeeNoString ? ` <small class="hint">#${esc(e.employeeNoString)}</small>` : ''}</td>
+      <td>
+        <div class="user-identity">
+          ${renderAvatar(who, 'sm')}
+          <div class="user-identity-names">
+            <b>${esc(who)}</b>${e.employeeNoString ? ` <small class="hint">${copyableBadge(e.employeeNoString)}</small>` : ''}
+          </div>
+        </div>
+      </td>
       <td>${esc(e.device)}</td>
       <td>${esc(METHOD_LABEL[method])}${cred ? ` <small class="hint">${esc(cred)}</small>` : ''}</td>
       <td><span class="badge ${denied ? 'error' : 'synced'}">${esc(eventLabel(e))}</span></td>
@@ -2683,18 +3182,16 @@ async function analyticsView() {
           <h3>Hourly Traffic Distribution</h3>
         </header>
         <div class="panel-body" style="padding:22px;">
-          <div class="chart-container">
-            ${hourlyBars}
-          </div>
+          ${generateBezierAreaChartSvg(data.hourlyDistribution || [], 740, 240)}
         </div>
       </section>
 
       <section class="panel" style="height:auto; min-height:380px;">
         <header>
-          <h3>Top Door Terminal Usage</h3>
+          <h3>Space & Terminal Utilization</h3>
         </header>
         <div class="panel-body" style="padding:20px;">
-          ${doorBars}
+          ${renderSpaceDonut(data.doorUsage || [], data.todayTotal || 0)}
         </div>
       </section>
     </div>
@@ -2707,7 +3204,10 @@ async function analyticsView() {
         ${(data.userScans || []).map((u) => `
           <div class="usage-row">
             <div class="usage-head">
-              <span class="usage-name">${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo || '—')}</small></span>
+              <span class="usage-name" style="display:flex;align-items:center;gap:8px">
+                ${renderAvatar(u.name, 'sm')}
+                <span><b>${esc(u.name || 'User ' + u.employeeNo)}</b> <small class="hint">${copyableBadge(u.employeeNo)}</small></span>
+              </span>
               <span class="usage-val">${u.count} scan${u.count === 1 ? '' : 's'} (${u.percent}%)</span>
             </div>
             <div class="progress-bar-bg">
@@ -2717,6 +3217,7 @@ async function analyticsView() {
       </div>
     </section>
   </div>`;
+  wireBezierChart();
   $('#an_preset').addEventListener('change', () => {
     _anRange.preset = $('#an_preset').value;
     if (_anRange.preset !== 'custom') analyticsView();

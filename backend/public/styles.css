@@ -2284,3 +2284,522 @@ th { white-space: nowrap; }
   }
 }
 
+/* ==========================================================================
+   Executive Greeting Hero & Space Occupancy Ring
+   ========================================================================== */
+.exec-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px 28px;
+  margin-bottom: 22px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(12px);
+}
+.exec-hero::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.4), rgba(14, 165, 233, 0.4), transparent);
+}
+.exec-hero-left {
+  flex: 1;
+  min-width: 260px;
+}
+.exec-greeting-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  margin-bottom: 10px;
+}
+.exec-greeting-badge.alert {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.exec-greeting-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+  line-height: 1.25;
+}
+.exec-greeting-sub {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.exec-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.exec-hero-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-left: 24px;
+  border-left: 1px solid var(--border);
+}
+@media (max-width: 860px) {
+  .exec-hero {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 18px 20px;
+  }
+  .exec-hero-right {
+    padding-left: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+/* Circular Occupancy Ring Gauge */
+.occupancy-ring-box {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.occupancy-ring-svg {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+.occupancy-ring-bg {
+  stroke: rgba(255, 255, 255, 0.08);
+  fill: none;
+  stroke-width: 8;
+}
+[data-theme="light"] .occupancy-ring-bg {
+  stroke: rgba(0, 0, 0, 0.07);
+}
+.occupancy-ring-fill {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke: url(#occupancyGrad);
+  transition: stroke-dashoffset 1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.occupancy-ring-meta {
+  position: absolute;
+  text-align: center;
+  pointer-events: none;
+}
+.occupancy-ring-pct {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.occupancy-ring-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.occupancy-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.occupancy-details-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.occupancy-details-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Initials Avatars & Polish
+   ========================================================================== */
+.avatar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  border-radius: 50%;
+  flex-shrink: 0;
+  user-select: none;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  border: 1.5px solid transparent;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  font-variant-numeric: tabular-nums;
+}
+.avatar-badge.sm { width: 28px; height: 28px; font-size: 11px; }
+.avatar-badge.md { width: 34px; height: 34px; font-size: 12px; }
+.avatar-badge.lg { width: 44px; height: 44px; font-size: 15px; }
+
+.avatar-theme-0 { background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(5, 150, 105, 0.35)); color: #34d399; border-color: rgba(16, 185, 129, 0.35); }
+.avatar-theme-1 { background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(79, 70, 229, 0.35)); color: #a5b4fc; border-color: rgba(99, 102, 241, 0.35); }
+.avatar-theme-2 { background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(147, 51, 234, 0.35)); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.35); }
+.avatar-theme-3 { background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(217, 119, 6, 0.35)); color: #fde047; border-color: rgba(245, 158, 11, 0.35); }
+.avatar-theme-4 { background: linear-gradient(135deg, rgba(6, 182, 212, 0.22), rgba(8, 145, 178, 0.35)); color: #67e8f9; border-color: rgba(6, 182, 212, 0.35); }
+.avatar-theme-5 { background: linear-gradient(135deg, rgba(244, 63, 94, 0.22), rgba(225, 29, 72, 0.35)); color: #fda4af; border-color: rgba(244, 63, 94, 0.35); }
+.avatar-theme-6 { background: linear-gradient(135deg, rgba(59, 130, 246, 0.22), rgba(37, 99, 235, 0.35)); color: #93c5fd; border-color: rgba(59, 130, 246, 0.35); }
+.avatar-theme-7 { background: linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(13, 148, 136, 0.35)); color: #5eead4; border-color: rgba(20, 184, 166, 0.35); }
+
+.user-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.user-identity-names {
+  display: flex;
+  flex-direction: column;
+}
+.user-emp-num {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Tabular Numerics everywhere */
+.tabular-nums,
+.stat .value,
+.occupancy-ring-pct,
+.ticker-sub small,
+td.nowrap,
+.copyable-badge {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Copy to Clipboard Badge */
+.copyable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+[data-theme="light"] .copyable-badge {
+  background: rgba(0, 0, 0, 0.04);
+}
+.copyable-badge:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+[data-theme="light"] .copyable-badge:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+.copyable-badge .copy-icon {
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+.copyable-badge:hover .copy-icon {
+  opacity: 1;
+}
+.copyable-badge.copied {
+  background: rgba(16, 185, 129, 0.18) !important;
+  border-color: rgba(16, 185, 129, 0.4) !important;
+  color: var(--green) !important;
+}
+.copyable-badge.copied .copy-icon {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   Interactive Bezier Area Chart & Donut
+   ========================================================================== */
+.bezier-chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 250px;
+}
+.bezier-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.chart-grid-line {
+  stroke: rgba(255, 255, 255, 0.06);
+  stroke-dasharray: 4 4;
+}
+[data-theme="light"] .chart-grid-line {
+  stroke: rgba(0, 0, 0, 0.06);
+}
+.chart-axis-label {
+  fill: var(--text-faint);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+}
+.chart-guide-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 2;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  pointer-events: none;
+}
+.chart-hover-dot {
+  fill: var(--accent);
+  stroke: #ffffff;
+  stroke-width: 2.5;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+  pointer-events: none;
+}
+.chart-tooltip-glass {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(15, 22, 36, 0.94);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-strong);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-main);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -125%);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+  white-space: nowrap;
+  z-index: 50;
+}
+[data-theme="light"] .chart-tooltip-glass {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0f172a;
+}
+.chart-tooltip-glass .tt-time {
+  font-weight: 700;
+  color: var(--accent);
+  margin-right: 6px;
+}
+.chart-tooltip-glass .tt-val {
+  font-weight: 600;
+}
+
+/* Donut Space Utilization Visualizer */
+.utilization-donut-card {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.utilization-donut-box {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  flex-shrink: 0;
+}
+.utilization-donut-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.utilization-donut-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+.utilization-donut-total {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-main);
+  line-height: 1;
+}
+.utilization-donut-sub {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+.utilization-legend-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   Multi-Select & Floating Action Dock
+   ========================================================================== */
+.custom-cb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+  outline: none;
+}
+[data-theme="light"] .custom-cb {
+  background: rgba(0, 0, 0, 0.04);
+}
+.custom-cb:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+.custom-cb:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+tr.selected-row {
+  background: rgba(99, 102, 241, 0.12) !important;
+}
+
+.floating-action-dock {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(120px);
+  background: rgba(15, 22, 36, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 24px rgba(99, 102, 241, 0.25);
+  z-index: 900;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+.floating-action-dock.visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+[data-theme="light"] .floating-action-dock {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15), 0 0 20px rgba(99, 102, 241, 0.12);
+}
+.dock-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  white-space: nowrap;
+}
+.dock-counter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.dock-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border-strong);
+}
+.dock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.dock-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-strong);
+}
+.dock-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+.dock-btn.primary:hover {
+  background: var(--accent-hover);
+}
+.dock-btn.danger {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.dock-btn.danger:hover {
+  background: var(--red-bg);
+}
+.dock-btn.ghost {
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.dock-btn.ghost:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+
