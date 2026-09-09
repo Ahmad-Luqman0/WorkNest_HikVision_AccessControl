@@ -2572,11 +2572,9 @@ async function cards() {
       const entrHave = ds.filter(isEntrD);
       const rooms = ds.filter((d) => d.code && !isEntrD(d));
       const parts = [];
-      if (entrHave.length && entrHave.length === entrAllCount) parts.push(`<span class="badge">Entrances (${entrHave.length})</span>`);
-      else entrHave.slice(0, 2).forEach((d) => parts.push(`<small class="hint">${esc(d.name)}</small>`));
-      rooms.slice(0, 2).forEach((d) => parts.push(`<span class="badge admin">room ${esc(d.code)}</span>`));
-      const shown = (entrHave.length === entrAllCount ? entrHave.length : Math.min(entrHave.length, 2)) + Math.min(rooms.length, 2);
-      const rest = ds.length - shown;
+      if (entrHave.length) parts.push(`<span class="badge">Entrances (${entrHave.length}${entrHave.length === entrAllCount ? '' : ' of ' + entrAllCount})</span>`);
+      if (rooms.length) parts.push(`<span class="badge admin">room ${esc(rooms[0].code)}</span>`);
+      const rest = ds.length - entrHave.length - (rooms.length ? 1 : 0);
       if (rest > 0) parts.push(`<span class="badge" title="${esc(names.join(', '))}">+${rest} more</span>`);
       return parts.join(' ');
     };
@@ -2585,25 +2583,40 @@ async function cards() {
       : nDev
         ? summarize(c.grants.filter((g) => g.sync_state !== 'removing').map((g) => g.device_name))
         : '<small class="hint">—</small>';
+    const customLabel = c.name && c.name !== `Card ${c.card_no}` ? ` <small class="hint">${esc(c.name)}</small>` : '';
     return `<tr>
-      <td><b>${esc(c.card_no || '—')}</b></td>
-      <td>${esc(c.name)}</td>
+      <td class="nowrap"><b>${esc(c.card_no || '—')}</b>${customLabel}</td>
       <td class="nowrap">${c.valid_end ? esc(c.valid_end.replace('T', ' ')) : '<span class="muted">no expiry</span>'}</td>
       <td class="nowrap">${assignedHtml}</td>
       <td class="nowrap">${accessHtml}</td>
       <td class="row-actions">
-        <button class="btn sm" data-assign="${c.id}">Assign to user</button>
-        <button class="btn sm" data-unassign="${c.id}">Unassign</button>
-        <button class="btn sm" data-sync="${c.id}">Sync</button>
-        <button class="btn sm" data-edit="${c.id}">Edit</button>
-        <button class="btn sm danger" data-del="${c.id}">Remove</button>
+        <button class="btn sm" data-cmenu="${c.id}">Actions ▾</button>
+        <span hidden>
+          <button data-assign="${c.id}"></button>
+          <button data-unassign="${c.id}"></button>
+          <button data-sync="${c.id}"></button>
+          <button data-edit="${c.id}"></button>
+          <button data-del="${c.id}"></button>
+        </span>
       </td>
     </tr>`;
   }).join('');
   content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
-      <th>Card #</th><th>Label</th><th>Access until</th><th>Assigned to</th><th>Access</th><th></th>
+      <th>Card #</th><th>Access until</th><th>Assigned to</th><th>Access</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`));
 
+  content.querySelectorAll('[data-cmenu]').forEach((b) => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const row = b.closest('td');
+    const hit = (sel) => row.querySelector(sel)?.click();
+    showRowMenu(b, [
+      ['Assign to user', () => hit('[data-assign]')],
+      ['Unassign', () => hit('[data-unassign]')],
+      ['Sync', () => hit('[data-sync]')],
+      ['Edit', () => hit('[data-edit]')],
+      ['Remove', () => hit('[data-del]'), true],
+    ]);
+  }));
   content.querySelectorAll('[data-assign]').forEach((b) => b.addEventListener('click', () =>
     assignCardModal(list.find((c) => c.id == b.dataset.assign), devs)));
   content.querySelectorAll('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
