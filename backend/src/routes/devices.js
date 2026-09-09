@@ -752,14 +752,26 @@ devicesRouter.post('/card/delete', async (req, res) => {
   res.json({ ok: results.some((x) => x.ok), results });
 });
 
-// List the card numbers attached to one user on a device.
+// List the card numbers attached to one user on a device (with fast DB fallback).
 devicesRouter.get('/:id/users/:employeeNo/cards', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
+  const employeeNo = String(req.params.employeeNo);
   try {
-    const cards = await isapi.readCards(dev, String(req.params.employeeNo));
+    if (!dev.online) throw new Error('Device is offline');
+    const cards = await isapi.readCards(dev, employeeNo, { timeout: 2000 });
     res.json({ ok: true, cards });
   } catch (e) {
+    try {
+      const emp = await getRow('SELECT card_no FROM dbo.WN_HIK_Employees WHERE employee_no = ?', [employeeNo]);
+      if (emp?.card_no) {
+        return res.json({ ok: true, cards: [String(emp.card_no)], fromDb: true });
+      }
+      const dbCards = await getRows('SELECT card_no FROM dbo.WN_HIK_Cards WHERE employee_no = ?', [employeeNo]);
+      if (dbCards && dbCards.length) {
+        return res.json({ ok: true, cards: dbCards.map((c) => String(c.card_no)), fromDb: true });
+      }
+    } catch {}
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }
 });

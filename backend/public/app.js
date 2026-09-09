@@ -2084,7 +2084,7 @@ async function userCardsModal(entry, devs) {
   openModal(`
     <h2>Credentials — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
     <p class="hint">On ${on.length} machine${on.length === 1 ? '' : 's'}. Deleting a fingerprint or face from only some machines may be undone by the credential auto-sync copying it back.</p>
-    <div class="field"><label>Cards</label><div id="uc_list"><span class="muted">Loading cards…</span></div></div>
+    <div class="field"><label>Cards</label><div id="uc_list"><div class="loading-bar-container"><div class="loading-bar-indeterminate"></div></div></div></div>
     <div class="field"><label>Add a card <small class="hint">(typed — attached on every machine this user is on; or use Actions → Tag card)</small></label>
       <div style="display:flex;gap:8px">
         <input id="uc_new" placeholder="e.g. 0012345678" style="flex:1">
@@ -2174,13 +2174,16 @@ async function userCardsModal(entry, devs) {
   });
   $('#uc_new').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#uc_add').click(); });
   async function load() {
+    if ($('#uc_list') && !$('#uc_list').querySelector('.loading-bar-container')) {
+      $('#uc_list').innerHTML = '<div class="loading-bar-container"><div class="loading-bar-indeterminate"></div></div>';
+    }
     const r = await api.get(`/devices/${srcDev.id}/users/${encodeURIComponent(u.employeeNo)}/cards`);
     const cardsList = r.ok ? r.cards : [];
     if (!$('#uc_list')) return;
     $('#uc_list').innerHTML = cardsList.length
       ? `<div class="device-checklist">${cardsList.map((c) => `
           <label style="justify-content:space-between;cursor:default">
-            <span><b>${esc(c)}</b></span>
+            <span style="display:flex;align-items:center;gap:8px;">${copyableBadge(c)}</span>
             <button class="btn sm danger" data-rmcard="${esc(c)}">Remove</button>
           </label>`).join('')}</div>`
       : `<span class="muted">${r.ok ? 'No cards attached to this user.' : `Couldn't read cards: ${esc(r.error || 'error')}`}</span>`;

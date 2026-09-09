@@ -1758,6 +1758,44 @@ select option {
   color: var(--primary, #38bdf8);
 }
 
+/* Sleek Animated Loading Bar */
+.loading-bar-container {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+  margin: 6px 0 10px;
+}
+[data-theme="light"] .loading-bar-container {
+  background: #e2e8f0;
+}
+.loading-bar-indeterminate {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #6366f1 0%, #38bdf8 50%, #6366f1 100%);
+  background-size: 200% 100%;
+  border-radius: 999px;
+  animation: loadingBarSlide 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  width: 45%;
+}
+@keyframes loadingBarSlide {
+  0% {
+    left: -45%;
+    width: 30%;
+  }
+  50% {
+    width: 60%;
+  }
+  100% {
+    left: 100%;
+    width: 30%;
+  }
+}
+
 /* User Analytics Breakdown Modal */
 .uab-stat-grid {
   display: grid;

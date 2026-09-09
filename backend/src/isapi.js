@@ -345,7 +345,7 @@ export async function addCard(device, employeeNo, cardNo) {
 }
 
 // Read the card number(s) enrolled for one person on the device.
-export async function readCards(device, employeeNo) {
+export async function readCards(device, employeeNo, { timeout = 2500 } = {}) {
   const body = {
     CardInfoSearchCond: {
       searchID: 'hik-dash',
@@ -356,6 +356,7 @@ export async function readCards(device, employeeNo) {
   };
   const res = await req(device, 'POST', '/ISAPI/AccessControl/CardInfo/Search?format=json', {
     json: body,
+    timeout,
   });
   const list = (res.json() || {}).CardInfoSearch?.CardInfo || [];
   return list.map((c) => String(c.cardNo));
