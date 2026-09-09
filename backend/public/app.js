@@ -837,9 +837,9 @@ async function loadUsersTable(devs) {
     document.querySelectorAll('[data-fixmm]').forEach((b) => b.addEventListener('click', async () => {
       const iss = c.issues[Number(b.dataset.fixmm)];
       b.disabled = true;
-      // Batches of machines with a live progress bar; the credential union is
-      // always computed from every machine, each batch only WRITES to its own.
-      const allIds = devs.map((d) => d.id);
+      // Only the machines actually missing the credential are visited; the
+      // union is still computed from every machine so nothing is missed.
+      const allIds = (iss.missing_ids && iss.missing_ids.length) ? iss.missing_ids : devs.map((d) => d.id);
       const chunks = [];
       for (let i = 0; i < allIds.length; i += 10) chunks.push(allIds.slice(i, i + 10));
       const bar = progressBar(allIds.length, `Copying to ${iss.name || '#' + iss.employeeNo} —`);

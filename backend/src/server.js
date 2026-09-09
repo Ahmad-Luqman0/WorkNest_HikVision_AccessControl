@@ -407,11 +407,12 @@ app.get('/api/consistency', async (req, res) => {
       const who = p.name || '#' + p.employeeNo;
       const union = [...new Set(p.machines.flatMap((m) => m.cards))];
       const missing = p.machines
-        .map((m) => ({ device: m.device, missing: union.filter((c) => !m.cards.includes(c)) }))
+        .map((m) => ({ device: m.device, device_id: m.dev?.id, missing: union.filter((c) => !m.cards.includes(c)) }))
         .filter((m) => m.missing.length);
       if (missing.length) {
         issues.push({
           type: 'cards-differ', employeeNo: p.employeeNo, name: p.name, union, missing,
+          missing_ids: missing.map((m) => m.device_id).filter(Boolean),
           detail: `${who} holds ${union.length} card(s) in total but not on every machine: ` + missing
             .map((m) => `${m.device} lacks ${m.missing.map((c) => conflictedCards.has(c) ? c + ' (owned by another user there)' : c).join(', ')}`)
             .join('; ') + '.',
@@ -422,6 +423,7 @@ app.get('/api/consistency', async (req, res) => {
       if (fpMax && fpMiss.length) {
         issues.push({
           type: 'fp-differ', employeeNo: p.employeeNo, name: p.name,
+          missing_ids: fpMiss.map((m) => m.dev?.id).filter(Boolean),
           detail: `${who} has ${fpMax} fingerprint(s) on some machines but fewer on ${fpMiss.map((m) => `${m.device} (${m.fp})`).join(', ')} — auto-sync copies it when the template is exportable; if this persists, recapture once via Actions → Capture fingerprint (one scan enrolls it everywhere).`,
         });
       }
@@ -437,6 +439,7 @@ app.get('/api/consistency', async (req, res) => {
         if (reallyMissing.length) {
           issues.push({
             type: 'face-differ', employeeNo: p.employeeNo, name: p.name,
+            missing_ids: reallyMissing.map((m) => m.dev?.id).filter(Boolean),
             detail: `${who} has a face enrolled on some machines but not on ${reallyMissing.map((m) => m.device).join(', ')} — auto-sync should close this shortly.`,
           });
         }
