@@ -18,6 +18,7 @@ import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+const p2 = (n) => String(n).padStart(2, '0');
 
 app.disable('x-powered-by');
 app.use(securityHeaders);
@@ -624,7 +625,6 @@ app.get('/api/stats', async (req, res) => {
     const pendingSync = Number(base.pendingsync ?? pendingSyncCount?.n ?? 0);
 
     const now = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
     const todayStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
     const yest = new Date(now.getTime() - 86400000);
     const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
