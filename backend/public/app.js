@@ -89,6 +89,7 @@ const $ = (s) => document.querySelector(s);
 const content = $('#content');
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const p2 = (n) => String(n).padStart(2, '0');
 
 function toast(msg, kind = '') {
   const t = $('#toast');
@@ -2553,18 +2554,43 @@ async function cards() {
       if (!byEmp.has(h.employeeNo)) byEmp.set(h.employeeNo, { name: h.name, devs: [] });
       byEmp.get(h.employeeNo).devs.push(h.device);
     }
+    // Holder names only — the machine list collapses into the Access column.
     const assignedHtml = byEmp.size
       ? [...byEmp.entries()].map(([no, x]) =>
-          `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)} · ${esc(x.devs.join(', '))}</small>`
+          `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)}</small>`
         ).join('<br>')
       : nDev
-        ? `standalone on ${nDev} machine${nDev === 1 ? '' : 's'} ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
+        ? `standalone ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
         : '<span class="muted">not assigned</span>';
+    // Access summary per holder: Entrances chip + room badges, one line.
+    const isEntrD = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+    const entrAllCount = devs.filter(isEntrD).length;
+    const summarize = (names) => {
+      const ds = names.map((n) => devs.find((d) => d.name === n)).filter(Boolean);
+      if (!ds.length) return '<small class="hint">—</small>';
+      if (devs.length > 1 && ds.length >= devs.length) return `<span class="badge" title="${esc(names.join(', '))}">All machines (${ds.length})</span>`;
+      const entrHave = ds.filter(isEntrD);
+      const rooms = ds.filter((d) => d.code && !isEntrD(d));
+      const parts = [];
+      if (entrHave.length && entrHave.length === entrAllCount) parts.push(`<span class="badge">Entrances (${entrHave.length})</span>`);
+      else entrHave.slice(0, 2).forEach((d) => parts.push(`<small class="hint">${esc(d.name)}</small>`));
+      rooms.slice(0, 2).forEach((d) => parts.push(`<span class="badge admin">room ${esc(d.code)}</span>`));
+      const shown = (entrHave.length === entrAllCount ? entrHave.length : Math.min(entrHave.length, 2)) + Math.min(rooms.length, 2);
+      const rest = ds.length - shown;
+      if (rest > 0) parts.push(`<span class="badge" title="${esc(names.join(', '))}">+${rest} more</span>`);
+      return parts.join(' ');
+    };
+    const accessHtml = byEmp.size
+      ? [...byEmp.values()].map((x) => summarize(x.devs)).join('<br>')
+      : nDev
+        ? summarize(c.grants.filter((g) => g.sync_state !== 'removing').map((g) => g.device_name))
+        : '<small class="hint">—</small>';
     return `<tr>
       <td><b>${esc(c.card_no || '—')}</b></td>
       <td>${esc(c.name)}</td>
       <td class="nowrap">${c.valid_end ? esc(c.valid_end.replace('T', ' ')) : '<span class="muted">no expiry</span>'}</td>
-      <td>${assignedHtml}</td>
+      <td class="nowrap">${assignedHtml}</td>
+      <td class="nowrap">${accessHtml}</td>
       <td class="row-actions">
         <button class="btn sm" data-assign="${c.id}">Assign to user</button>
         <button class="btn sm" data-unassign="${c.id}">Unassign</button>
@@ -2575,7 +2601,7 @@ async function cards() {
     </tr>`;
   }).join('');
   content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
-      <th>Card #</th><th>Label</th><th>Access until</th><th>Assigned to</th><th></th>
+      <th>Card #</th><th>Label</th><th>Access until</th><th>Assigned to</th><th>Access</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`));
 
   content.querySelectorAll('[data-assign]').forEach((b) => b.addEventListener('click', () =>
@@ -3376,75 +3402,89 @@ async function showUserAnalyticsBreakdown(empNo, name) {
   $('#uab_close_top')?.addEventListener('click', closeModal);
   $('#uab_close')?.addEventListener('click', closeModal);
 
-  const from = _anRange.from || '';
-  const to = _anRange.to || '';
-  const r = await api.get(`/analytics/user/${encodeURIComponent(empNo || '0')}?name=${encodeURIComponent(name || '')}&from=${from}&to=${to}`);
   const body = $('#uab_body');
-  if (!body) return;
+  try {
+    const from = _anRange.from || '';
+    const to = _anRange.to || '';
+    const r = await api.get(`/analytics/user/${encodeURIComponent(empNo || '0')}?name=${encodeURIComponent(name || '')}&from=${from}&to=${to}`);
+    if (!body) return;
 
-  if (!r?.ok) {
-    body.innerHTML = `<div class="empty">Failed to load user breakdown: ${esc(r?.error || 'error')}</div>`;
-    return;
-  }
+    if (!r?.ok) {
+      body.innerHTML = `<div class="empty">Failed to load user breakdown: ${esc(r?.error || 'error')}</div>`;
+      return;
+    }
 
-  const u = r.user || {};
-  const statusBadge = u.status === 'expired' 
-    ? '<span class="badge error">Expired</span>' 
-    : '<span class="badge synced">Active Member</span>';
-  const roomBadge = u.roomNo ? `<span class="badge">Room ${esc(u.roomNo)}</span>` : '';
-  const cardBadge = u.cardNo ? `<span class="badge monospace">Card: ${copyableBadge(u.cardNo)}</span>` : '<span class="badge">No card registered</span>';
+    const u = r.user || {};
+    const statusBadge = u.status === 'expired' 
+      ? '<span class="badge error">Expired</span>' 
+      : '<span class="badge synced">Active Member</span>';
+    const roomBadge = u.roomNo ? `<span class="badge">Room ${esc(u.roomNo)}</span>` : '';
+    const cardBadge = u.cardNo ? `<span class="badge monospace">Card: ${copyableBadge(u.cardNo)}</span>` : '<span class="badge">No card registered</span>';
 
-  // Format first / last scan
-  const formatScanTime = (iso) => {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso.replace('T', ' ').slice(11, 16);
-    return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
-  };
+    // Format first / last scan
+    const formatScanTime = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(11, 16);
+        return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+      } catch {
+        return String(iso).replace('T', ' ').slice(11, 16);
+      }
+    };
 
-  const firstStr = formatScanTime(r.firstScan);
-  const lastStr = formatScanTime(r.lastScan);
+    const firstStr = formatScanTime(r.firstScan);
+    const lastStr = formatScanTime(r.lastScan);
 
-  // Door list
-  const doorRows = (r.doors || []).map((d) => `
-    <div class="usage-row" style="margin-bottom:10px;">
-      <div class="usage-head" style="margin-bottom:4px;">
-        <span class="usage-name" style="font-size:12.5px;font-weight:600;">${esc(d.name)}</span>
-        <span class="usage-val tabular-nums" style="font-size:12px;">${d.count} scan${d.count === 1 ? '' : 's'} (${d.percent}%)</span>
+    // Door list
+    const doorRows = (r.doors || []).map((d) => `
+      <div class="usage-row" style="margin-bottom:10px;">
+        <div class="usage-head" style="margin-bottom:4px;">
+          <span class="usage-name" style="font-size:12.5px;font-weight:600;">${esc(d.name)}</span>
+          <span class="usage-val tabular-nums" style="font-size:12px;">${d.count} scan${d.count === 1 ? '' : 's'} (${d.percent}%)</span>
+        </div>
+        <div class="progress-bar-bg" style="height:6px;">
+          <div class="progress-bar-fill" style="width:${Math.max(4, d.percent)}%;"></div>
+        </div>
       </div>
-      <div class="progress-bar-bg" style="height:6px;">
-        <div class="progress-bar-fill" style="width:${Math.max(4, d.percent)}%;"></div>
-      </div>
-    </div>
-  `).join('') || '<div class="hint" style="padding:6px 0;">No door scans recorded in this date range.</div>';
+    `).join('') || '<div class="hint" style="padding:6px 0;">No door scans recorded in this date range.</div>';
 
-  // Grants / Accessible Gates chips
-  const grantChips = (r.grants || []).map((g) => `
-    <span class="uab-gate-chip">
-      <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:7px;height:7px;"></span>
-      ${esc(g.name)}
-      ${g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : ''}
-    </span>
-  `).join('') || '<span class="hint">No specific access gates provisioned in database.</span>';
+    // Grants / Accessible Gates chips
+    const grantChips = (r.grants || []).map((g) => `
+      <span class="uab-gate-chip">
+        <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:7px;height:7px;"></span>
+        ${esc(g.name)}
+        ${g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : ''}
+      </span>
+    `).join('') || '<span class="hint">No specific access gates provisioned in database.</span>';
 
-  // Recent scans table
-  const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
-    const d = e.time ? new Date(e.time) : null;
-    const timeStr = d && !isNaN(d.getTime()) 
-      ? `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
-      : (e.time ? String(e.time).replace('T', ' ').slice(11, 19) : '—');
-    const dateStr = d && !isNaN(d.getTime())
-      ? `${d.toLocaleString([], { month: 'short', day: 'numeric' })}`
-      : (e.time ? String(e.time).slice(5, 10) : '—');
-    return `
-      <tr>
-        <td class="nowrap"><span class="tabular-nums" style="font-weight:600;">${timeStr}</span> <small class="hint">${dateStr}</small></td>
-        <td><b>${esc(e.device)}</b></td>
-        <td class="nowrap">${e.cardNo ? copyableBadge(e.cardNo) : '<small class="hint">Biometric</small>'}</td>
-        <td class="nowrap"><span class="badge synced">Granted</span></td>
-      </tr>
-    `;
-  }).join('') || '<tr><td colspan="4" class="list-empty" style="padding:16px;">No recent scan logs found for this user.</td></tr>';
+    // Recent scans table
+    const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
+      let timeStr = '—';
+      let dateStr = '—';
+      try {
+        if (e.time) {
+          const d = new Date(e.time);
+          if (!isNaN(d.getTime())) {
+            timeStr = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+            dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          } else {
+            timeStr = String(e.time).replace('T', ' ').slice(11, 19);
+            dateStr = String(e.time).slice(5, 10);
+          }
+        }
+      } catch {
+        timeStr = String(e.time || '—').slice(11, 19);
+      }
+      return `
+        <tr>
+          <td class="nowrap"><span class="tabular-nums" style="font-weight:600;">${timeStr}</span> <small class="hint">${dateStr}</small></td>
+          <td><b>${esc(e.device)}</b></td>
+          <td class="nowrap">${e.cardNo ? copyableBadge(e.cardNo) : '<small class="hint">Biometric</small>'}</td>
+          <td class="nowrap"><span class="badge synced">Granted</span></td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="4" class="list-empty" style="padding:16px;">No recent scan logs found for this user.</td></tr>';
 
   body.innerHTML = `
     <!-- Top Meta Badges -->
@@ -3522,6 +3562,10 @@ async function showUserAnalyticsBreakdown(empNo, name) {
       closeModal();
       go('users');
     });
+  }
+  } catch (err) {
+    console.error('Failed to load user activity breakdown:', err);
+    if (body) body.innerHTML = `<div class="empty">Failed to load user breakdown: ${esc(err?.message || err)}</div>`;
   }
 }
 
