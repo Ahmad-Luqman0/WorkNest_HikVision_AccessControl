@@ -104,6 +104,116 @@ function openModal(html) {
 function closeModal() { $('#modalBackdrop').hidden = true; }
 $('#modalBackdrop').addEventListener('click', (e) => { if (e.target.id === 'modalBackdrop') closeModal(); });
 
+function confirmDialog({ title = 'Confirm Action', message = '', confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const iconSvg = danger
+      ? `<svg class="modal-alert-icon danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
+      : `<svg class="modal-alert-icon info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+
+    const formattedMessage = esc(message).replace(/\n/g, '<br>');
+    const html = `
+      <div class="confirm-dialog">
+        <div class="confirm-head">
+          ${iconSvg}
+          <div class="confirm-title-area">
+            <h3>${esc(title)}</h3>
+            <p class="confirm-msg">${formattedMessage}</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="dlg_cancel" type="button">${esc(cancelText)}</button>
+          <button class="btn ${danger ? 'danger' : 'primary'}" id="dlg_ok" type="button">${esc(confirmText)}</button>
+        </div>
+      </div>
+    `;
+    openModal(html);
+
+    let resolved = false;
+    const cleanup = (result) => {
+      if (resolved) return;
+      resolved = true;
+      window.removeEventListener('keydown', onKey);
+      closeModal();
+      resolve(result);
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        cleanup(false);
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        cleanup(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+
+    $('#dlg_cancel')?.addEventListener('click', () => cleanup(false));
+    $('#dlg_ok')?.addEventListener('click', () => cleanup(true));
+    setTimeout(() => $('#dlg_ok')?.focus(), 50);
+  });
+}
+
+function miniSparklineSvg(counts = []) {
+  if (!counts || !counts.length) return '';
+  const max = Math.max(...counts, 1);
+  const bars = counts.map((c, i) => {
+    const h = Math.max(2, Math.round((c / max) * 18));
+    const y = 20 - h;
+    const x = i * 4;
+    return `<rect x="${x}" y="${y}" width="2.5" height="${h}" rx="1" fill="currentColor" opacity="${c > 0 ? 0.9 : 0.25}"/>`;
+  }).join('');
+  return `<svg class="stat-sparkline" viewBox="0 0 96 22" aria-hidden="true">${bars}</svg>`;
+}
+
+// ---- Global Server-Sent Events (SSE) Live Stream ----
+let _sseSource = null;
+function initSse() {
+  if (_sseSource || typeof EventSource === 'undefined') return;
+  try {
+    _sseSource = new EventSource('/api/events/stream');
+    _sseSource.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.type === 'activity') onLiveActivityEvent(data);
+      } catch {}
+    };
+    _sseSource.onerror = () => {};
+  } catch {}
+}
+
+function onLiveActivityEvent(entry) {
+  if (current === 'dashboard') {
+    const tickerBody = $('#dashTickerList');
+    if (tickerBody) {
+      const emptyNotice = tickerBody.querySelector('.list-empty');
+      if (emptyNotice) emptyNotice.remove();
+
+      const cred = getCredBadge(entry.action);
+      const row = el(`
+        <div class="ticker-item live-incoming">
+          <div class="ticker-icon ${cred.cls}">${cred.icon}</div>
+          <div class="ticker-main">
+            <div class="ticker-person"><b>${esc(prettyAction(entry.action))}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+            <div class="ticker-sub"><small class="hint">${esc(new Date().toLocaleTimeString())}</small></div>
+          </div>
+          <span class="badge ${entry.ok ? 'synced' : 'error'}">${entry.ok ? 'Granted' : 'Denied'}</span>
+        </div>`);
+      tickerBody.insertBefore(row, tickerBody.firstChild);
+      while (tickerBody.children.length > 8) tickerBody.lastChild.remove();
+    }
+    const scansEl = $('#kpiScansVal');
+    if (scansEl) {
+      const cur = Number(scansEl.textContent) || 0;
+      scansEl.textContent = cur + 1;
+    }
+    const dot = $('.brand-text .live-dot');
+    if (dot) {
+      dot.style.transform = 'scale(1.6)';
+      dot.style.boxShadow = '0 0 12px var(--green)';
+      setTimeout(() => { dot.style.transform = ''; dot.style.boxShadow = ''; }, 1000);
+    }
+  }
+}
+
 // ---- Theme Controller ----
 function initTheme() {
   const saved = localStorage.getItem('worknest_theme') || 'dark';
@@ -239,6 +349,21 @@ if (searchInput) {
   });
 }
 
+// Global Cmd+K / Ctrl+K quick-search shortcut
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (current === 'dashboard') go('users');
+    const sc = $('#globalSearchContainer');
+    const si = $('#globalSearch');
+    if (sc) sc.hidden = false;
+    if (si) {
+      si.focus();
+      si.select();
+    }
+  }
+});
+
 const _logoutBtn = $('#logout');
 if (_logoutBtn) _logoutBtn.addEventListener('click', async () => {
   await fetch('/api/auth/logout', { method: 'POST' });
@@ -285,9 +410,19 @@ const ACTION_LABELS = {
 };
 const prettyAction = (a) => ACTION_LABELS[a] || a;
 
+const getCredBadge = (action) => {
+  const act = String(action || '').toLowerCase();
+  if (act.includes('card') || act.includes('rfid')) return { icon: ICONS.card, label: 'RFID Card', cls: 'cred-card' };
+  if (act.includes('face')) return { icon: ICONS.user, label: 'Facial Scan', cls: 'cred-face' };
+  if (act.includes('finger')) return { icon: ICONS.user, label: 'Fingerprint', cls: 'cred-finger' };
+  if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: ICONS.unlock, label: 'Remote Unlock', cls: 'cred-remote' };
+  return { icon: ICONS.machine, label: 'Access Event', cls: 'cred-gen' };
+};
+
 async function dashboard() {
-  // Instant shell — the page appears immediately while live data loads.
-  if (!content.querySelector('.stat-grid')) {
+  initSse();
+  // Instant shell — the page appears immediately while live data loads on first paint.
+  if (!content.querySelector('.stat-grid') && !$('#dashWrapper')) {
     content.innerHTML = `<div><div class="stat-grid">${Array.from({ length: 6 }, () =>
       '<div class="stat"><div class="stat-head"><span class="skel-cell" style="width:60%"></span></div><div class="value"><span class="skel-cell" style="width:40%;height:22px"></span></div></div>').join('')}</div>
       ${skeletonTable(['', '', ''], 4)}</div>`;
@@ -295,51 +430,30 @@ async function dashboard() {
   api.post('/online-check').catch(() => {}); // fresh statuses on next auto-refresh tick
   api.get('/consistency').then((c) => {
     const slot = document.getElementById('dashConsistency');
-    if (current !== 'dashboard' || !slot || !c?.ok || !c.issues?.length) return;
+    if (current !== 'dashboard' || !slot || !c?.ok || !c.issues?.length) {
+      if (slot) slot.innerHTML = '';
+      return;
+    }
     slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
     slot.firstElementChild.addEventListener('click', () => go('users'));
   }).catch(() => {});
+
   // Live view: refresh every 30s while the dashboard is open (not over modals).
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
     if (current === 'dashboard' && $('#modalBackdrop').hidden) dashboard();
   }, 30000);
-  const [s, devs, logsList, expiring, bookingsSummary] = await Promise.all([
+
+  const [s, devs, logsList, expiring, bookingsSummary, analyticsData] = await Promise.all([
     api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
-    api.get('/bookings-feed?summary=1'),
+    api.get('/bookings-feed?summary=1'), api.get('/analytics').catch(() => null),
   ]);
   if (current !== 'dashboard') return; // view changed while loading
-  content.innerHTML = '';
 
-  const kpi = (icon, label, value, cls = '', sub = '', trend = null) => {
-    let trendBadge = '';
-    if (trend !== null && trend !== undefined) {
-      const isUp = trend >= 0;
-      const arrow = isUp ? '↑' : '↓';
-      const trendCls = isUp ? 'up' : 'down';
-      trendBadge = `<span class="stat-trend ${trendCls}">${arrow} ${isUp ? '+' : ''}${trend}%</span>`;
-    }
-    const displayVal = (value !== undefined && value !== null && !Number.isNaN(value)) ? value : 0;
-    return `
-    <div class="stat ${cls}">
-      <div class="stat-head">
-        <span class="stat-icon">${ICONS[icon] || ''}</span>
-        <span class="label">${label}</span>
-        ${trendBadge}
-      </div>
-      <div class="value">${displayVal}</div>
-      ${sub ? `<div class="sub">${sub}</div>` : ''}
-    </div>`;
-  };
-
-  const getCredBadge = (action) => {
-    const act = String(action || '').toLowerCase();
-    if (act.includes('card') || act.includes('rfid')) return { icon: ICONS.card, label: 'RFID Card', cls: 'cred-card' };
-    if (act.includes('face')) return { icon: ICONS.user, label: 'Facial Scan', cls: 'cred-face' };
-    if (act.includes('finger')) return { icon: ICONS.user, label: 'Fingerprint', cls: 'cred-finger' };
-    if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: ICONS.unlock, label: 'Remote Unlock', cls: 'cred-remote' };
-    return { icon: ICONS.machine, label: 'Access Event', cls: 'cred-gen' };
-  };
+  const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
+  const onlineMachines = (s && s.devicesOnline !== undefined) ? s.devicesOnline : devs.filter((d) => d.online).length;
+  const trendText = s.trendPct !== undefined ? `${s.trendPct >= 0 ? '+' : ''}${s.trendPct}% vs yesterday` : '';
+  const sparkSvg = miniSparklineSvg(analyticsData?.hourlyDistribution || []);
 
   const machineRows = devs.length ? devs.map((d) => `
     <div class="list-row">
@@ -380,30 +494,72 @@ async function dashboard() {
   }).join('') : '<div class="list-empty">No entry activity stream yet.</div>';
 
   const offline = devs.filter((d) => !d.online);
-  const offlineBanner = offline.length
+  const offlineHtml = offline.length
     ? `<div class="offline-banner">Machine${offline.length === 1 ? '' : 's'} offline: <b>${esc(offline.map((d) => d.name).join(', '))}</b> — check power and network. Entries and changes for ${offline.length === 1 ? 'it' : 'them'} won't apply until ${offline.length === 1 ? 'it is' : 'they are'} back.</div>`
     : '';
 
-  const bookingsBanner = bookingsSummary.ok && bookingsSummary.needingEnrollment > 0
+  const bookingsHtml = bookingsSummary.ok && bookingsSummary.needingEnrollment > 0
     ? `<div class="notice-banner" id="dashBookingsBanner">${bookingsSummary.needingEnrollment} booking${bookingsSummary.needingEnrollment === 1 ? '' : 's'} need${bookingsSummary.needingEnrollment === 1 ? 's' : ''} people enrolled (fingerprints/cards) — open <b>Bookings</b> to add them.</div>`
     : '';
 
-  const trendText = s.trendPct !== undefined ? `${s.trendPct >= 0 ? '+' : ''}${s.trendPct}% vs yesterday` : '';
+  // Non-destructive DOM update: if container already exists, patch elements in place
+  const existingWrapper = $('#dashWrapper');
+  if (existingWrapper && current === 'dashboard') {
+    $('#dashOfflineBanner').innerHTML = offlineHtml;
+    $('#dashBookingsSlot').innerHTML = bookingsHtml;
+    $('#kpiMachinesVal').textContent = totalMachines;
+    $('#kpiMachinesSub').textContent = `${onlineMachines} online`;
+    $('#kpiUsersVal').textContent = s.active || 0;
+    $('#kpiScansVal').textContent = s.todayScans || 0;
+    $('#kpiScansSub').textContent = trendText;
+    const sparkEl = $('#kpiScansSpark');
+    if (sparkEl && sparkSvg) sparkEl.innerHTML = sparkSvg;
+    $('#kpiCardsVal').textContent = s.cards || 0;
+    $('#kpiExpiredVal').textContent = s.expired || 0;
+    $('#kpiSyncVal').textContent = s.pendingSync || 0;
 
-  const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
-  const onlineMachines = (s && s.devicesOnline !== undefined) ? s.devicesOnline : devs.filter((d) => d.online).length;
+    $('#dashMachineList').innerHTML = machineRows;
+    $('#dashTickerList').innerHTML = actRows;
+    $('#dashExpiringList').innerHTML = expRows;
 
-  content.appendChild(el(`<div>
-    ${offlineBanner}
-    ${bookingsBanner}
+    wireDashActions(devs);
+    return;
+  }
+
+  content.innerHTML = '';
+  const kpi = (idPrefix, icon, label, value, cls = '', sub = '', trend = null, extra = '') => {
+    let trendBadge = '';
+    if (trend !== null && trend !== undefined) {
+      const isUp = trend >= 0;
+      const arrow = isUp ? '↑' : '↓';
+      const trendCls = isUp ? 'up' : 'down';
+      trendBadge = `<span class="stat-trend ${trendCls}">${arrow} ${isUp ? '+' : ''}${trend}%</span>`;
+    }
+    const displayVal = (value !== undefined && value !== null && !Number.isNaN(value)) ? value : 0;
+    return `
+    <div class="stat ${cls}" id="${idPrefix}Card">
+      <div class="stat-head">
+        <span class="stat-icon">${ICONS[icon] || ''}</span>
+        <span class="label">${label}</span>
+        ${trendBadge}
+      </div>
+      <div class="value" id="${idPrefix}Val">${displayVal}</div>
+      <div class="sub" id="${idPrefix}Sub">${sub || ''}</div>
+      ${extra}
+    </div>`;
+  };
+
+  content.appendChild(el(`<div id="dashWrapper">
+    <div id="dashOfflineBanner">${offlineHtml}</div>
+    <div id="dashBookingsSlot">${bookingsHtml}</div>
     <div id="dashConsistency"></div>
     <div class="stat-grid">
-      ${kpi('machine', 'Machines', totalMachines, '', `${onlineMachines} online`)}
-      ${kpi('user', 'Active Users', s.active || 0, 'good')}
-      ${kpi('online', 'Today Scans', s.todayScans || 0, 'good', trendText, s.trendPct)}
-      ${kpi('card', 'Cards', s.cards || 0)}
-      ${kpi('clock', 'Expired', s.expired || 0, s.expired ? 'warn' : '')}
-      ${kpi('sync', 'Pending sync', s.pendingSync || 0, s.pendingSync ? 'bad' : '')}
+      ${kpi('kpiMachines', 'machine', 'Machines', totalMachines, '', `${onlineMachines} online`)}
+      ${kpi('kpiUsers', 'user', 'Active Users', s.active || 0, 'good')}
+      ${kpi('kpiScans', 'online', 'Today Scans', s.todayScans || 0, 'good', trendText, s.trendPct, `<div id="kpiScansSpark">${sparkSvg}</div>`)}
+      ${kpi('kpiCards', 'card', 'Cards', s.cards || 0)}
+      ${kpi('kpiExpired', 'clock', 'Expired', s.expired || 0, s.expired ? 'warn' : '')}
+      ${kpi('kpiSync', 'sync', 'Pending sync', s.pendingSync || 0, s.pendingSync ? 'bad' : '')}
     </div>
 
     <div class="panel-grid">
@@ -415,7 +571,7 @@ async function dashboard() {
             <button class="btn sm" id="dashGoMachines">Manage →</button>
           </div>
         </header>
-        <div class="panel-body">${machineRows}</div>
+        <div class="panel-body" id="dashMachineList">${machineRows}</div>
       </section>
 
       <section class="panel">
@@ -423,7 +579,7 @@ async function dashboard() {
           <h3><span class="live-dot"></span> Real-Time Entry Stream</h3>
           <div class="panel-actions"><button class="btn sm" id="dashGoLogs">View all →</button></div>
         </header>
-        <div class="panel-body" style="padding:10px;">${actRows}</div>
+        <div class="panel-body" id="dashTickerList" style="padding:10px;">${actRows}</div>
       </section>
     </div>
 
@@ -432,7 +588,7 @@ async function dashboard() {
         <h3>Expiring soon (next ${expiring.horizonDays || 7} days)</h3>
         <div class="panel-actions"><button class="btn sm" id="dashGoUsers">Users →</button></div>
       </header>
-      <div class="panel-body">${expRows}</div>
+      <div class="panel-body" id="dashExpiringList">${expRows}</div>
     </section>
 
     <p class="hint" style="margin-top:20px">
@@ -440,36 +596,65 @@ async function dashboard() {
     </p>
   </div>`));
 
-  $('#dashGoMachines').addEventListener('click', () => go('devices'));
-  $('#dashGoLogs').addEventListener('click', () => go('logs'));
-  $('#dashGoUsers').addEventListener('click', () => go('users'));
+  wireDashActions(devs);
+}
+
+function wireDashActions(devs) {
+  $('#dashGoMachines')?.addEventListener('click', () => go('devices'));
+  $('#dashGoLogs')?.addEventListener('click', () => go('logs'));
+  $('#dashGoUsers')?.addEventListener('click', () => go('users'));
   const bb = $('#dashBookingsBanner');
   if (bb) bb.addEventListener('click', () => go('bookings'));
-  content.querySelectorAll('[data-extend]').forEach((b) => b.addEventListener('click', async () => {
-    const who = b.dataset.ename || 'user ' + b.dataset.extend;
-    if (!confirm(`Extend “${who}” (#${b.dataset.extend}) by 30 days on all their machines?`)) return;
-    toast('Extending access…');
-    const r = await api.post('/expiring/extend', { employeeNo: b.dataset.extend, name: b.dataset.ename || undefined, days: 30 });
-    const fails = (r.results || []).filter((x) => !x.ok);
-    toast(r.ok
-      ? (fails.length ? `Extended, but failed on ${fails.map((f) => f.device).join(', ')}` : `Extended to ${(r.newEnd || '').replace('T', ' ').slice(0, 16)}`)
-      : `Failed: ${r.error || 'error'}`, r.ok && !fails.length ? 'ok' : 'err');
-    dashboard();
-  }));
-  const ua = $('#dashUnlockAll');
-  if (ua) ua.addEventListener('click', async () => {
-    if (!confirm(`Unlock the door on ALL ${devs.length} machine${devs.length === 1 ? '' : 's'} now?`)) return;
-    toast('Unlocking all doors…');
-    const r = await api.post('/devices/door', { cmd: 'open' });
-    const failed = (r.results || []).filter((x) => !x.ok);
-    toast(failed.length ? `Unlocked ${r.okCount}/${r.total}` : `Unlocked all ${r.okCount}`, failed.length ? 'err' : 'ok');
+
+  content.querySelectorAll('[data-extend]').forEach((b) => {
+    b.onclick = async () => {
+      const who = b.dataset.ename || 'user ' + b.dataset.extend;
+      const ok = await confirmDialog({
+        title: 'Extend Member Access',
+        message: `Extend “${who}” (#${b.dataset.extend}) by 30 days on all their machines?`,
+        confirmText: 'Extend 30 Days'
+      });
+      if (!ok) return;
+      toast('Extending access…');
+      const r = await api.post('/expiring/extend', { employeeNo: b.dataset.extend, name: b.dataset.ename || undefined, days: 30 });
+      const fails = (r.results || []).filter((x) => !x.ok);
+      toast(r.ok
+        ? (fails.length ? `Extended, but failed on ${fails.map((f) => f.device).join(', ')}` : `Extended to ${(r.newEnd || '').replace('T', ' ').slice(0, 16)}`)
+        : `Failed: ${r.error || 'error'}`, r.ok && !fails.length ? 'ok' : 'err');
+      dashboard();
+    };
   });
-  content.querySelectorAll('[data-dash-unlock]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('Unlock the door on this machine now?')) return;
-    toast('Unlocking…');
-    const r = await api.post(`/devices/${b.dataset.dashUnlock}/door`, { cmd: 'open' });
-    toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
-  }));
+
+  const ua = $('#dashUnlockAll');
+  if (ua) {
+    ua.onclick = async () => {
+      const ok = await confirmDialog({
+        title: 'Fleet Door Unlock',
+        message: `Unlock the door on ALL ${devs.length} machine${devs.length === 1 ? '' : 's'} now?`,
+        confirmText: 'Unlock All Doors',
+        danger: true
+      });
+      if (!ok) return;
+      toast('Unlocking all doors…');
+      const r = await api.post('/devices/door', { cmd: 'open' });
+      const failed = (r.results || []).filter((x) => !x.ok);
+      toast(failed.length ? `Unlocked ${r.okCount}/${r.total}` : `Unlocked all ${r.okCount}`, failed.length ? 'err' : 'ok');
+    };
+  }
+
+  content.querySelectorAll('[data-dash-unlock]').forEach((b) => {
+    b.onclick = async () => {
+      const ok = await confirmDialog({
+        title: 'Unlock Door',
+        message: 'Unlock the door on this machine now?',
+        confirmText: 'Unlock Door'
+      });
+      if (!ok) return;
+      toast('Unlocking…');
+      const r = await api.post(`/devices/${b.dataset.dashUnlock}/door`, { cmd: 'open' });
+      toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+    };
+  });
 }
 
 // ---- Devices ----
@@ -487,7 +672,13 @@ async function devices() {
   $('#addMachine')?.addEventListener('click', () => deviceModal(null, list));
   const unlockAllBtn = $('#unlockAll');
   if (unlockAllBtn) unlockAllBtn.addEventListener('click', async () => {
-    if (!confirm(`Unlock the door on ALL ${list.length} machine${list.length === 1 ? '' : 's'} now?`)) return;
+    const ok = await confirmDialog({
+      title: 'Fleet Door Unlock',
+      message: `Unlock the door on ALL ${list.length} machine${list.length === 1 ? '' : 's'} now?`,
+      confirmText: 'Unlock All Doors',
+      danger: true
+    });
+    if (!ok) return;
     toast('Unlocking all doors…');
     const r = await api.post('/devices/door', { cmd: 'open' });
     const failed = (r.results || []).filter((x) => !x.ok);
@@ -524,7 +715,12 @@ async function devices() {
     devices();
   }));
   content.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('Unlock the door on this machine now?')) return;
+    const ok = await confirmDialog({
+      title: 'Unlock Door',
+      message: 'Unlock the door on this machine now?',
+      confirmText: 'Unlock Door'
+    });
+    if (!ok) return;
     toast('Unlocking…');
     const r = await api.post(`/devices/${b.dataset.open}/door`, { cmd: 'open' });
     toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
@@ -541,7 +737,13 @@ async function devices() {
   content.querySelectorAll('[data-edit]').forEach((b) =>
     b.addEventListener('click', () => deviceModal(list.find((d) => d.id == b.dataset.edit), list)));
   content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('Delete this machine?')) return;
+    const ok = await confirmDialog({
+      title: 'Delete Machine',
+      message: 'Delete this machine from the dashboard? It will no longer be monitored.',
+      confirmText: 'Delete Machine',
+      danger: true
+    });
+    if (!ok) return;
     await api.del(`/devices/${b.dataset.del}`); devices();
   }));
   // Kick a live reachability check (works on Vercel too — no background jobs
@@ -586,7 +788,13 @@ function usersModal(srcDev, users, devs = []) {
     b.addEventListener('click', () => copyUserModal(srcDev, b.dataset.copy, b.dataset.uname, devs, users)));
   $('#modal').querySelectorAll('[data-del]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm(`Delete “${b.dataset.uname || 'user ' + b.dataset.del}” from ${srcDev.name}?`)) return;
+      const ok = await confirmDialog({
+        title: 'Delete User from Machine',
+        message: `Delete “${b.dataset.uname || 'user ' + b.dataset.del}” from ${srcDev.name}?`,
+        confirmText: 'Delete User',
+        danger: true
+      });
+      if (!ok) return;
       toast('Deleting user…');
       const r = await api.del(`/devices/${srcDev.id}/users/${encodeURIComponent(b.dataset.del)}`);
       toast(r.ok ? 'User deleted' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
@@ -781,7 +989,7 @@ async function loadUsersTable(devs) {
     else if (totalRooms > 1 && tenantRooms.length >= totalRooms) roomCell = `<span class="badge admin" title="${esc(roomList)}">All rooms (${tenantRooms.length})</span>`;
     else if (tenantRooms.length > 2) roomCell = `<span class="badge admin">room ${esc(tenantRooms[0].code)}</span> <span class="badge admin" title="${esc(roomList)}">+${tenantRooms.length - 1} more</span>`;
     else roomCell = tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ');
-    return `<tr class="clickable-row" data-rowidx="${i}" title="View full profile">
+    return `<tr class="clickable-row" data-rowidx="${i}" data-blocked="${blocked ? '1' : '0'}" data-admin="${admin ? '1' : '0'}" data-hascard="${u.numOfCard ? '1' : '0'}" title="View full profile">
       <td>${esc(u.employeeNo)}</td>
       <td><a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a></td>
       <td class="nowrap">${roomCell}</td>
@@ -810,7 +1018,37 @@ async function loadUsersTable(devs) {
         <button class="btn sm" data-menu="${i}">Actions ▾</button>
       </td></tr>`;
   }).join('');
-  holder.innerHTML = `${note}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  const countAll = entries.length;
+  const countActive = entries.filter((e) => e.u.Valid?.enable !== false).length;
+  const countAdmins = entries.filter((e) => e.u.localUIRight).length;
+  const countCards = entries.filter((e) => e.u.numOfCard > 0).length;
+
+  const filterBarHtml = `
+    <div class="filter-bar" id="userFilterBar">
+      <button class="filter-chip active" data-ufilter="all">All <span class="chip-count">${countAll}</span></button>
+      <button class="filter-chip" data-ufilter="active">Active <span class="chip-count">${countActive}</span></button>
+      <button class="filter-chip" data-ufilter="cards">With Cards <span class="chip-count">${countCards}</span></button>
+      <button class="filter-chip" data-ufilter="admins">Admins <span class="chip-count">${countAdmins}</span></button>
+    </div>
+  `;
+
+  holder.innerHTML = `${note}${filterBarHtml}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  holder.querySelectorAll('#userFilterBar .filter-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      holder.querySelectorAll('#userFilterBar .filter-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      const filter = chip.dataset.ufilter;
+      holder.querySelectorAll('tbody tr').forEach((tr) => {
+        let show = true;
+        if (filter === 'active') show = tr.dataset.blocked !== '1';
+        else if (filter === 'admins') show = tr.dataset.admin === '1';
+        else if (filter === 'cards') show = tr.dataset.hascard === '1';
+        tr.style.display = show ? '' : 'none';
+      });
+    });
+  });
 
   // Central-truth check: machines are compared in the background and any
   // credential disagreement (cards/fingerprints/faces) is flagged here.
@@ -893,7 +1131,13 @@ async function loadUsersTable(devs) {
 
 async function deleteFaceAction(e, devs) {
   const where = e.on.map((d) => d.name).join(', ');
-  if (!confirm(`Delete the face of “${e.u.name || 'user ' + e.u.employeeNo}” from: ${where}?\n\nTheir fingerprints, cards and profile stay — only face recognition stops working.`)) return;
+  const ok = await confirmDialog({
+    title: 'Delete Face Photo',
+    message: `Delete the face of “${e.u.name || 'user ' + e.u.employeeNo}” from: ${where}?\n\nTheir fingerprints, cards and profile stay — only face recognition stops working.`,
+    confirmText: 'Delete Face',
+    danger: true
+  });
+  if (!ok) return;
   toast('Deleting face…');
   const r = await api.post(`/devices/${e.on[0].id}/users/${encodeURIComponent(e.u.employeeNo)}/delete-face`, {
     device_ids: e.on.map((d) => d.id),
@@ -905,7 +1149,13 @@ async function deleteFaceAction(e, devs) {
 
 async function deleteUser(devsOn, employeeNo, name, devs) {
   const where = devsOn.map((d) => d.name).join(', ');
-  if (!confirm(`Delete “${name || 'user ' + employeeNo}” (#${employeeNo}) from: ${where}? This removes them from the machine${devsOn.length > 1 ? 's' : ''}.`)) return;
+  const ok = await confirmDialog({
+    title: 'Delete User from Fleet',
+    message: `Delete “${name || 'user ' + employeeNo}” (#${employeeNo}) from: ${where}? This removes them from the machine${devsOn.length > 1 ? 's' : ''}.`,
+    confirmText: 'Delete User',
+    danger: true
+  });
+  if (!ok) return;
   const bar = progressBar(devsOn.length, 'Deleting —');
   const fails = [];
   await runBatched(devsOn, async (d) => {
@@ -1281,7 +1531,13 @@ async function userCardsModal(entry, devs) {
   $('#uc_fpdel').addEventListener('click', async () => {
     const ids = chosen('#uc_fpdev');
     const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
-    if (!confirm(`Delete ${u.name || 'this user'}'s fingerprint from ${where}? They keep cards, face and profile.`)) return;
+    const ok = await confirmDialog({
+      title: 'Delete Fingerprint',
+      message: `Delete ${u.name || 'this user'}'s fingerprint from ${where}? They keep cards, face and profile.`,
+      confirmText: 'Delete Fingerprint',
+      danger: true
+    });
+    if (!ok) return;
     const chunksF = [];
     for (let i = 0; i < ids.length; i += 8) chunksF.push(ids.slice(i, i + 8));
     const bar = progressBar(ids.length, 'Deleting fingerprint —');
@@ -1298,7 +1554,13 @@ async function userCardsModal(entry, devs) {
   $('#uc_facedel').addEventListener('click', async () => {
     const ids = chosen('#uc_facedev');
     const where = ids.length === on.length ? 'ALL their machines' : on.find((d) => d.id === ids[0])?.name;
-    if (!confirm(`Delete ${u.name || 'this user'}'s face from ${where}? Face recognition stops there; fingerprints, cards and profile stay.`)) return;
+    const ok = await confirmDialog({
+      title: 'Delete Face',
+      message: `Delete ${u.name || 'this user'}'s face from ${where}? Face recognition stops there; fingerprints, cards and profile stay.`,
+      confirmText: 'Delete Face',
+      danger: true
+    });
+    if (!ok) return;
     const chunksFc = [];
     for (let i = 0; i < ids.length; i += 8) chunksFc.push(ids.slice(i, i + 8));
     const bar = progressBar(ids.length, 'Deleting face —');
@@ -1343,7 +1605,13 @@ async function userCardsModal(entry, devs) {
       : `<span class="muted">${r.ok ? 'No cards attached to this user.' : `Couldn't read cards: ${esc(r.error || 'error')}`}</span>`;
     $('#uc_list').querySelectorAll('[data-rmcard]').forEach((b) => b.addEventListener('click', async () => {
       const cardNo = b.dataset.rmcard;
-      if (!confirm(`Remove card ${cardNo} from ${u.name || 'this user'}?\n\nIt is detached on: ${on.map((d) => d.name).join(', ')}.`)) return;
+      const ok = await confirmDialog({
+        title: 'Detach Card',
+        message: `Remove card ${cardNo} from ${u.name || 'this user'}?\n\nIt is detached on: ${on.map((d) => d.name).join(', ')}.`,
+        confirmText: 'Detach Card',
+        danger: true
+      });
+      if (!ok) return;
       const ids = on.map((d) => d.id);
       const chunks = [];
       for (let i = 0; i < ids.length; i += 8) chunks.push(ids.slice(i, i + 8));
@@ -1731,7 +1999,13 @@ async function cards() {
   content.querySelectorAll('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
     const c = list.find((x) => x.id == b.dataset.unassign);
     if (!c || !c.card_no) { toast('This entry has no card number', 'err'); return; }
-    if (!confirm(`Remove card ${c.card_no} from every machine?\n\nWhoever holds it loses card access — their user profile stays.`)) return;
+    const ok = await confirmDialog({
+      title: 'Remove Card Access',
+      message: `Remove card ${c.card_no} from every machine?\n\nWhoever holds it loses card access — their user profile stays.`,
+      confirmText: 'Remove Card',
+      danger: true
+    });
+    if (!ok) return;
     toast('Removing card from machines…');
     const r = await api.post('/devices/card/delete', { card_no: c.card_no });
     const fails = (r.results || []).filter((x) => !x.ok);
@@ -1749,7 +2023,13 @@ async function cards() {
     b.addEventListener('click', () => cardModal(list.find((c) => c.id == b.dataset.edit), devs)));
   content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
     const c = list.find((x) => x.id == b.dataset.del);
-    if (!confirm(`Delete card ${c?.card_no || ''}?\n\nIt is removed from every machine and detached from any user holding it — all access linked to this card stops working.`)) return;
+    const ok = await confirmDialog({
+      title: 'Delete Card from Fleet',
+      message: `Delete card ${c?.card_no || ''}?\n\nIt is removed from every machine and detached from any user holding it — all access linked to this card stops working.`,
+      confirmText: 'Delete Card',
+      danger: true
+    });
+    if (!ok) return;
     toast('Removing card everywhere…');
     const r = await api.del(`/cards/${b.dataset.del}`);
     const badDetach = (r.detached || []).filter((x) => !x.ok);
@@ -2161,7 +2441,13 @@ async function bookingEnrollModal(bookingId) {
       }, []);
     }));
     $('#modal').querySelectorAll('[data-brm]').forEach((btn) => btn.addEventListener('click', async () => {
-      if (!confirm(`Remove "${btn.dataset.bname}" from this booking? They are deleted from the machines immediately.`)) return;
+      const ok = await confirmDialog({
+        title: 'Remove Person from Booking',
+        message: `Remove "${btn.dataset.bname}" from this booking? They are deleted from the machines immediately.`,
+        confirmText: 'Remove Person',
+        danger: true
+      });
+      if (!ok) return;
       toast('Removing from machines…');
       const rr = await api.del(`/bookings-feed/${bookingId}/attendees/${encodeURIComponent(btn.dataset.brm)}`);
       if (rr.ok) { toast('Removed', 'ok'); bookingEnrollModal(bookingId); }
@@ -2207,7 +2493,13 @@ async function dashusers() {
     <p class="hint" style="margin-top:14px">Admins manage machines, people and these accounts. Users can operate the dashboard but cannot manage accounts.</p>`;
   content.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => resetDashPasswordModal(b.dataset.reset, me)));
   content.querySelectorAll('[data-deluser]').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm(`Delete dashboard login "${b.dataset.deluser}"? They can no longer sign in.`)) return;
+    const ok = await confirmDialog({
+      title: 'Delete Dashboard Login',
+      message: `Delete dashboard login "${b.dataset.deluser}"? They can no longer sign in.`,
+      confirmText: 'Delete User',
+      danger: true
+    });
+    if (!ok) return;
     const rr = await api.del(`/auth/users/${encodeURIComponent(b.dataset.deluser)}`);
     if (rr.ok) { toast('Account deleted', 'ok'); dashusers(); }
     else if (!rr.__auth) toast(rr.error || 'Failed', 'err');

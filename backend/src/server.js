@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync } from './db.js';
+import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync, setLogSyncSubscriber } from './db.js';
 import * as isapi from './isapi.js';
 import { devicesRouter } from './routes/devices.js';
 import { cardsRouter } from './routes/cards.js';
@@ -71,6 +71,49 @@ app.use('/api', requireAuth);   // everything else needs a logged-in session
 app.use('/api/devices', devicesRouter);
 app.use('/api/cards', cardsRouter);
 app.use('/api/bookings-feed', bookingsRouter);
+
+// --- Server-Sent Events (SSE) Live Activity Stream ---
+const sseClients = new Set();
+
+export function broadcastEvent(event) {
+  const data = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(data);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+setLogSyncSubscriber((entry) => {
+  broadcastEvent({ type: 'activity', ...entry });
+});
+
+// SSE live stream endpoint
+app.get('/api/events/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  res.write(`data: ${JSON.stringify({ type: 'connected', ts: new Date().toISOString() })}\n\n`);
+  sseClients.add(res);
+
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    }
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+});
 
 // Push everything pending across all employees/devices.
 app.post('/api/sync', hardwareRateLimiter, async (req, res) => {
@@ -670,41 +713,70 @@ app.get('/api/analytics', async (req, res) => {
     const todayISO = `${nowD.getFullYear()}-${pd(nowD.getMonth() + 1)}-${pd(nowD.getDate())}`;
     const from = DATE_RE.test(String(req.query.from || '')) ? String(req.query.from) : todayISO;
     const to = DATE_RE.test(String(req.query.to || '')) ? String(req.query.to) : todayISO;
-    const rangeEvents = await getRows(
-      'SELECT device_name, employee_no, name, minor, event_time FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time BETWEEN ? AND ?',
-      [`${from}T00:00:00`, `${to}T23:59:59`]
-    );
-    const [devices, stats, eventsResult, empsCount, cardsCount] = await Promise.all([
+    const [
+      hourlyRows,
+      doorRows,
+      userRows,
+      totalCountRow,
+      devices,
+      stats,
+      empsCount,
+      cardsCount
+    ] = await Promise.all([
+      getRows(
+        `SELECT DATEPART(hour, event_time) AS hr, COUNT(*) AS cnt
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         WHERE event_time BETWEEN ? AND ?
+         GROUP BY DATEPART(hour, event_time)`,
+        [`${from}T00:00:00`, `${to}T23:59:59`]
+      ).catch(() => []),
+      getRows(
+        `SELECT device_name AS name, COUNT(*) AS count
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         WHERE event_time BETWEEN ? AND ? AND device_name IS NOT NULL
+         GROUP BY device_name
+         ORDER BY count DESC`,
+        [`${from}T00:00:00`, `${to}T23:59:59`]
+      ).catch(() => []),
+      getRows(
+        `SELECT TOP 10 employee_no, name, COUNT(*) AS count
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         WHERE event_time BETWEEN ? AND ? AND (employee_no IS NOT NULL OR name IS NOT NULL)
+         GROUP BY employee_no, name
+         ORDER BY count DESC`,
+        [`${from}T00:00:00`, `${to}T23:59:59`]
+      ).catch(() => []),
+      getRow(
+        `SELECT COUNT(*) AS total
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         WHERE event_time BETWEEN ? AND ?`,
+        [`${from}T00:00:00`, `${to}T23:59:59`]
+      ).catch(() => ({ total: 0 })),
       getAllDevices(),
-      sp('WN_HIK_Stats_Get'),
-      sp('WN_HIK_Activity_Recent', { limit: 500 }),
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Employees WHERE status=\'active\''),
-      getRow('SELECT COUNT(DISTINCT card_no) AS n FROM dbo.WN_HIK_Employees WHERE card_no IS NOT NULL'),
+      sp('WN_HIK_Stats_Get').catch(() => [{}]),
+      getRow("SELECT COUNT(*) AS n FROM dbo.WN_HIK_Employees WHERE status='active'").catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(DISTINCT card_no) AS n FROM dbo.WN_HIK_Employees WHERE card_no IS NOT NULL').catch(() => ({ n: 0 })),
     ]);
 
     const s = stats[0] || {};
-    const now = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    const todayStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+    const todayTotal = Number(totalCountRow?.total) || 0;
 
-    // 1. Hourly Traffic Distribution — real archived door events in range
+    // 1. Hourly Traffic Distribution
     const hourlyDistribution = new Array(24).fill(0);
-    let todayTotal = rangeEvents.length;
-    for (const e of rangeEvents) {
-      const hr = Number(String(e.event_time).slice(11, 13));
-      if (!Number.isNaN(hr)) hourlyDistribution[hr]++;
+    for (const r of hourlyRows) {
+      const hr = Number(r.hr);
+      if (!Number.isNaN(hr) && hr >= 0 && hr < 24) {
+        hourlyDistribution[hr] = Number(r.cnt) || 0;
+      }
     }
 
-    // 2. Door / Machine Usage Breakdown — archived events in range
-    const doorUsageMap = new Map();
-    for (const e of rangeEvents) {
-      if (!e.device_name) continue;
-      doorUsageMap.set(e.device_name, (doorUsageMap.get(e.device_name) || 0) + 1);
-    }
-    const totalDoorScans = [...doorUsageMap.values()].reduce((a, b) => a + b, 0) || 1;
-    const doorUsage = [...doorUsageMap.entries()]
-      .map(([name, count]) => ({ name, count, percent: Math.round((count / totalDoorScans) * 100) }))
-      .sort((a, b) => b.count - a.count);
+    // 2. Door / Machine Usage Breakdown
+    const totalDoorScans = doorRows.reduce((acc, d) => acc + (Number(d.count) || 0), 0) || 1;
+    const doorUsage = doorRows.map((d) => ({
+      name: d.name,
+      count: Number(d.count) || 0,
+      percent: Math.round(((Number(d.count) || 0) / totalDoorScans) * 100),
+    }));
 
     // 3. Peak Hour
     let peakHour = 9;
@@ -724,21 +796,14 @@ app.get('/api/analytics', async (req, res) => {
       totalDevices: devices.length,
     };
 
-    // 6. Top users by archived door scans in range.
-    const userScanMap = new Map();
-    for (const e of rangeEvents) {
-      const emp = String(e.employee_no || '').trim();
-      const nm = String(e.name || '').trim();
-      if (!emp && !nm) continue; // events without a person (timeouts, unknown cards)
-      const key = `${emp}||${nm.toLowerCase()}`;
-      if (!userScanMap.has(key)) userScanMap.set(key, { name: nm, employeeNo: emp, count: 0 });
-      userScanMap.get(key).count++;
-    }
-    const totalUserScans = [...userScanMap.values()].reduce((a, b) => a + b.count, 0) || 1;
-    const userScans = [...userScanMap.values()]
-      .map((u) => ({ ...u, percent: Math.round((u.count / totalUserScans) * 100) }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+    // 6. Top users
+    const totalUserScans = userRows.reduce((acc, u) => acc + (Number(u.count) || 0), 0) || 1;
+    const userScans = userRows.map((u) => ({
+      employeeNo: u.employee_no || '',
+      name: u.name || '',
+      count: Number(u.count) || 0,
+      percent: Math.round(((Number(u.count) || 0) / totalUserScans) * 100),
+    }));
 
     res.json({
       ok: true,

@@ -2174,3 +2174,113 @@ th { white-space: nowrap; }
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 12h-6l-2 3h-4l-2-3H2'/%3E%3Cpath d='M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   opacity: 0.55;
 }
+
+/* Custom Glassmorphic Confirmation Modal */
+.confirm-dialog {
+  padding: 4px 0;
+}
+.confirm-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.modal-alert-icon {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  padding: 8px;
+}
+.modal-alert-icon.danger {
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 20px var(--red-glow);
+}
+.modal-alert-icon.info {
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+.confirm-title-area h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
+}
+.confirm-msg {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* Mini Sparkline Chart in Stat Cards */
+.stat-sparkline {
+  width: 96px;
+  height: 22px;
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  overflow: visible;
+}
+
+/* Filter Chip Bar */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.filter-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.filter-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+.filter-chip.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+.filter-chip .chip-count {
+  font-size: 11px;
+  opacity: 0.8;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+/* Ticker Live Pulse Highlight */
+.ticker-item.live-incoming {
+  animation: tickerHighlight 2s ease-out;
+}
+@keyframes tickerHighlight {
+  0% {
+    background: rgba(99, 102, 241, 0.35);
+    border-color: var(--accent);
+    transform: translateY(-4px);
+  }
+  100% {
+    background: transparent;
+    border-color: transparent;
+    transform: translateY(0);
+  }
+}
+

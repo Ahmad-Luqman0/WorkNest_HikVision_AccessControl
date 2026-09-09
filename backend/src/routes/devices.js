@@ -1,9 +1,14 @@
 import { Router } from 'express';
-import { getAllDevices, getDeviceById, getRow, run, sp, logSync, queueOp, isUnreachableErr, saveFpTemplate } from '../db.js';
+import { getAllDevices, getDeviceById, getRow, run, sp, logSync, logAudit, queueOp, isUnreachableErr, saveFpTemplate } from '../db.js';
 import * as isapi from '../isapi.js';
 import { getRoster, invalidateRoster } from '../machineCache.js';
 
 export const devicesRouter = Router();
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  return forwarded ? forwarded.split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '127.0.0.1');
+}
 
 // Non-admin dashboard accounts may give an employee at most the FULL Entrance
 // group + ONE room. Admin accounts are unrestricted. Returns an error string
@@ -683,10 +688,15 @@ devicesRouter.post('/door', async (req, res) => {
       logSync(null, dev.id, `door:${cmd}`, r.ok, r);
       return { device_id: id, device: dev.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) };
     } catch (e) {
+      if (isUnreachableErr(e)) {
+        await queueOp(dev.id, 'door-control', null, { cmd });
+        return { device_id: id, device: dev.name, ok: true, queued: true };
+      }
       return { device_id: id, device: dev.name, ok: false, error: String(e.message || e) };
     }
   }));
   const okCount = results.filter((r) => r.ok).length;
+  logAudit(req.auth?.username || 'admin', 'DOOR_UNLOCK_ALL', 'fleet', getClientIp(req), `cmd: ${cmd}, result: ${okCount}/${results.length}`);
   res.json({ ok: okCount > 0, okCount, total: results.length, results });
 });
 
@@ -832,9 +842,16 @@ devicesRouter.post('/:id/door', async (req, res) => {
   try {
     const r = await isapi.remoteControlDoor(dev, cmd);
     logSync(null, dev.id, `door:${cmd}`, r.ok, r);
+    logAudit(req.auth?.username || 'admin', 'DOOR_UNLOCK', dev.name, getClientIp(req), `cmd: ${cmd}, status: ${r.ok ? 'success' : 'failed'}`);
     res.status(r.ok ? 200 : 502).json({ ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
   } catch (e) {
+    if (isUnreachableErr(e)) {
+      await queueOp(dev.id, 'door-control', null, { cmd });
+      logAudit(req.auth?.username || 'admin', 'DOOR_UNLOCK_QUEUED', dev.name, getClientIp(req), `cmd: ${cmd}, status: queued for LAN agent`);
+      return res.json({ ok: true, queued: true, message: 'Door unlock queued for local agent' });
+    }
     logSync(null, dev.id, `door:${cmd}`, false, String(e.message || e));
+    logAudit(req.auth?.username || 'admin', 'DOOR_UNLOCK_FAILED', dev.name, getClientIp(req), `cmd: ${cmd}, error: ${String(e.message || e).slice(0, 100)}`);
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }
 });

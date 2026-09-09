@@ -9,6 +9,43 @@ function deviceBaseUrl(device) {
   return `${proto}://${device.host}:${port}`;
 }
 
+// Hardware safety: limit concurrency to prevent saturating embedded Linux web servers on Hikvision units
+const MAX_PER_DEVICE = 2;
+const MAX_FLEET = 6;
+const activePerDevice = new Map();
+let activeFleet = 0;
+const waitQueue = [];
+
+function acquireSlot(host) {
+  const curDev = activePerDevice.get(host) || 0;
+  if (curDev < MAX_PER_DEVICE && activeFleet < MAX_FLEET) {
+    activePerDevice.set(host, curDev + 1);
+    activeFleet++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    waitQueue.push({ host, resolve });
+  });
+}
+
+function releaseSlot(host) {
+  const curDev = activePerDevice.get(host) || 1;
+  activePerDevice.set(host, Math.max(0, curDev - 1));
+  activeFleet = Math.max(0, activeFleet - 1);
+
+  for (let i = 0; i < waitQueue.length; i++) {
+    const item = waitQueue[i];
+    const devCnt = activePerDevice.get(item.host) || 0;
+    if (devCnt < MAX_PER_DEVICE && activeFleet < MAX_FLEET) {
+      waitQueue.splice(i, 1);
+      activePerDevice.set(item.host, devCnt + 1);
+      activeFleet++;
+      item.resolve();
+      break;
+    }
+  }
+}
+
 async function req(device, method, path, { json, xml, headers, timeout } = {}) {
   let body;
   const h = { ...(headers || {}) };
@@ -19,21 +56,40 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
     body = xml;
     h['Content-Type'] = 'application/xml';
   }
+
+  const host = device.host || 'default';
+  await acquireSlot(host);
+
   try {
-    const res = await digestRequest({
-      baseUrl: deviceBaseUrl(device),
-      username: device.username,
-      password: device.password,
-      method,
-      path,
-      body,
-      headers: h,
-      timeout,
-    });
-    return res;
-  } catch (err) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await digestRequest({
+          baseUrl: deviceBaseUrl(device),
+          username: device.username,
+          password: device.password,
+          method,
+          path,
+          body,
+          headers: h,
+          timeout,
+        });
+        return res;
+      } catch (err) {
+        lastErr = err;
+        const msg = String(err.message || err);
+        const isTransient = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|timeout/i.test(msg);
+        if (attempt === 0 && isTransient) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        break;
+      }
+    }
     const hostStr = device.name ? `${device.name} (${device.host})` : device.host;
-    throw new Error(`Device unreachable [${hostStr}]: ${err.message || String(err)}`);
+    throw new Error(`Device unreachable [${hostStr}]: ${lastErr.message || String(lastErr)}`);
+  } finally {
+    releaseSlot(host);
   }
 }
 
@@ -95,6 +151,18 @@ function xmlTag(text, tag) {
   if (!text) return undefined;
   const m = text.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, 'i'));
   return m ? m[1].trim() : undefined;
+}
+
+// Read the device's current time to detect clock drift before access is denied.
+export async function getDeviceTime(device, { timeout = 2500 } = {}) {
+  try {
+    const res = await req(device, 'GET', '/ISAPI/System/time', { timeout });
+    if (!res.ok) return null;
+    const local = xmlTag(res.text, 'localTime');
+    return local ? new Date(local) : null;
+  } catch {
+    return null;
+  }
 }
 
 // Write the server's current time + timezone to the device. Prevents the

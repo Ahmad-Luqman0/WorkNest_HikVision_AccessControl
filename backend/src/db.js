@@ -202,6 +202,11 @@ export async function getAllDevices() {
   );
 }
 
+let _logSyncSubscriber = null;
+export function setLogSyncSubscriber(fn) {
+  _logSyncSubscriber = fn;
+}
+
 // Fire-and-forget activity log via the WN_HIK_Log_Write proc. Never throws.
 export function logSync(employee_id, device_id, action, ok, detail) {
   const payload = typeof detail === 'string' ? detail : JSON.stringify(detail);
@@ -212,6 +217,12 @@ export function logSync(employee_id, device_id, action, ok, detail) {
     ok: ok ? 1 : 0,
     detail: payload ?? null,
   }).catch((e) => console.error('[db] logSync failed:', e.message));
+
+  if (_logSyncSubscriber) {
+    try {
+      _logSyncSubscriber({ employee_id, device_id, action, ok: !!ok, detail, ts: new Date().toISOString() });
+    } catch {}
+  }
 }
 
 // Fire-and-forget admin audit log.

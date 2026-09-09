@@ -47,11 +47,20 @@ export async function runExpiryPass() {
 export async function runClockSync() {
   const devices = await getAllDevices();
   const results = [];
+  const now = Date.now();
   await Promise.all(devices.map(async (dev) => {
     try {
+      const devTime = await isapi.getDeviceTime(dev).catch(() => null);
+      let driftSec = null;
+      if (devTime && !Number.isNaN(devTime.getTime())) {
+        driftSec = Math.round(Math.abs(now - devTime.getTime()) / 1000);
+      }
       const r = await isapi.setDeviceTime(dev);
-      logSync(null, dev.id, 'time-sync', r.ok, r.ok ? 'clock set to server time' : r);
-      results.push({ device: dev.name, ok: r.ok });
+      const detail = driftSec !== null
+        ? `clock synced to server (drift was ${driftSec}s)`
+        : (r.ok ? 'clock set to server time' : r);
+      logSync(null, dev.id, driftSec && driftSec > 15 ? 'clock-drift-warning' : 'time-sync', r.ok, detail);
+      results.push({ device: dev.name, ok: r.ok, driftSec });
     } catch (e) {
       logSync(null, dev.id, 'time-sync', false, String(e.message || e));
       results.push({ device: dev.name, ok: false });
@@ -96,6 +105,10 @@ export async function runOnlineCheck() {
         } catch { /* next daily sync catches it */ }
       }));
       try { await replayPendingOps(); } catch { /* retried by the watcher */ }
+      try {
+        const pendingSyncs = await syncAllPending();
+        if (pendingSyncs?.length) console.log(`[online] ${cameOnline.join(', ')} back — pushed ${pendingSyncs.length} pending access grant(s)`);
+      } catch (e) { console.error('[online] pending grant sync failed:', e); }
       try {
         const r = await runCredentialSync();
         if (r.copied) console.log(`[online] ${cameOnline.join(', ')} back — synced ${r.copied} credential(s)`);
@@ -293,6 +306,9 @@ export async function replayPendingOps() {
       } else if (o.op === 'delete-user') {
         const r = await isapi.deletePerson(dev, emp);
         if (!r.ok && !/notExist/i.test(String(r.subStatusCode || ''))) throw new Error(isapi.describe(r));
+      } else if (o.op === 'door-control') {
+        const r = await isapi.remoteControlDoor(dev, payload?.cmd || 'open');
+        if (!r.ok) throw new Error(isapi.describe(r));
       }
       await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE id=?', [o.id]);
       logSync(null, dev.id, `applied-queued:${o.op}`, true, { employee_no: o.employee_no });
@@ -341,7 +357,7 @@ export async function runRosterWatch() {
   try {
     try { await migrateRenewedBookings(); } catch { /* checked again next tick */ }
     const pending = await getRow(
-      `SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE sync_state IN ('pending','removing')`
+      `SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE sync_state IN ('pending','error','removing')`
     );
     if (pending.n) {
       try { await syncAllPending(); } catch (e) { console.error('[watch] pending sync failed:', e); }

@@ -49,6 +49,7 @@ async function setSetting(key, value) {
 
 let _secret = null;
 async function authSecret() {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   if (_secret) return _secret;
   let s = await getSetting('auth_secret');
   if (!s) {
