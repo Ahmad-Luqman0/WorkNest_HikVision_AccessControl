@@ -3,7 +3,7 @@
 // Period natively — these jobs handle the extras (status flips, auto-delete,
 // keeping credentials identical everywhere).
 import cron from 'node-cron';
-import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates } from './db.js';
+import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates, saveFaceTemplate, getFaceTemplate } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
@@ -208,8 +208,17 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   try {
     const withFace = members.filter((m) => Number(m.u.numOfFace) > 0);
     const without = members.filter((m) => !Number(m.u.numOfFace) && writable(m));
-    if (withFace.length && without.length) {
-      const faces = await isapi.readFaces(withFace[0].dev, employeeNo);
+    if (without.length && (withFace.length || true)) {
+      let faces = [];
+      if (withFace.length) faces = await isapi.readFaces(withFace[0].dev, employeeNo).catch(() => []);
+      if (faces.length) {
+        // opportunistically keep the vault current
+        saveFaceTemplate(employeeNo, members[0].u.name, faces[0].modelData).catch(() => {});
+      } else {
+        // no machine can provide it (all lost/offline) — restore from the vault
+        const vaulted = await getFaceTemplate(employeeNo, members[0].u.name).catch(() => null);
+        if (vaulted) faces = [{ modelData: vaulted }];
+      }
       if (faces.length) {
         await Promise.all(without.map(async (m) => {
           const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
@@ -222,6 +231,70 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
     }
   } catch { /* retried next round */ }
   return { copied };
+}
+
+// Back-fill the face vault: for every person with an enrolled face (per the
+// roster snapshots) whose template isn't vaulted yet, export it from one of
+// their machines. After one full sweep every face survives a dead machine.
+export async function sweepFaceVault() {
+  const devs = await getAllDevices();
+  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  const people = new Map();
+  for (const s of snaps) {
+    let users; try { users = JSON.parse(s.roster); } catch { continue; }
+    for (const u of users) {
+      if (!Number(u.numOfFace)) continue;
+      const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+      if (!people.has(key)) people.set(key, { emp: String(u.employeeNo), name: String(u.name || '').trim(), devIds: [] });
+      people.get(key).devIds.push(s.device_id);
+    }
+  }
+  const have = new Set((await getRows('SELECT employee_no, name FROM dbo.WN_HIK_FaceVault WITH (NOLOCK)'))
+    .map((r) => `${r.employee_no}||${String(r.name).trim().toLowerCase()}`));
+  let saved = 0;
+  for (const p of people.values()) {
+    if (have.has(`${p.emp}||${p.name.toLowerCase()}`)) continue;
+    for (const id of p.devIds) {
+      const dev = devs.find((d) => d.id === id);
+      if (!dev?.online) continue;
+      try {
+        const faces = await isapi.readFaces(dev, p.emp);
+        if (faces.length) { await saveFaceTemplate(p.emp, p.name, faces[0].modelData); saved++; break; }
+      } catch { /* try their next machine */ }
+    }
+  }
+  if (saved) console.log(`[vault] backed up ${saved} face template(s)`);
+  return { saved, withFace: people.size };
+}
+
+// Rebuild the WN_HIK_Users backup table from the roster snapshots: one row
+// per person with employee #, name, room(s), role and machine access.
+export async function syncUsersTable() {
+  const devs = await getAllDevices();
+  const meta = new Map(devs.map((d) => [d.id, d]));
+  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  if (!snaps.length) return { users: 0 };
+  const people = new Map();
+  for (const s of snaps) {
+    const dev = meta.get(s.device_id);
+    if (!dev) continue;
+    let users; try { users = JSON.parse(s.roster); } catch { continue; }
+    for (const u of users) {
+      const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+      if (!people.has(key)) people.set(key, { emp: String(u.employeeNo), name: String(u.name || '').trim(), admin: false, machines: [], rooms: [] });
+      const p = people.get(key);
+      if (u.localUIRight) p.admin = true;
+      if (!p.machines.includes(dev.name)) p.machines.push(dev.name);
+      const isEntr = String(dev.grp || '').trim().toLowerCase().startsWith('entrance');
+      if (dev.code && !isEntr && !p.rooms.includes(String(dev.code))) p.rooms.push(String(dev.code));
+    }
+  }
+  await run('DELETE FROM dbo.WN_HIK_Users');
+  for (const p of people.values()) {
+    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count) VALUES (?,?,?,?,?,?)',
+      [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length]);
+  }
+  return { users: people.size };
 }
 
 // Copy each online machine's recent door events into the permanent
@@ -387,6 +460,8 @@ export function startScheduler() {
   // Every 5 minutes: expiry, retry errored syncs, then credential sync.
   cron.schedule('*/5 * * * *', async () => {
     try { await archiveEvents(); } catch (e) { console.error('[scheduler] event archive failed:', e); }
+    try { await sweepFaceVault(); } catch (e) { console.error('[scheduler] face vault sweep failed:', e); }
+    try { await syncUsersTable(); } catch (e) { console.error('[scheduler] users table sync failed:', e); }
     try {
       const r = await migrateRenewedBookings();
       if (r.migrated) console.log(`[scheduler] booking renewal carried over ${r.migrated} attendee(s)`);

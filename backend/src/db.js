@@ -38,6 +38,8 @@ export async function initDb() {
   await ensureFpVault();
   await ensureEventsTable();
   await ensureDevCache();
+  await ensureFaceVault();
+  await ensureUsersTable();
   await migrateFromSqliteIfEmpty();
   return pool;
 }
@@ -128,6 +130,60 @@ async function ensureFpVault() {
   } catch (e) {
     console.error('[db] ensureFpVault:', e.message);
   }
+}
+
+// Face templates ARE exportable, so the vault can be back-filled from the
+// machines — after one sweep every enrolled face survives a dead machine.
+async function ensureFaceVault() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_FaceVault','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_FaceVault (
+        id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_FaceVault PRIMARY KEY,
+        employee_no NVARCHAR(32) NOT NULL,
+        name NVARCHAR(128) NOT NULL,
+        model_data NVARCHAR(MAX) NOT NULL,
+        updated_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_FaceVault_upd DEFAULT (SYSDATETIME()),
+        CONSTRAINT UQ_WN_HIK_FaceVault UNIQUE (employee_no, name)
+      )`);
+  } catch (e) {
+    console.error('[db] ensureFaceVault:', e.message);
+  }
+}
+
+// Members backup table — one row per person as seen on the machines:
+// employee #, name, room(s), role and the machines they can access.
+// Rebuilt automatically from the roster snapshots; the machines stay the
+// live truth, this is the always-current copy.
+async function ensureUsersTable() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_Users','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_Users (
+        id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_Users PRIMARY KEY,
+        employee_no NVARCHAR(32) NOT NULL,
+        name NVARCHAR(128) NOT NULL,
+        room NVARCHAR(256) NULL,
+        role NVARCHAR(16) NOT NULL CONSTRAINT DF_WN_HIK_Users_role DEFAULT ('user'),
+        machines NVARCHAR(MAX) NULL,
+        machine_count INT NOT NULL CONSTRAINT DF_WN_HIK_Users_mc DEFAULT (0),
+        updated_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Users_upd DEFAULT (SYSDATETIME()),
+        CONSTRAINT UQ_WN_HIK_Users UNIQUE (employee_no, name)
+      )`);
+  } catch (e) {
+    console.error('[db] ensureUsersTable:', e.message);
+  }
+}
+
+export async function saveFaceTemplate(employee_no, name, model_data) {
+  const emp = String(employee_no);
+  const nm = String(name || '').trim();
+  await run('DELETE FROM dbo.WN_HIK_FaceVault WHERE employee_no=? AND name=?', [emp, nm]);
+  await run('INSERT INTO dbo.WN_HIK_FaceVault (employee_no, name, model_data) VALUES (?,?,?)', [emp, nm, String(model_data)]);
+}
+
+export async function getFaceTemplate(employee_no, name) {
+  const r = await getRow('SELECT model_data FROM dbo.WN_HIK_FaceVault WHERE employee_no=? AND name=?',
+    [String(employee_no), String(name || '').trim()]);
+  return r?.model_data || null;
 }
 
 export async function saveFpTemplate(employee_no, name, finger_no, template) {
