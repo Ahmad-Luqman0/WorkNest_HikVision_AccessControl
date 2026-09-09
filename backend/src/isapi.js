@@ -283,12 +283,13 @@ export async function getPerson(device, employeeNo) {
 }
 
 // Page through the persons enrolled ON the device. Returns one page.
-export async function searchPersons(device, position = 0, maxResults = 30) {
+export async function searchPersons(device, position = 0, maxResults = 30, { timeout = 2500 } = {}) {
   const body = {
     UserInfoSearchCond: { searchID: 'hik-dash', searchResultPosition: position, maxResults },
   };
   const res = await req(device, 'POST', '/ISAPI/AccessControl/UserInfo/Search?format=json', {
     json: body,
+    timeout,
   });
   if (!res.ok) throw new Error(`user search failed (${res.status}): ${res.text.slice(0, 160)}`);
   const s = (res.json() || {}).UserInfoSearch || {};
@@ -300,11 +301,11 @@ export async function searchPersons(device, position = 0, maxResults = 30) {
 }
 
 // Page through the terminal's own access-event log (entries, door events).
-export async function searchEvents(device, position = 0, maxResults = 30) {
+export async function searchEvents(device, position = 0, maxResults = 30, { timeout = 2500 } = {}) {
   const body = {
     AcsEventCond: { searchID: 'hik-dash-ev', searchResultPosition: position, maxResults, major: 5, minor: 0 },
   };
-  const res = await req(device, 'POST', '/ISAPI/AccessControl/AcsEvent?format=json', { json: body });
+  const res = await req(device, 'POST', '/ISAPI/AccessControl/AcsEvent?format=json', { json: body, timeout });
   if (!res.ok) throw new Error(`event search failed (${res.status}): ${res.text.slice(0, 160)}`);
   const s = (res.json() || {}).AcsEvent || {};
   return { total: Number(s.totalMatches || 0), list: s.InfoList || [] };

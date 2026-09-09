@@ -163,21 +163,22 @@ app.get('/api/logs', async (req, res) => {
 });
 
 // Live entry log pulled from every machine's own event memory (who entered,
-// door open/close, denied attempts). Newest first.
+// door open/close, denied attempts) with fast DB fallback. Newest first.
 app.get('/api/events', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 60, 200);
   const devices = await getAllDevices();
   const events = [];
   const unreachable = [];
   await Promise.all(devices.map(async (dev) => {
+    if (!dev.online) return;
     try {
-      const head = await isapi.searchEvents(dev, 0, 1);
+      const head = await isapi.searchEvents(dev, 0, 1, { timeout: 2000 });
       if (!head.total) return;
       // Firmware caps pages at 30 — walk the tail so the NEWEST events are
       // included (a single big request silently returned an older window).
       let pos = Math.max(0, head.total - limit);
       while (pos < head.total) {
-        const page = await isapi.searchEvents(dev, pos, 30);
+        const page = await isapi.searchEvents(dev, pos, 30, { timeout: 2000 });
         if (!page.list.length) break;
         for (const e of page.list) events.push({ device: dev.name, device_id: dev.id, ...e });
         pos += page.list.length;
@@ -186,6 +187,20 @@ app.get('/api/events', async (req, res) => {
       unreachable.push(dev.name);
     }
   }));
+
+  if (events.length === 0) {
+    try {
+      const dbEvents = await getRows(
+        `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, minor, serial_no AS serialNo, event_time AS time
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         ORDER BY id DESC`
+      );
+      if (dbEvents && dbEvents.length > 0) {
+        return res.json({ ok: true, events: dbEvents, unreachable, fromDb: true });
+      }
+    } catch {}
+  }
+
   events.sort((a, b) => String(b.time).localeCompare(String(a.time)));
   res.json({ ok: true, events: events.slice(0, limit), unreachable });
 });
@@ -336,9 +351,33 @@ app.get('/api/roster', async (req, res) => {
   const isAdmin = (req.auth?.role || 'user') === 'admin';
   const rosters = await Promise.all(devices.map(async (dev) => {
     try {
+      if (!dev.online) throw new Error('Device is offline');
       const users = await getRoster(dev);
       return { device_id: dev.id, ok: true, users: isAdmin ? users : users.filter((u) => !u.localUIRight) };
     } catch (e) {
+      // Fast fallback to database records for this device so users view never hangs
+      try {
+        const dbUsers = await getRows(
+          `SELECT e.employee_no AS employeeNo, e.name, e.card_no, e.valid_begin, e.valid_end, e.status
+           FROM dbo.WN_HIK_AccessGrants g
+           JOIN dbo.WN_HIK_Employees e ON e.id = g.employee_id
+           WHERE g.device_id = ?`,
+          [dev.id]
+        );
+        if (dbUsers.length > 0) {
+          const mapped = dbUsers.map((u) => ({
+            employeeNo: u.employeeNo,
+            name: u.name,
+            numOfCard: u.card_no ? 1 : 0,
+            Valid: {
+              enable: u.status !== 'expired',
+              beginTime: u.valid_begin ? new Date(u.valid_begin).toISOString() : null,
+              endTime: u.valid_end ? new Date(u.valid_end).toISOString() : null,
+            },
+          }));
+          return { device_id: dev.id, ok: true, users: mapped, fromDb: true };
+        }
+      } catch {}
       return { device_id: dev.id, ok: false, error: String(e.message || e) };
     }
   }));
@@ -514,39 +553,44 @@ app.get('/api/consistency', async (req, res) => {
 });
 
 app.get('/api/expiring', async (req, res) => {
-  const horizonDays = Math.min(Number(req.query.days) || 7, 60);
-  const devices = await getAllDevices();
-  const groups = new Map();
-  const unreachable = [];
-  await Promise.all(devices.map(async (dev) => {
-    try {
-      const users = await getRoster(dev);
-      for (const u of users) {
-        const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
-        if (!groups.has(key)) groups.set(key, { employeeNo: String(u.employeeNo), name: u.name || '', on: [] });
-        groups.get(key).on.push({ device_id: dev.id, device: dev.name, validEnd: u.Valid?.endTime || null });
+  try {
+    const horizonDays = Math.min(Number(req.query.days) || 7, 60);
+    const rows = await getRows(
+      `SELECT e.employee_no AS employeeNo, e.name, e.valid_end AS validEnd, g.device_id, d.name AS device
+       FROM dbo.WN_HIK_Employees e
+       JOIN dbo.WN_HIK_AccessGrants g ON g.employee_id = e.id
+       JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
+       WHERE e.valid_end IS NOT NULL
+         AND e.valid_end <= DATEADD(day, ?, SYSDATETIME())
+       ORDER BY e.valid_end ASC`,
+      [horizonDays]
+    );
+
+    const now = new Date();
+    const map = new Map();
+    for (const r of rows) {
+      const key = `${r.employeeNo}||${String(r.name || '').trim().toLowerCase()}`;
+      if (!map.has(key)) {
+        const d = r.validEnd ? new Date(r.validEnd) : null;
+        map.set(key, {
+          employeeNo: String(r.employeeNo),
+          name: r.name || '',
+          minEnd: d ? d.toISOString() : null,
+          status: d && d < now ? 'expired' : 'expiring',
+          on: []
+        });
       }
-    } catch {
-      unreachable.push(dev.name);
+      map.get(key).on.push({
+        device_id: r.device_id,
+        device: r.device,
+        validEnd: r.validEnd ? new Date(r.validEnd).toISOString() : null
+      });
     }
-  }));
-  const now = new Date();
-  const horizon = new Date(now.getTime() + horizonDays * 86400000);
-  const items = [];
-  for (const g of groups.values()) {
-    let minRaw = null;
-    let minDate = null;
-    for (const x of g.on) {
-      if (!x.validEnd) continue;
-      const d = new Date(x.validEnd);
-      if (Number.isNaN(d.getTime())) continue;
-      if (!minDate || d < minDate) { minDate = d; minRaw = x.validEnd; }
-    }
-    if (!minDate || minDate > horizon) continue;
-    items.push({ ...g, minEnd: minRaw, status: minDate < now ? 'expired' : 'expiring' });
+
+    res.json({ ok: true, items: [...map.values()], unreachable: [], horizonDays });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
   }
-  items.sort((a, b) => String(a.minEnd).localeCompare(String(b.minEnd)));
-  res.json({ ok: true, items, unreachable, horizonDays });
 });
 
 // Extend a person's access by N days (default 30) on every machine they exist

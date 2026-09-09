@@ -716,17 +716,6 @@ async function dashboard() {
       '<div class="stat"><div class="stat-head"><span class="skel-cell" style="width:60%"></span></div><div class="value"><span class="skel-cell" style="width:40%;height:22px"></span></div></div>').join('')}</div>
       ${skeletonTable(['', '', ''], 4)}</div>`;
   }
-  api.post('/online-check').catch(() => {}); // fresh statuses on next auto-refresh tick
-  api.get('/consistency').then((c) => {
-    const slot = document.getElementById('dashConsistency');
-    if (current !== 'dashboard' || !slot || !c?.ok || !c.issues?.length) {
-      if (slot) slot.innerHTML = '';
-      return;
-    }
-    slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
-    slot.firstElementChild.addEventListener('click', () => go('users'));
-  }).catch(() => {});
-
   // Live view: refresh every 30s while the dashboard is open (not over modals).
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
@@ -738,6 +727,20 @@ async function dashboard() {
     api.get('/bookings-feed?summary=1'), api.get('/analytics').catch(() => null),
   ]);
   if (current !== 'dashboard') return; // view changed while loading
+
+  // Background non-blocking consistency and online checks
+  setTimeout(() => {
+    if (current !== 'dashboard') return;
+    api.get('/consistency').then((c) => {
+      const slot = document.getElementById('dashConsistency');
+      if (current !== 'dashboard' || !slot || !c?.ok || !c.issues?.length) {
+        if (slot) slot.innerHTML = '';
+        return;
+      }
+      slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
+      slot.firstElementChild.addEventListener('click', () => go('users'));
+    }).catch(() => {});
+  }, 1000);
 
   const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
   const onlineMachines = (s && s.devicesOnline !== undefined) ? s.devicesOnline : devs.filter((d) => d.online).length;
@@ -1119,6 +1122,9 @@ async function devices() {
   _autoTimer = setInterval(() => {
     if (current === 'devices' && $('#modalBackdrop').hidden) devices();
   }, 30000);
+  if (!content.querySelector('table')) {
+    content.innerHTML = skeletonTable(['Name', 'Address', 'Model', 'Status', ''], 4);
+  }
   const list = await api.get('/devices');
   if (current !== 'devices') return; // view changed while loading
   $('#viewActions').innerHTML =
@@ -1353,6 +1359,15 @@ function deviceModal(d = null, all = []) {
 // ---- Users (enrolled ON the machines) ----
 let _usersDevId = 'all';
 async function users() {
+  if (!content.querySelector('#u_table')) {
+    content.innerHTML = `
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+        <span class="skel-cell" style="width:140px;height:34px;border-radius:8px"></span>
+        <span class="skel-cell" style="width:90px;height:34px;border-radius:8px"></span>
+        <span class="skel-cell" style="width:90px;height:34px;border-radius:8px"></span>
+      </div>
+      <div id="u_table">${skeletonTable(['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', ''], 6)}</div>`;
+  }
   const devs = await api.get('/devices');
   if (current !== 'users') return; // view changed while loading
   $('#viewActions').innerHTML = '';

@@ -126,11 +126,12 @@ devicesRouter.post('/:id/test', async (req, res) => {
   }
 });
 
-// Live list of persons currently enrolled ON the device (pulled over ISAPI).
+// Live list of persons currently enrolled ON the device (pulled over ISAPI with DB fallback).
 devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   try {
+    if (!dev.online) throw new Error('Device is offline');
     const users = hideAdmins(req, await getRoster(dev));
     // Attach the actual card numbers per user (one bulk read for the whole
     // machine — not one call per user).
@@ -139,7 +140,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
       const all = [];
       let pos = 0;
       for (let i = 0; i < 50; i++) {
-        const page = await isapi.readAllCards(dev, pos, 100);
+        const page = await isapi.readAllCards(dev, pos, 100, { timeout: 2000 });
         all.push(...page.list);
         if (!page.list.length || all.length >= page.total) break;
         pos += page.list.length;
@@ -156,6 +157,35 @@ devicesRouter.get('/:id/users', async (req, res) => {
       users: users.map((u) => ({ ...u, cards: cardsBy.get(String(u.employeeNo)) || [] })),
     });
   } catch (e) {
+    // Fast database fallback so users view loads instantly even if device is offline/unreachable
+    try {
+      const dbUsers = await getRows(
+        `SELECT e.employee_no AS employeeNo, e.name, e.card_no, e.valid_begin, e.valid_end, e.status
+         FROM dbo.WN_HIK_AccessGrants g
+         JOIN dbo.WN_HIK_Employees e ON e.id = g.employee_id
+         WHERE g.device_id = ?`,
+        [dev.id]
+      );
+      if (dbUsers.length > 0) {
+        const mapped = dbUsers.map((u) => ({
+          employeeNo: u.employeeNo,
+          name: u.name,
+          cards: u.card_no ? [String(u.card_no)] : [],
+          numOfCard: u.card_no ? 1 : 0,
+          Valid: {
+            enable: u.status !== 'expired',
+            beginTime: u.valid_begin ? new Date(u.valid_begin).toISOString() : null,
+            endTime: u.valid_end ? new Date(u.valid_end).toISOString() : null,
+          },
+        }));
+        return res.json({
+          ok: true,
+          total: mapped.length,
+          users: mapped,
+          fromDb: true,
+        });
+      }
+    } catch {}
     res.status(502).json({ ok: false, error: String(e.message || e) });
   }
 });

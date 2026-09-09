@@ -7,8 +7,8 @@
 import * as isapi from './isapi.js';
 import { sp } from './db.js';
 
-const TTL = 20000; // ms
-const FAIL_TTL = 25000; // an unreachable machine isn't retried for this long
+const TTL = 120000; // ms (2 minutes — invalidated on user mutations)
+const FAIL_TTL = 45000; // an unreachable machine isn't retried for this long
 const entries = new Map(); // deviceId -> { at, data, inflight, failedAt, lastErr }
 
 // Persistent high-water mark of member employee numbers (< 9000) seen on any
@@ -30,7 +30,7 @@ async function scan(dev) {
   const users = [];
   let pos = 0;
   for (let i = 0; i < 100; i++) {
-    const page = await isapi.searchPersons(dev, pos, 100);
+    const page = await isapi.searchPersons(dev, pos, 60, { timeout: 2200 });
     users.push(...page.list);
     if (!page.list.length || users.length >= page.total) break;
     pos += page.list.length;
@@ -41,6 +41,11 @@ async function scan(dev) {
 // Full roster of a machine (array of device user records). Throws when the
 // machine is unreachable. maxAge can stretch the acceptable staleness.
 export function getRoster(dev, maxAge = TTL) {
+  if (!dev.online) {
+    const e = entries.get(dev.id);
+    if (e?.data) return Promise.resolve(e.data);
+    return Promise.reject(new Error('machine offline'));
+  }
   const e = entries.get(dev.id);
   const now = Date.now();
   if (e?.data && now - e.at < maxAge) return Promise.resolve(e.data);
