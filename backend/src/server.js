@@ -95,6 +95,24 @@ app.get('/api/cron/probe', async (req, res) => {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
+// Egress diagnostic: can THIS deployment open outbound TCP on an arbitrary
+// port at all? portquiz.net answers HTTP on every port, so a failure here
+// means the hosting blocks the port, while success pins the drop on the
+// office side (router/ISP filtering foreign sources).
+app.get('/api/cron/probe-egress', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.get('authorization') !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const port = Number(req.query.port) || 10303;
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`http://portquiz.net:${port}/`, { signal: AbortSignal.timeout(6000) });
+    res.json({ ok: true, port, status: r.status, ms: Date.now() - t0 });
+  } catch (e) {
+    res.json({ ok: false, port, ms: Date.now() - t0, error: String(e.cause?.message || e.message || e) });
+  }
+});
 app.use('/api', requireAuth);   // everything else needs a logged-in session
 app.use('/api/devices', devicesRouter);
 app.use('/api/cards', cardsRouter);
