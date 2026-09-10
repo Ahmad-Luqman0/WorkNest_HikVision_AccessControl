@@ -594,6 +594,9 @@ function wireGroupSelect(items, checkboxClass) {
 const views = { dashboard, devices, users, cards, logs, analytics: analyticsView, audit: auditView, dashusers, bookings: bookingsView };
 let current = 'dashboard';
 let _autoTimer = null; // live-refresh timer for dashboard / activity views
+let _cmdCachedEntries = [];
+let _cmdCachedUsers = [];
+let _cmdCachedDevs = [];
 document.querySelectorAll('nav a').forEach((a) =>
   a.addEventListener('click', () => go(a.dataset.view))
 );
@@ -678,6 +681,15 @@ const ICONS = {
   unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.8-1.3"/></svg>',
   analytics: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>',
+  table: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="9" y1="4" x2="9" y2="20"/></svg>',
+  zap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  userPlus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>',
+  door: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M14 12v.01"/></svg>',
+  audit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
 };
 
 const ACTION_LABELS = {
@@ -727,6 +739,7 @@ async function dashboard() {
     api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
     api.get('/bookings-feed?summary=1'), api.get('/analytics').catch(() => null),
   ]);
+  if (Array.isArray(devs)) _cmdCachedDevs = devs;
   if (current !== 'dashboard') return; // view changed while loading
 
   // Background non-blocking consistency and online checks
@@ -1127,6 +1140,7 @@ async function devices() {
     content.innerHTML = skeletonTable(['Name', 'Address', 'Model', 'Status', ''], 4);
   }
   const list = await api.get('/devices');
+  if (Array.isArray(list)) _cmdCachedDevs = list;
   if (current !== 'devices') return; // view changed while loading
   $('#viewActions').innerHTML =
     (dashRole === 'admin' ? '<button class="btn" id="addMachine">+ Add machine</button>' : '') +
@@ -1359,6 +1373,10 @@ function deviceModal(d = null, all = []) {
 
 // ---- Users (enrolled ON the machines) ----
 let _usersDevId = 'all';
+let _userViewMode = localStorage.getItem('wn_user_view_mode') || 'table';
+let _userSearchQuery = '';
+let _userActiveFilter = 'all';
+
 async function users() {
   if (!content.querySelector('#u_table')) {
     content.innerHTML = `
@@ -1375,21 +1393,80 @@ async function users() {
   content.innerHTML = '';
   if (!devs.length) { content.appendChild(el('<div class="empty">No machines yet. Provision a machine in the database first.</div>')); return; }
   if (_usersDevId !== 'all' && !devs.find((d) => d.id == _usersDevId)) _usersDevId = 'all';
-  content.appendChild(el(`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
-      <label class="hint">Machine</label>
-      <select id="u_dev">
-        <option value="all" ${_usersDevId === 'all' ? 'selected' : ''}>All machines</option>
-        ${devs.map((d) => `<option value="${d.id}" ${d.id == _usersDevId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
-      </select>
-      <button class="btn primary" id="u_add">+ Add user</button>
-      <button class="btn" id="u_daypass">+ Day pass</button>
-      <button class="btn" id="u_refresh">Refresh</button>
-    </div>`));
+
+  content.appendChild(el(`
+    <div class="users-toolbar">
+      <div class="user-search-wrapper">
+        ${ICONS.search}
+        <input type="text" id="userLiveSearch" class="user-search-input" value="${esc(_userSearchQuery)}" placeholder="Search by name, employee #, card, or room..." autocomplete="off" />
+        <button id="userSearchClear" class="user-search-clear" style="${_userSearchQuery ? '' : 'display:none'}" title="Clear search">✕</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <label class="hint" style="font-size:12px;">Machine</label>
+          <select id="u_dev" style="padding:6px 10px;font-size:12.5px;">
+            <option value="all" ${_usersDevId === 'all' ? 'selected' : ''}>All machines</option>
+            ${devs.map((d) => `<option value="${d.id}" ${d.id == _usersDevId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="view-toggle-group">
+          <button id="userViewTable" class="view-toggle-btn ${_userViewMode === 'table' ? 'active' : ''}" title="Table View">
+            ${ICONS.table}
+          </button>
+          <button id="userViewGrid" class="view-toggle-btn ${_userViewMode === 'grid' ? 'active' : ''}" title="Card Grid View">
+            ${ICONS.grid}
+          </button>
+        </div>
+
+        <button class="btn sm primary" id="u_add">+ Add user</button>
+        <button class="btn sm" id="u_daypass">+ Day pass</button>
+        <button class="btn sm" id="u_refresh" title="Reload from machines">↻</button>
+      </div>
+    </div>
+  `));
   content.appendChild(el('<div id="u_table"></div>'));
+
   $('#u_dev').addEventListener('change', (e) => { _usersDevId = e.target.value === 'all' ? 'all' : Number(e.target.value); loadUsersTable(devs); });
   $('#u_refresh').addEventListener('click', () => loadUsersTable(devs));
   $('#u_add').addEventListener('click', () => addUserModal(_usersDevId === 'all' ? devs[0] : devs.find((d) => d.id == _usersDevId), devs, _usersDevId === 'all'));
   $('#u_daypass').addEventListener('click', () => dayPassModal(devs));
+
+  $('#userLiveSearch')?.addEventListener('input', (e) => {
+    _userSearchQuery = e.target.value;
+    const clr = $('#userSearchClear');
+    if (clr) clr.style.display = _userSearchQuery ? '' : 'none';
+    window._applyUserFilters?.();
+  });
+
+  $('#userSearchClear')?.addEventListener('click', () => {
+    _userSearchQuery = '';
+    const inp = $('#userLiveSearch');
+    if (inp) { inp.value = ''; inp.focus(); }
+    const clr = $('#userSearchClear');
+    if (clr) clr.style.display = 'none';
+    window._applyUserFilters?.();
+  });
+
+  $('#userViewTable')?.addEventListener('click', () => {
+    _userViewMode = 'table';
+    localStorage.setItem('wn_user_view_mode', 'table');
+    $('#userViewTable')?.classList.add('active');
+    $('#userViewGrid')?.classList.remove('active');
+    $('#userTableWrap')?.style.setProperty('display', '');
+    $('#userGridWrap')?.style.setProperty('display', 'none');
+  });
+
+  $('#userViewGrid')?.addEventListener('click', () => {
+    _userViewMode = 'grid';
+    localStorage.setItem('wn_user_view_mode', 'grid');
+    $('#userViewGrid')?.classList.add('active');
+    $('#userViewTable')?.classList.remove('active');
+    $('#userTableWrap')?.style.setProperty('display', 'none');
+    $('#userGridWrap')?.style.setProperty('display', '');
+  });
+
   loadUsersTable(devs);
 }
 
@@ -1412,16 +1489,12 @@ async function loadUsersTable(devs) {
     for (const { d, r } of results) {
       if (!r.ok) { unreachable.push(d.name); continue; }
       for (const u of r.users) {
-        // Same person = same employee # AND same name. "#1 TEST" and
-        // "#1 Ahmad" on different machines stay separate rows.
         const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
         if (!map.has(key)) map.set(key, { u, on: [] });
         map.get(key).on.push(d);
       }
     }
     entries = [...map.values()].sort((a, b) =>
-      // machine admins first, then by how many machines they can access
-      // (all accesses first, down to entrance + one room), then employee #
       ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
       (b.on.length - a.on.length) ||
       ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
@@ -1437,78 +1510,157 @@ async function loadUsersTable(devs) {
         ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)));
   }
 
+  // Populate global cache for Command Palette
+  _cmdCachedEntries = entries;
+  _cmdCachedUsers = entries.map((e) => e.u);
+  _cmdCachedDevs = devs;
+
   const note = unreachable.length ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(unreachable.join(', '))} — their users are not shown.</p>` : '';
   if (!entries.length) { holder.innerHTML = `${note}<div class="empty">No users found. Click <b>+ Add user</b>.</div>`; return; }
 
-  const rows = entries.map(({ u, on }, i) => {
+  const nowTime = new Date();
+  const isExpired = (u) => u.Valid?.enable === false || (u.Valid?.endTime && new Date(u.Valid.endTime) <= nowTime);
+  const hasCard = (u) => (u.numOfCard || 0) > 0;
+  const hasBiometric = (u) => (u.numOfFP || 0) > 0 || (u.numOfFace || 0) > 0;
+
+  const rows = [];
+  const cards = [];
+
+  entries.forEach(({ u, on }, i) => {
     const creds = [];
     if (u.numOfCard) creds.push(`${u.numOfCard} card`);
     if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
     if (u.numOfFace) creds.push(`${u.numOfFace} face`);
     const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
     const blocked = u.Valid?.enable === false;
+    const expired = isExpired(u);
     const admin = !!u.localUIRight;
     const isRoomDev = (d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance');
     const totalRooms = devs.filter(isRoomDev).length;
     const tenantRooms = on.filter(isRoomDev);
     const roomList = tenantRooms.map((d) => 'room ' + d.code).join(', ');
-    // Keep the Room cell to ONE line: 1-2 rooms show as badges, everything-
-    // selected collapses to "All rooms", and anything in between shows the
-    // first room + a "+N more" badge (hover for the full list).
+    const cardStr = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
+
     let roomCell;
     if (!tenantRooms.length) roomCell = '<small class="hint">—</small>';
     else if (totalRooms > 1 && tenantRooms.length >= totalRooms) roomCell = `<span class="badge admin" title="${esc(roomList)}">All rooms (${tenantRooms.length})</span>`;
     else if (tenantRooms.length > 2) roomCell = `<span class="badge admin">room ${esc(tenantRooms[0].code)}</span> <span class="badge admin" title="${esc(roomList)}">+${tenantRooms.length - 1} more</span>`;
     else roomCell = tenantRooms.map((d) => `<span class="badge admin" title="Tenant — has access to this room">room ${esc(d.code)}</span>`).join(' ');
-    return `<tr class="clickable-row" data-rowidx="${i}" data-blocked="${blocked ? '1' : '0'}" data-admin="${admin ? '1' : '0'}" data-hascard="${u.numOfCard ? '1' : '0'}" title="View full profile">
-      <td style="text-align:center; width:36px;"><input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}"></td>
-      <td>${copyableBadge(u.employeeNo)}</td>
-      <td>
-        <div class="user-identity">
-          ${renderAvatar(u.name, 'sm')}
-          <div class="user-identity-names">
-            <a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a>
+
+    let machineCell = '';
+    if (all) {
+      const full = on.map((d) => d.name).join(', ');
+      const entr = on.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
+      const totalDevs = devs.length;
+      if (totalDevs > 1 && on.length >= totalDevs) {
+        machineCell = `<td class="nowrap"><span class="badge" title="${esc(full)}">All machines (${on.length})</span></td>`;
+      } else if (on.length <= 2) {
+        machineCell = `<td class="nowrap"><small class="hint">${esc(full)}</small></td>`;
+      } else {
+        const allEntr = entr.length && entr.length === devs.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance')).length;
+        const rest = on.length - (allEntr ? entr.length : 1);
+        machineCell = `<td class="nowrap">${allEntr
+          ? `<span class="badge">Entrances (${entr.length})</span> <span class="badge" title="${esc(full)}">+${rest} more</span>`
+          : `<small class="hint">${esc(on[0].name)}</small> <span class="badge" title="${esc(full)}">+${rest} more</span>`}</td>`;
+      }
+    }
+
+    // 1. Table Row
+    rows.push(`
+      <tr class="clickable-row" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}" title="View full profile">
+        <td style="text-align:center; width:36px;"><input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}"></td>
+        <td>${copyableBadge(u.employeeNo)}</td>
+        <td>
+          <div class="user-identity">
+            ${renderAvatar(u.name, 'sm')}
+            <div class="user-identity-names">
+              <a class="link" data-profile="${i}"><b>${esc(u.name || '—')}</b></a>
+            </div>
+          </div>
+        </td>
+        <td class="nowrap">${roomCell}</td>
+        <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
+        ${machineCell}
+        <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : expired ? '<span class="badge blocked">expired</span>' : `<small class="hint">${esc(end)}</small>`}</td>
+        <td class="creds-cell" data-credidx="${i}" style="cursor:pointer" title="View / manage credentials"><small class="hint"><a class="link" data-cards="${i}">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
+        <td class="row-actions">
+          <button class="btn sm" data-menu="${i}">Actions ▾</button>
+        </td>
+      </tr>
+    `);
+
+    // 2. Card View Item
+    cards.push(`
+      <div class="user-card" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}">
+        <div class="user-card-head">
+          <div class="user-card-id-block">
+            <input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}">
+            ${renderAvatar(u.name, 'md')}
+            <div class="user-card-name-wrap">
+              <a class="link user-card-name" data-profile="${i}"><b>${esc(u.name || 'User ' + u.employeeNo)}</b></a>
+              <div class="user-card-sub">
+                ${copyableBadge(u.employeeNo)}
+                ${admin ? '<span class="badge admin" style="font-size:10px;">Admin</span>' : '<span class="badge" style="font-size:10px;">Member</span>'}
+              </div>
+            </div>
+          </div>
+          <span class="badge ${blocked || expired ? 'blocked' : 'synced'}" style="font-size:10px;">
+            ${blocked ? 'Blocked' : expired ? 'Expired' : 'Active'}
+          </span>
+        </div>
+
+        <div class="user-card-body">
+          <div class="user-card-meta-row">
+            <span class="user-card-meta-label">Access / Room:</span>
+            <span class="user-card-meta-val">${roomCell}</span>
+          </div>
+          ${all ? `
+            <div class="user-card-meta-row">
+              <span class="user-card-meta-label">Machines:</span>
+              <span class="user-card-meta-val"><span class="badge" style="font-size:10.5px;">${on.length} door${on.length === 1 ? '' : 's'}</span></span>
+            </div>
+          ` : ''}
+          <div class="user-card-meta-row">
+            <span class="user-card-meta-label">Credentials:</span>
+            <span class="user-card-meta-val"><small class="hint">${esc(creds.join(' · ') || 'None enrolled')}</small></span>
+          </div>
+          <div class="user-card-meta-row">
+            <span class="user-card-meta-label">Valid Until:</span>
+            <span class="user-card-meta-val"><small class="hint">${esc(end)}</small></span>
           </div>
         </div>
-      </td>
-      <td class="nowrap">${roomCell}</td>
-      <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
-      ${all ? (() => {
-        const full = on.map((d) => d.name).join(', ');
-        const entr = on.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance'));
-        const totalDevs = devs.length;
-        let cell;
-        if (totalDevs > 1 && on.length >= totalDevs) {
-          cell = `<span class="badge" title="${esc(full)}">All machines (${on.length})</span>`;
-        } else if (on.length <= 2) {
-          cell = `<small class="hint">${esc(full)}</small>`;
-        } else {
-          const allEntr = entr.length && entr.length === devs.filter((d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance')).length;
-          const rest = on.length - (allEntr ? entr.length : 1);
-          cell = allEntr
-            ? `<span class="badge">Entrances (${entr.length})</span> <span class="badge" title="${esc(full)}">+${rest} more</span>`
-            : `<small class="hint">${esc(on[0].name)}</small> <span class="badge" title="${esc(full)}">+${rest} more</span>`;
-        }
-        return `<td class="nowrap">${cell}</td>`;
-      })() : ''}
-      <td class="nowrap">${blocked ? '<span class="badge blocked">blocked</span>' : `<small class="hint">${esc(end)}</small>`}</td>
-      <td class="creds-cell" data-credidx="${i}" style="cursor:pointer" title="View / manage credentials"><small class="hint"><a class="link" data-cards="${i}">${esc(creds.join(' · ') || 'no credentials — add card')}</a></small></td>
-      <td class="row-actions">
-        <button class="btn sm" data-menu="${i}">Actions ▾</button>
-      </td></tr>`;
-  }).join('');
+
+        <div class="user-card-footer">
+          <div style="display:flex;gap:6px;">
+            <button class="btn sm" data-profile="${i}" title="View profile">Profile</button>
+            <button class="btn sm" data-cards="${i}" title="Manage cards">Cards</button>
+          </div>
+          <button class="btn sm" data-menu="${i}">Actions ▾</button>
+        </div>
+      </div>
+    `);
+  });
 
   const countAll = entries.length;
-  const countActive = entries.filter((e) => e.u.Valid?.enable !== false).length;
-  const countAdmins = entries.filter((e) => e.u.localUIRight).length;
-  const countCards = entries.filter((e) => e.u.numOfCard > 0).length;
+  const countActive = entries.filter((e) => !isExpired(e.u)).length;
+  const countExpired = entries.filter((e) => isExpired(e.u)).length;
+  const countCards = entries.filter((e) => hasCard(e.u)).length;
+  const countNoCard = entries.filter((e) => !hasCard(e.u)).length;
+  const countBiometric = entries.filter((e) => hasBiometric(e.u)).length;
+  const countNoCreds = entries.filter((e) => !hasCard(e.u) && !hasBiometric(e.u)).length;
 
   const filterBarHtml = `
-    <div class="filter-bar" id="userFilterBar">
-      <button class="filter-chip active" data-ufilter="all">All <span class="chip-count">${countAll}</span></button>
-      <button class="filter-chip" data-ufilter="active">Active <span class="chip-count">${countActive}</span></button>
-      <button class="filter-chip" data-ufilter="cards">With Cards <span class="chip-count">${countCards}</span></button>
-      <button class="filter-chip" data-ufilter="admins">Admins <span class="chip-count">${countAdmins}</span></button>
+    <div class="filter-bar" id="userFilterBar" style="margin-bottom:10px;">
+      <button class="filter-chip ${_userActiveFilter === 'all' ? 'active' : ''}" data-ufilter="all">All <span class="chip-count">${countAll}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'active' ? 'active' : ''}" data-ufilter="active">Active <span class="chip-count">${countActive}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'expired' ? 'active' : ''}" data-ufilter="expired">Expired <span class="chip-count">${countExpired}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'cards' ? 'active' : ''}" data-ufilter="cards">With Cards <span class="chip-count">${countCards}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'nocard' ? 'active' : ''}" data-ufilter="nocard">Missing Card <span class="chip-count">${countNoCard}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'biometric' ? 'active' : ''}" data-ufilter="biometric">Biometrics Enrolled <span class="chip-count">${countBiometric}</span></button>
+      <button class="filter-chip ${_userActiveFilter === 'nocreds' ? 'active' : ''}" data-ufilter="nocreds">No Credentials <span class="chip-count">${countNoCreds}</span></button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px;">
+      <span class="hint tabular-nums" id="userMatchCount" style="font-size:12px;">Showing ${countAll} of ${countAll} members</span>
     </div>
   `;
 
@@ -1523,7 +1675,35 @@ async function loadUsersTable(devs) {
     </div>
   `;
 
-  holder.innerHTML = `${note}${filterBarHtml}<div id="consistencyNote"></div><div class="table-wrapper"><table><thead><tr><th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th><th>Emp #</th><th>Name</th><th>Room</th><th>Role</th>${all ? '<th>Machines</th>' : ''}<th>Valid until</th><th>Credentials</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>${dockHtml}`;
+  holder.innerHTML = `
+    ${note}
+    ${filterBarHtml}
+    <div id="consistencyNote"></div>
+    <div id="userTableWrap" class="table-wrapper" style="${_userViewMode === 'grid' ? 'display:none' : ''}">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th>
+            <th>Emp #</th>
+            <th>Name</th>
+            <th>Room</th>
+            <th>Role</th>
+            ${all ? '<th>Machines</th>' : ''}
+            <th>Valid until</th>
+            <th>Credentials</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.join('')}
+        </tbody>
+      </table>
+    </div>
+    <div id="userGridWrap" class="user-cards-grid" style="${_userViewMode === 'table' ? 'display:none' : ''}">
+      ${cards.join('')}
+    </div>
+    ${dockHtml}
+  `;
 
   const _selectedUserIndices = new Set();
   const dock = $('#floatingActionDock');
@@ -1544,18 +1724,70 @@ async function loadUsersTable(devs) {
     }
   };
 
+  const applyUserFilters = () => {
+    const q = (_userSearchQuery || '').trim().toLowerCase();
+    const filter = _userActiveFilter;
+    let matchCount = 0;
+
+    const checkMatch = (el) => {
+      const emp = (el.dataset.emp || '').toLowerCase();
+      const nm = (el.dataset.name || '').toLowerCase();
+      const rm = (el.dataset.room || '').toLowerCase();
+      const cardno = (el.dataset.cardno || '').toLowerCase();
+      const hascard = el.dataset.hascard === '1';
+      const hasbio = el.dataset.hasbio === '1';
+      const expired = el.dataset.expired === '1';
+
+      if (q) {
+        const match = emp.includes(q) || nm.includes(q) || rm.includes(q) || cardno.includes(q);
+        if (!match) return false;
+      }
+
+      if (filter === 'active') return !expired;
+      if (filter === 'expired') return expired;
+      if (filter === 'cards') return hascard;
+      if (filter === 'nocard') return !hascard;
+      if (filter === 'biometric') return hasbio;
+      if (filter === 'nocreds') return !hascard && !hasbio;
+      return true;
+    };
+
+    holder.querySelectorAll('tbody tr[data-rowidx]').forEach((tr) => {
+      const match = checkMatch(tr);
+      tr.style.display = match ? '' : 'none';
+      if (match) matchCount++;
+    });
+
+    holder.querySelectorAll('.user-cards-grid .user-card').forEach((card) => {
+      const match = checkMatch(card);
+      card.style.display = match ? '' : 'none';
+    });
+
+    const matchEl = $('#userMatchCount');
+    if (matchEl) {
+      matchEl.textContent = `Showing ${matchCount} of ${entries.length} members${q ? ` for "${q}"` : ''}`;
+    }
+    updateDock();
+  };
+
+  window._applyUserFilters = applyUserFilters;
+  applyUserFilters();
+
   holder.querySelectorAll('.user-row-cb').forEach((cb) => {
     cb.addEventListener('change', (ev) => {
       ev.stopPropagation();
       const idx = Number(cb.dataset.cbidx);
-      const row = cb.closest('tr');
-      if (cb.checked) {
+      const isChecked = cb.checked;
+      if (isChecked) {
         _selectedUserIndices.add(idx);
-        row?.classList.add('selected-row');
       } else {
         _selectedUserIndices.delete(idx);
-        row?.classList.remove('selected-row');
       }
+      holder.querySelectorAll(`[data-cbidx="${idx}"]`).forEach((input) => { input.checked = isChecked; });
+      holder.querySelectorAll(`[data-rowidx="${idx}"]`).forEach((el) => {
+        if (isChecked) el.classList.add(el.tagName === 'TR' ? 'selected-row' : 'selected-card');
+        else el.classList.remove(el.tagName === 'TR' ? 'selected-row' : 'selected-card');
+      });
       updateDock();
     });
   });
@@ -1566,15 +1798,13 @@ async function loadUsersTable(devs) {
       holder.querySelectorAll('tbody tr').forEach((tr) => {
         if (tr.style.display === 'none') return;
         const idx = Number(tr.dataset.rowidx);
-        const cb = tr.querySelector('.user-row-cb');
-        if (cb) cb.checked = check;
-        if (check) {
-          _selectedUserIndices.add(idx);
-          tr.classList.add('selected-row');
-        } else {
-          _selectedUserIndices.delete(idx);
-          tr.classList.remove('selected-row');
-        }
+        if (check) _selectedUserIndices.add(idx);
+        else _selectedUserIndices.delete(idx);
+        holder.querySelectorAll(`[data-cbidx="${idx}"]`).forEach((input) => { input.checked = check; });
+        holder.querySelectorAll(`[data-rowidx="${idx}"]`).forEach((el) => {
+          if (check) el.classList.add(el.tagName === 'TR' ? 'selected-row' : 'selected-card');
+          else el.classList.remove(el.tagName === 'TR' ? 'selected-row' : 'selected-card');
+        });
       });
       updateDock();
     });
@@ -1583,7 +1813,9 @@ async function loadUsersTable(devs) {
   $('#dockClearBtn')?.addEventListener('click', () => {
     _selectedUserIndices.clear();
     holder.querySelectorAll('.user-row-cb').forEach((cb) => { cb.checked = false; });
-    holder.querySelectorAll('tbody tr').forEach((tr) => tr.classList.remove('selected-row'));
+    holder.querySelectorAll('[data-rowidx]').forEach((el) => {
+      el.classList.remove('selected-row', 'selected-card');
+    });
     if (selectAllCb) selectAllCb.checked = false;
     updateDock();
   });
@@ -1620,15 +1852,8 @@ async function loadUsersTable(devs) {
     chip.addEventListener('click', () => {
       holder.querySelectorAll('#userFilterBar .filter-chip').forEach((c) => c.classList.remove('active'));
       chip.classList.add('active');
-      const filter = chip.dataset.ufilter;
-      holder.querySelectorAll('tbody tr').forEach((tr) => {
-        let show = true;
-        if (filter === 'active') show = tr.dataset.blocked !== '1';
-        else if (filter === 'admins') show = tr.dataset.admin === '1';
-        else if (filter === 'cards') show = tr.dataset.hascard === '1';
-        tr.style.display = show ? '' : 'none';
-      });
-      updateDock();
+      _userActiveFilter = chip.dataset.ufilter || 'all';
+      applyUserFilters();
     });
   });
 
@@ -3666,4 +3891,457 @@ async function auditView() {
   </div>`;
 }
 
+// ==========================================
+// ---- Global Command Palette (Cmd + K) ----
+// ==========================================
+let _cmdPaletteOpen = false;
+let _cmdSelectedIndex = 0;
+let _cmdCurrentItems = [];
+let _cmdRosterFetching = false;
+
+function openCommandPalette() {
+  const backdrop = $('#cmdPaletteBackdrop');
+  const input = $('#cmdPaletteInput');
+  if (!backdrop || !input) return;
+  _cmdPaletteOpen = true;
+  backdrop.hidden = false;
+  input.value = '';
+  _cmdSelectedIndex = 0;
+
+  // Asynchronously ensure devices and members are available in cache
+  if (!_cmdCachedDevs.length) {
+    api.get('/devices').then((d) => {
+      if (Array.isArray(d)) {
+        _cmdCachedDevs = d;
+        if (_cmdPaletteOpen) renderCommandPalette($('#cmdPaletteInput')?.value || '');
+      }
+    }).catch(() => {});
+  }
+
+  if (!_cmdCachedEntries.length && !_cmdRosterFetching) {
+    _cmdRosterFetching = true;
+    api.get('/roster').then(async (rr) => {
+      _cmdRosterFetching = false;
+      if (!rr?.ok || !rr.rosters) return;
+      let devs = _cmdCachedDevs;
+      if (!devs.length) devs = (await api.get('/devices')) || [];
+      const map = new Map();
+      for (const row of rr.rosters) {
+        if (!row.ok) continue;
+        const d = devs.find((x) => x.id === row.device_id) || { id: row.device_id, name: `Device ${row.device_id}` };
+        for (const u of row.users || []) {
+          const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+          if (!map.has(key)) map.set(key, { u, on: [] });
+          map.get(key).on.push(d);
+        }
+      }
+      _cmdCachedEntries = [...map.values()];
+      _cmdCachedUsers = _cmdCachedEntries.map((e) => e.u);
+      if (_cmdPaletteOpen) renderCommandPalette($('#cmdPaletteInput')?.value || '');
+    }).catch(() => { _cmdRosterFetching = false; });
+  }
+
+  renderCommandPalette('');
+  setTimeout(() => input.focus(), 30);
+}
+
+function closeCommandPalette() {
+  const backdrop = $('#cmdPaletteBackdrop');
+  if (!backdrop) return;
+  _cmdPaletteOpen = false;
+  backdrop.hidden = true;
+}
+
+function renderCommandPalette(query) {
+  const container = $('#cmdPaletteResults');
+  if (!container) return;
+  const q = String(query || '').trim().toLowerCase();
+
+  const isLight = document.documentElement.dataset.theme === 'light';
+  const actions = [
+    {
+      id: 'act-theme',
+      group: 'Quick Actions',
+      title: isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode',
+      subtitle: `Currently in ${isLight ? 'light' : 'dark'} mode`,
+      icon: isLight ? ICONS.moon : ICONS.sun,
+      badge: 'Theme',
+      search: 'theme dark light mode switch appearance color',
+      run: () => {
+        closeCommandPalette();
+        const next = isLight ? 'dark' : 'light';
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem('worknest_theme', next);
+        toast(`Theme set to ${next} mode`, 'ok');
+      },
+    },
+    {
+      id: 'act-daypass',
+      group: 'Quick Actions',
+      title: 'Create Day Pass',
+      subtitle: 'Issue a temporary access PIN or visitor pass',
+      icon: ICONS.card,
+      badge: 'Visitor',
+      search: 'day pass create temporary visitor ticket pin guest badge',
+      run: async () => {
+        closeCommandPalette();
+        let devs = _cmdCachedDevs;
+        if (!devs.length) devs = await api.get('/devices');
+        dayPassModal(devs);
+      },
+    },
+    {
+      id: 'act-adduser',
+      group: 'Quick Actions',
+      title: 'Add New User / Member',
+      subtitle: 'Enroll a new person with room and credential assignments',
+      icon: ICONS.userPlus,
+      badge: 'Enroll',
+      search: 'add new user member enroll person create employee',
+      run: async () => {
+        closeCommandPalette();
+        let devs = _cmdCachedDevs;
+        if (!devs.length) devs = await api.get('/devices');
+        addUserModal(devs[0], devs, true);
+      },
+    },
+    {
+      id: 'act-syncall',
+      group: 'Quick Actions',
+      title: 'Sync All Pending Changes',
+      subtitle: 'Push queued user/card sync updates across all machines',
+      icon: ICONS.sync,
+      badge: 'Sync',
+      search: 'sync all pending push queue offline machines terminals',
+      run: () => {
+        closeCommandPalette();
+        $('#syncAll')?.click();
+      },
+    },
+    {
+      id: 'act-onlinecheck',
+      group: 'Quick Actions',
+      title: 'Run Diagnostics & Reachability Check',
+      subtitle: 'Probe all terminals and refresh network online status',
+      icon: ICONS.zap,
+      badge: 'Network',
+      search: 'diagnostics test ping reachability online check machines health',
+      run: async () => {
+        closeCommandPalette();
+        toast('Running reachability check…');
+        const r = await api.post('/online-check');
+        toast(r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok ? 'ok' : 'err');
+        if (current === 'devices') devices();
+      },
+    },
+    {
+      id: 'act-exportcsv',
+      group: 'Quick Actions',
+      title: 'Export Users to CSV',
+      subtitle: 'Download member roster and credentials to spreadsheet',
+      icon: ICONS.download,
+      badge: 'Export',
+      search: 'export users members csv download excel spreadsheet',
+      run: () => {
+        closeCommandPalette();
+        if (_cmdCachedEntries.length) {
+          exportUsersCsv(_cmdCachedEntries);
+        } else {
+          go('users');
+        }
+      },
+    },
+  ];
+
+  // Add individual door unlock actions for reachable / known machines
+  if (_cmdCachedDevs && _cmdCachedDevs.length) {
+    for (const dev of _cmdCachedDevs) {
+      actions.push({
+        id: `act-unlock-${dev.id}`,
+        group: 'Quick Actions',
+        title: `Unlock Door: ${dev.name}`,
+        subtitle: `Trigger instant pulse unlock signal · ${dev.code ? 'Room ' + dev.code : dev.ip || 'Terminal'}`,
+        icon: ICONS.unlock,
+        badge: dev.online ? 'Online' : 'Offline',
+        badgeCls: dev.online ? 'synced' : 'blocked',
+        search: `unlock door ${dev.name} ${dev.code || ''} ${dev.ip || ''} open pulse gate room entrance`,
+        run: async () => {
+          closeCommandPalette();
+          const ok = await confirmDialog({
+            title: 'Unlock Door',
+            message: `Unlock the door on ${dev.name} now?`,
+            confirmText: 'Unlock Door',
+          });
+          if (!ok) return;
+          toast(`Unlocking ${dev.name}…`);
+          const r = await api.post(`/devices/${dev.id}/door`, { cmd: 'open' });
+          toast(r.ok ? `${dev.name} unlocked` : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+        },
+      });
+    }
+  }
+
+  // 2. Navigation Shortcuts
+  const navItems = [
+    {
+      id: 'nav-dash',
+      group: 'Navigation',
+      title: 'Go to Dashboard',
+      subtitle: 'Overview stats, machine health, and recent scans',
+      icon: ICONS.analytics,
+      badge: 'Home',
+      search: 'dashboard home overview stats activity',
+      run: () => { closeCommandPalette(); go('dashboard'); },
+    },
+    {
+      id: 'nav-users',
+      group: 'Navigation',
+      title: 'Go to Users & Members',
+      subtitle: 'Manage user access, enrollments, and room permissions',
+      icon: ICONS.user,
+      badge: 'Roster',
+      search: 'users members employees roster people profiles directory',
+      run: () => { closeCommandPalette(); go('users'); },
+    },
+    {
+      id: 'nav-devices',
+      group: 'Navigation',
+      title: 'Go to Machines & Terminals',
+      subtitle: 'Hikvision terminals, door relay controls, and hardware config',
+      icon: ICONS.machine,
+      badge: 'Hardware',
+      search: 'machines terminals devices hardware hikvision doors relays readers',
+      run: () => { closeCommandPalette(); go('devices'); },
+    },
+    {
+      id: 'nav-cards',
+      group: 'Navigation',
+      title: 'Go to Cards Management',
+      subtitle: 'RFID cards, unassigned badges, and card scanner reader',
+      icon: ICONS.card,
+      badge: 'RFID',
+      search: 'cards rfid badges access fobs tag reader credentials',
+      run: () => { closeCommandPalette(); go('cards'); },
+    },
+    {
+      id: 'nav-bookings',
+      group: 'Navigation',
+      title: 'Go to Bookings',
+      subtitle: 'Meeting room reservations and scheduled time slots',
+      icon: ICONS.clock,
+      badge: 'Schedule',
+      search: 'bookings reservations meeting rooms calendar schedule slots calendar',
+      run: () => { closeCommandPalette(); go('bookings'); },
+    },
+    {
+      id: 'nav-logs',
+      group: 'Navigation',
+      title: 'Go to Activity Logs',
+      subtitle: 'Live access log stream, card swipes, and door events',
+      icon: ICONS.clock,
+      badge: 'Events',
+      search: 'activity log access swipes events stream history live audit',
+      run: () => { closeCommandPalette(); go('logs'); },
+    },
+    {
+      id: 'nav-analytics',
+      group: 'Navigation',
+      title: 'Go to Analytics & Occupancy',
+      subtitle: 'Scan volume breakdown, peak hours, and user analytics',
+      icon: ICONS.analytics,
+      badge: 'Insights',
+      search: 'analytics charts occupancy graphs metrics peak hours scans trends',
+      run: () => { closeCommandPalette(); go('analytics'); },
+    },
+    {
+      id: 'nav-audit',
+      group: 'Navigation',
+      title: 'Go to Admin Audit Log',
+      subtitle: 'Security audit trail of operator changes and logins',
+      icon: ICONS.audit,
+      badge: 'Audit',
+      search: 'audit security log operator changes admin trail tamper compliance',
+      run: () => { closeCommandPalette(); go('audit'); },
+    },
+  ];
+
+  // 3. Members & Employees (if query is present)
+  const memberItems = [];
+  if (_cmdCachedEntries && _cmdCachedEntries.length && q) {
+    for (const e of _cmdCachedEntries) {
+      const u = e.u;
+      const rooms = (e.on || []).map((d) => d.code ? `Room ${d.code}` : d.name).join(', ');
+      const cards = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
+      const searchStr = `${u.name || ''} ${u.employeeNo || ''} ${cards} ${rooms} ${u.email || ''}`.toLowerCase();
+
+      if (searchStr.includes(q)) {
+        const creds = [];
+        if (u.numOfCard || (Array.isArray(u.cards) && u.cards.length)) {
+          const cCount = u.numOfCard || u.cards.length;
+          creds.push(`${cCount} card${cCount > 1 ? 's' : ''}`);
+        }
+        if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
+        if (u.numOfFace) creds.push(`${u.numOfFace} face`);
+        const credDesc = creds.join(' · ') || 'No credentials';
+
+        memberItems.push({
+          id: `usr-${u.employeeNo}`,
+          group: 'Members & Employees',
+          title: u.name || `User #${u.employeeNo}`,
+          subtitle: `Emp #${u.employeeNo} · ${credDesc} · ${rooms || 'No room assigned'}`,
+          icon: renderAvatar(u.name, 'sm'),
+          badge: u.localUIRight ? 'Admin' : 'Member',
+          badgeCls: u.localUIRight ? 'admin' : '',
+          search: searchStr,
+          run: async () => {
+            closeCommandPalette();
+            let devs = _cmdCachedDevs;
+            if (!devs.length) devs = await api.get('/devices');
+            userProfileModal(e);
+          },
+        });
+      }
+    }
+  }
+
+  // Filter actions and navigation by query
+  const matchedActions = q
+    ? actions.filter((a) => a.search.toLowerCase().includes(q) || a.title.toLowerCase().includes(q) || a.subtitle.toLowerCase().includes(q))
+    : actions;
+
+  const matchedNav = q
+    ? navItems.filter((n) => n.search.toLowerCase().includes(q) || n.title.toLowerCase().includes(q) || n.subtitle.toLowerCase().includes(q))
+    : navItems;
+
+  // Assemble list with groups
+  const groups = [];
+  if (matchedActions.length) groups.push({ title: 'Quick Actions', items: matchedActions });
+  if (memberItems.length) groups.push({ title: 'Members & Employees', items: memberItems.slice(0, 15) });
+  if (matchedNav.length) groups.push({ title: 'Navigation', items: matchedNav });
+
+  // Flatten items for indexing
+  _cmdCurrentItems = [];
+  let flatIdx = 0;
+  let html = '';
+
+  if (!groups.length) {
+    container.innerHTML = `
+      <div style="padding:40px 16px;text-align:center;color:var(--text-muted);font-size:13px;">
+        <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:var(--text-main);">No matches found</p>
+        <span class="hint">No commands, members, or doors found matching "<b>${esc(query)}</b>"</span>
+      </div>
+    `;
+    return;
+  }
+
+  for (const grp of groups) {
+    html += `<div class="cmd-group-title">${esc(grp.title)}</div>`;
+    for (const item of grp.items) {
+      item._flatIdx = flatIdx;
+      _cmdCurrentItems.push(item);
+      const isSelected = flatIdx === _cmdSelectedIndex;
+      html += `
+        <div class="cmd-item ${isSelected ? 'active-cmd-item' : ''}" data-cmd-idx="${flatIdx}">
+          <div class="cmd-item-left">
+            <div class="cmd-item-icon">${item.icon}</div>
+            <div class="cmd-item-info">
+              <span class="cmd-item-title">${esc(item.title)}</span>
+              <span class="cmd-item-subtitle">${esc(item.subtitle)}</span>
+            </div>
+          </div>
+          <div class="cmd-item-right">
+            ${item.badge ? `<span class="badge ${item.badgeCls || ''}" style="font-size:10px;">${esc(item.badge)}</span>` : ''}
+            <kbd style="font-size:10px;padding:2px 5px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:4px;color:var(--text-faint);">↵</kbd>
+          </div>
+        </div>
+      `;
+      flatIdx++;
+    }
+  }
+
+  if (_cmdSelectedIndex >= _cmdCurrentItems.length) {
+    _cmdSelectedIndex = 0;
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('.cmd-item').forEach((el) => {
+    const idx = Number(el.dataset.cmdIdx);
+    el.addEventListener('click', () => {
+      if (_cmdCurrentItems[idx]) _cmdCurrentItems[idx].run();
+    });
+    el.addEventListener('mouseenter', () => {
+      _cmdSelectedIndex = idx;
+      updateCmdSelection();
+    });
+  });
+
+  updateCmdSelection();
+}
+
+function updateCmdSelection() {
+  const container = $('#cmdPaletteResults');
+  if (!container) return;
+  const items = container.querySelectorAll('.cmd-item');
+  items.forEach((it, i) => {
+    if (i === _cmdSelectedIndex) {
+      it.classList.add('active-cmd-item');
+      it.scrollIntoView({ block: 'nearest' });
+    } else {
+      it.classList.remove('active-cmd-item');
+    }
+  });
+}
+
+function initCommandPalette() {
+  $('#cmdPaletteBtn')?.addEventListener('click', () => openCommandPalette());
+  $('#cmdPaletteClose')?.addEventListener('click', () => closeCommandPalette());
+  $('#cmdPaletteBackdrop')?.addEventListener('click', (e) => {
+    if (e.target.id === 'cmdPaletteBackdrop') closeCommandPalette();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (_cmdPaletteOpen) closeCommandPalette();
+      else openCommandPalette();
+      return;
+    }
+    if (e.key === 'Escape' && _cmdPaletteOpen) {
+      e.preventDefault();
+      closeCommandPalette();
+      return;
+    }
+  });
+
+  const input = $('#cmdPaletteInput');
+  if (input) {
+    input.addEventListener('input', (e) => {
+      _cmdSelectedIndex = 0;
+      renderCommandPalette(e.target.value);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (!_cmdCurrentItems.length) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _cmdSelectedIndex = (_cmdSelectedIndex + 1) % _cmdCurrentItems.length;
+        updateCmdSelection();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _cmdSelectedIndex = (_cmdSelectedIndex - 1 + _cmdCurrentItems.length) % _cmdCurrentItems.length;
+        updateCmdSelection();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const selected = _cmdCurrentItems[_cmdSelectedIndex];
+        if (selected) selected.run();
+      }
+    });
+  }
+}
+
+initCommandPalette();
+
 go('dashboard');
+
