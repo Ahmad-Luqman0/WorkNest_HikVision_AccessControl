@@ -12,7 +12,7 @@ import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster, getCardTable, invalidateRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents } from './scheduler.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents, sweepFaceVault, syncUsersTable } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
@@ -63,7 +63,12 @@ app.get('/api/cron/online-check', async (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
   try {
-    res.json({ ok: true, ...(await runOnlineCheck()) });
+    const check = await runOnlineCheck();
+    try { await replayPendingOps(); } catch { /* next run */ }
+    try { await archiveEvents(); } catch { /* next run */ }
+    try { await sweepFaceVault(); } catch { /* next run */ }
+    try { await syncUsersTable(); } catch { /* next run */ }
+    res.json({ ok: true, ...check });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -147,6 +152,18 @@ app.post('/api/online-check', async (req, res) => {
     const check = await runOnlineCheck();
     let replayed = 0;
     try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
+    // Backups ride on dashboard traffic so NOTHING depends on the local dev
+    // server: entry archive, face vault and the members backup table refresh
+    // at most every 5 minutes, triggered by whoever has the dashboard open.
+    try {
+      const lastB = await sp('WN_HIK_Settings_Get', { key: 'backup_ran_at' });
+      if (!(Number(lastB[0]?.value) > Date.now() - 300000)) {
+        await sp('WN_HIK_Settings_Set', { key: 'backup_ran_at', value: String(Date.now()) });
+        await archiveEvents().catch(() => {});
+        await sweepFaceVault().catch(() => {});
+        await syncUsersTable().catch(() => {});
+      }
+    } catch { /* next visit picks it up */ }
     res.json({ ok: true, ...check, replayed });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
