@@ -58,7 +58,18 @@ async function pathBlockedAt() {
 const liveOnly = async (req, res, next) => {
   const t = await pathBlockedAt();
   if (t && Date.now() - t < 600000) {
-    return res.status(503).json({ ok: false, blocked: true, error: 'The hosted dashboard cannot reach the machines: the office router blocks traffic from cloud servers. This action needs a live machine connection, so run it while on the office/local network — or fix the router port-forwards to allow all source IPs, which makes everything work from the cloud.' });
+    // Might have recovered since the flag was set — one cheap witness probe
+    // decides, so a restored link never stays locked out.
+    try {
+      const witness = (await getAllDevices()).find((d) => d.online);
+      if (witness) {
+        await isapi.getDeviceInfo(witness, { timeout: 2500 });
+        _blockedCache = { at: Date.now(), val: 0 };
+        sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
+        return next();
+      }
+    } catch { /* still unreachable */ }
+    return res.status(503).json({ ok: false, blocked: true, error: 'The site is unreachable from the dashboard server right now (site internet down, or the router is blocking this server). The action was not performed — try again shortly.' });
   }
   next();
 };

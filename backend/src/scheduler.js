@@ -72,39 +72,51 @@ export async function runClockSync() {
 // Ping every machine; update online/last_seen and log transitions so the
 // dashboard can show offline alerts.
 export async function runOnlineCheck() {
-  if (process.env.VERCEL && !process.env.CLOUD_CAN_SCAN) {
-    // Never sweep the whole fleet from the cloud: rapid probes across 55
-    // forwarded ports from one server read as a port scan to the office
-    // router, which blackholes the source IP — that froze the deployment on
-    // 2026-09-10. Statuses are maintained from the local/PK side. After the
-    // router is configured to allow it, set CLOUD_CAN_SCAN=1 in Vercel env
-    // to enable full cloud-side checking.
-    return { checked: 0, changed: 0, cameOnline: [], cloudPassive: true };
-  }
   const devices = await getAllDevices();
+  // Cloud mode: never sweep the whole fleet. Rapid connects across dozens of
+  // DEAD forwarded ports is exactly the signature the office router's
+  // port-scan protection bans on (it blackholed the deployment on
+  // 2026-09-10). Connecting to ports with a live service behind them is
+  // normal traffic — the dashboard did that safely for weeks. So from the
+  // cloud: probe every machine that was online (live ports), plus ONE
+  // rotating offline machine per pass to notice recoveries. Full sweeps run
+  // from the local/PK side, or from the cloud once the router is configured
+  // and CLOUD_CAN_SCAN=1 is set in Vercel env.
+  const gentle = !!(process.env.VERCEL && !process.env.CLOUD_CAN_SCAN);
+  let targets = devices;
+  if (gentle) {
+    const online = devices.filter((d) => d.online);
+    const offline = devices.filter((d) => !d.online);
+    targets = online;
+    if (offline.length) {
+      let idx = 0;
+      try { idx = Number((await sp('WN_HIK_Settings_Get', { key: 'offline_probe_idx' }))[0]?.value) || 0; } catch { /* start at 0 */ }
+      targets = [...online, offline[idx % offline.length]];
+      sp('WN_HIK_Settings_Set', { key: 'offline_probe_idx', value: String((idx + 1) % offline.length) }).catch(() => {});
+    }
+    if (!targets.length) return { checked: 0, changed: 0, cameOnline: [] };
+  }
   let changed = 0;
   const cameOnline = [];
   const cameOnlineDevs = [];
-  const results = await Promise.all(devices.map(async (dev) => {
+  const results = await Promise.all(targets.map(async (dev) => {
     try {
-      // Short timeout: on Vercel this runs inside a request with a 60s cap,
-      // and a mostly-offline fleet must still finish within it.
+      // Short timeout: on Vercel this runs inside a request with a 60s cap.
+      // The per-site connection limiter paces these 2 at a time.
       await isapi.getDeviceInfo(dev, { timeout: 2000 });
       return { dev, up: true };
     } catch { return { dev, up: false }; }
   }));
-  // Every single machine unreachable means it's OUR path that's dead — e.g.
-  // the office router/ISP drops traffic from cloud providers, so probes from
-  // Vercel all time out while the fleet is actually fine (verified 2026-09:
-  // both bom1 and sin1 blocked while a Pakistani connection gets through).
-  // Don't clobber the stored statuses from a vantage point that can't see
-  // anything; whoever CAN see the machines keeps the flags truthful.
-  if (devices.length && !results.some((r) => r.up)) {
+  // Every single probed machine unreachable means it's OUR path that's dead
+  // (site link down, or this server's traffic dropped) — not 50 machines
+  // dying at once. Don't clobber the stored statuses from a vantage point
+  // that can't see anything; whoever CAN see the machines keeps them honest.
+  if (targets.length && !results.some((r) => r.up)) {
     console.warn('[online] all machines unreachable from here — leaving stored statuses untouched');
     // Remember the blockage (only meaningful for the cloud deployment) so
     // live-action endpoints can fail fast instead of hanging on timeouts.
     if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(Date.now()) }).catch(() => {});
-    return { checked: devices.length, changed: 0, cameOnline: [], blocked: true };
+    return { checked: targets.length, changed: 0, cameOnline: [], blocked: true };
   }
   if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
   for (const { dev, up } of results) {

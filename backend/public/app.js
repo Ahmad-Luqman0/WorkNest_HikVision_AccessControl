@@ -107,7 +107,7 @@ function showCloudBlockedBar(blocked) {
   bar = document.createElement('div');
   bar.id = 'cloudBlockedBar';
   bar.style.cssText = 'position:sticky;top:0;z-index:60;background:#7a2e2e;color:#ffd7d7;padding:8px 14px;font-size:13px;line-height:1.45;';
-  bar.innerHTML = '<b>Cloud server can’t reach the machines.</b> The office router is blocking traffic from cloud providers, so live machine actions (unlock, capture, test) won’t work from this hosted dashboard — data pages still work from snapshots. Fix: allow ALL source IPs on the router’s port forwards (disable foreign-IP/geo blocking).';
+  bar.innerHTML = '<b>Machines unreachable from the dashboard server right now.</b> Statuses shown are the last verified ones; live machine actions (unlock, capture, test) will fail until the site is reachable again. This clears automatically as soon as any machine answers.';
   document.body.prepend(bar);
 }
 
