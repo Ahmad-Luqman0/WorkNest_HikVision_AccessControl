@@ -16,7 +16,7 @@ const activePerDevice = new Map();
 let activeFleet = 0;
 const waitQueue = [];
 
-function acquireSlot(host) {
+function acquireSlot(host, priority = false) {
   const curDev = activePerDevice.get(host) || 0;
   if (curDev < MAX_PER_DEVICE && activeFleet < MAX_FLEET) {
     activePerDevice.set(host, curDev + 1);
@@ -24,7 +24,11 @@ function acquireSlot(host) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
-    waitQueue.push({ host, resolve });
+    if (priority) {
+      waitQueue.unshift({ host, resolve });
+    } else {
+      waitQueue.push({ host, resolve });
+    }
   });
 }
 
@@ -46,7 +50,7 @@ function releaseSlot(host) {
   }
 }
 
-async function req(device, method, path, { json, xml, headers, timeout, attempts = 2 } = {}) {
+async function req(device, method, path, { json, xml, headers, timeout, attempts = 2, priority = false } = {}) {
   let body;
   const h = { ...(headers || {}) };
   if (json !== undefined) {
@@ -63,7 +67,7 @@ async function req(device, method, path, { json, xml, headers, timeout, attempts
   // many ports at once — to the router that looks like a port scan, and it
   // responds by blackholing the source (which froze the cloud deployment).
   const host = device.host || 'default';
-  await acquireSlot(host);
+  await acquireSlot(host, priority);
 
   try {
     let lastErr = null;
@@ -101,8 +105,8 @@ async function req(device, method, path, { json, xml, headers, timeout, attempts
 
 // ---- Connectivity / device info -------------------------------------------
 
-export async function getDeviceInfo(device, { timeout = 2500, attempts = 2 } = {}) {
-  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json', { timeout, attempts });
+export async function getDeviceInfo(device, { timeout = 2500, attempts = 2, priority = false } = {}) {
+  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json', { timeout, attempts, priority });
   if (!res.ok) throw new Error(`deviceInfo failed (${res.status}): ${res.text.slice(0, 200)}`);
   // Many MinMoe units ignore ?format=json and return XML — parse either shape.
   const j = res.json();

@@ -1228,10 +1228,20 @@ async function devices() {
     </tr></thead><tbody>${rows}</tbody></table></div>`));
 
   content.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', async () => {
+    const origText = b.textContent;
+    b.disabled = true;
+    b.textContent = 'Testing…';
     toast('Testing connection…');
-    const r = await api.post(`/devices/${b.dataset.test}/test`);
-    toast(r.ok ? `Connected: ${r.info.model || 'ok'}` : `Failed: ${r.error}`, r.ok ? 'ok' : 'err');
-    devices();
+    try {
+      const r = await api.post(`/devices/${b.dataset.test}/test`);
+      toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
+    } catch (err) {
+      toast(`Failed: ${err.message || 'connection error'}`, 'err');
+    } finally {
+      b.disabled = false;
+      b.textContent = origText;
+      devices();
+    }
   }));
   content.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
     const ok = await confirmDialog({

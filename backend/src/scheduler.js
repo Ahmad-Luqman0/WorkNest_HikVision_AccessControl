@@ -45,7 +45,8 @@ export async function runExpiryPass() {
 // Write the server's clock to every machine. A drifted machine clock makes
 // valid people look expired at the door — this makes that impossible.
 export async function runClockSync() {
-  const devices = await getAllDevices();
+  const devices = (await getAllDevices()).filter((d) => d.online);
+  if (!devices.length) return [];
   const results = [];
   const now = Date.now();
   await Promise.all(devices.map(async (dev) => {
@@ -158,7 +159,7 @@ export async function runOnlineCheck() {
 // fingerprint, card or face present on one machine and missing on another is
 // copied over — so enrolling at one machine propagates everywhere.
 export async function runCredentialSync() {
-  const devices = await getAllDevices();
+  const devices = (await getAllDevices()).filter((d) => d.online);
   if (devices.length < 2) return { copied: 0 };
 
   const rosters = (await Promise.all(devices.map(async (dev) => {
@@ -463,7 +464,8 @@ let _watchBusy = false;
 let _rosterSig = null;
 
 async function rosterSignature() {
-  const devices = await getAllDevices();
+  const devices = (await getAllDevices()).filter((d) => d.online);
+  if (!devices.length) return 'none-online';
   const parts = [];
   await Promise.all(devices.map(async (dev) => {
     try {
