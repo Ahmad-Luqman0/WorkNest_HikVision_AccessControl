@@ -57,7 +57,9 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
     h['Content-Type'] = 'application/xml';
   }
 
-  const host = device.host || 'default';
+  // Port matters: the whole fleet is port-forwarded through one public IP, so
+  // keying by host alone would throttle 55 separate machines as if they were one.
+  const host = device.host ? `${device.host}:${device.port || 0}` : 'default';
   await acquireSlot(host);
 
   try {
