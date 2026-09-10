@@ -46,7 +46,7 @@ function releaseSlot(host) {
   }
 }
 
-async function req(device, method, path, { json, xml, headers, timeout } = {}) {
+async function req(device, method, path, { json, xml, headers, timeout, attempts = 2 } = {}) {
   let body;
   const h = { ...(headers || {}) };
   if (json !== undefined) {
@@ -67,7 +67,8 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
 
   try {
     let lastErr = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const maxAttempts = Math.max(1, attempts || 2);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const res = await digestRequest({
           baseUrl: deviceBaseUrl(device),
@@ -84,7 +85,7 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
         lastErr = err;
         const msg = String(err.message || err);
         const isTransient = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|timeout/i.test(msg);
-        if (attempt === 0 && isTransient) {
+        if (attempt < maxAttempts - 1 && isTransient) {
           await new Promise((r) => setTimeout(r, 400));
           continue;
         }
@@ -100,8 +101,8 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
 
 // ---- Connectivity / device info -------------------------------------------
 
-export async function getDeviceInfo(device, { timeout = 2500 } = {}) {
-  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json', { timeout });
+export async function getDeviceInfo(device, { timeout = 2500, attempts = 2 } = {}) {
+  const res = await req(device, 'GET', '/ISAPI/System/deviceInfo?format=json', { timeout, attempts });
   if (!res.ok) throw new Error(`deviceInfo failed (${res.status}): ${res.text.slice(0, 200)}`);
   // Many MinMoe units ignore ?format=json and return XML — parse either shape.
   const j = res.json();

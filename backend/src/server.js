@@ -191,8 +191,9 @@ app.post('/api/online-check', async (req, res) => {
       try { const b = await sp('WN_HIK_Settings_Get', { key: 'path_blocked_at' }); return Number(b[0]?.value) > Date.now() - 600000; }
       catch { return false; }
     };
-    if (Number(last[0]?.value) > now - 60000) {
-      return res.json({ ok: true, skipped: true, changed: 0, blocked: await blockedFresh() });
+    const isBlocked = await blockedFresh();
+    if (!req.query.force && Number(last[0]?.value) > now - 60000) {
+      return res.json({ ok: true, skipped: true, changed: 0, blocked: isBlocked });
     }
     await sp('WN_HIK_Settings_Set', { key: 'online_check_at', value: String(now) });
     const check = await runOnlineCheck();
@@ -743,8 +744,14 @@ app.get('/api/stats', async (req, res) => {
       base[k.toLowerCase()] = v;
     }
 
+    let isBlocked = false;
+    try {
+      const b = await sp('WN_HIK_Settings_Get', { key: 'path_blocked_at' });
+      isBlocked = Number(b[0]?.value) > Date.now() - 600000;
+    } catch { /* ignore */ }
+
     const devices = Number(base.devices ?? devsCount?.n ?? 0);
-    const devicesOnline = Number(base.devicesonline ?? onlineDevsCount?.n ?? 0);
+    const devicesOnline = isBlocked ? 0 : Number(base.devicesonline ?? onlineDevsCount?.n ?? 0);
     const active = Number(base.active ?? activeEmpsCount?.n ?? 0);
     const expired = Number(base.expired ?? expiredEmpsCount?.n ?? 0);
     const cards = Number(base.cards ?? cardsCount?.n ?? 0);

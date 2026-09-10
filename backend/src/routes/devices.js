@@ -48,8 +48,7 @@ const hideAdmins = (req, users) =>
 // flag is written by the online check and clears itself when machines answer.
 let _blockedCache = { at: 0, val: 0 };
 async function pathBlockedAt() {
-  if (!process.env.VERCEL) return 0;
-  if (Date.now() - _blockedCache.at < 60000) return _blockedCache.val;
+  if (Date.now() - _blockedCache.at < 30000) return _blockedCache.val;
   let v = 0;
   try { const r = await sp('WN_HIK_Settings_Get', { key: 'path_blocked_at' }); v = Number(r[0]?.value) || 0; } catch { /* fail open */ }
   _blockedCache = { at: Date.now(), val: v };
@@ -63,7 +62,7 @@ const liveOnly = async (req, res, next) => {
     try {
       const witness = (await getAllDevices()).find((d) => d.online);
       if (witness) {
-        await isapi.getDeviceInfo(witness, { timeout: 2500 });
+        await isapi.getDeviceInfo(witness, { timeout: 2500, attempts: 1 });
         _blockedCache = { at: Date.now(), val: 0 };
         sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
         return next();
@@ -75,9 +74,14 @@ const liveOnly = async (req, res, next) => {
 };
 
 devicesRouter.get('/', async (req, res) => {
+  const t = await pathBlockedAt();
+  const blocked = !!(t && Date.now() - t < 600000);
   const rows = await getAllDevices();
-  // never leak passwords to the UI
-  res.json(rows.map(({ password, ...d }) => d));
+  // never leak passwords to the UI; if site is currently unreachable from this deployment, online is 0
+  res.json(rows.map(({ password, online, ...d }) => ({
+    ...d,
+    online: blocked ? 0 : (online ? 1 : 0),
+  })));
 });
 
 // Add a machine from the dashboard — admin accounts only.

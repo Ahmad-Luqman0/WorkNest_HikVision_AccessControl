@@ -103,23 +103,19 @@ export async function runOnlineCheck() {
     try {
       // Short timeout: on Vercel this runs inside a request with a 60s cap.
       // The per-site connection limiter paces these 2 at a time.
-      await isapi.getDeviceInfo(dev, { timeout: 2000 });
+      await isapi.getDeviceInfo(dev, { timeout: 2000, attempts: 1 });
       return { dev, up: true };
     } catch { return { dev, up: false }; }
   }));
-  // On the CLOUD only: every probed machine unreachable more likely means
-  // this server's traffic is being dropped (the router has banned it before)
-  // than 50 machines dying at once — don't let that vantage clobber the
-  // statuses. The local/PK server is the authority: whatever it observes is
-  // the truth, including a full site outage, which SHOULD show as offline.
-  if (process.env.VERCEL && targets.length && !results.some((r) => r.up)) {
-    console.warn('[online] all machines unreachable from here — leaving stored statuses untouched');
-    // Remember the blockage (only meaningful for the cloud deployment) so
-    // live-action endpoints can fail fast instead of hanging on timeouts.
-    if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(Date.now()) }).catch(() => {});
-    return { checked: targets.length, changed: 0, cameOnline: [], blocked: true };
+
+  const allDown = targets.length > 0 && !results.some((r) => r.up);
+  if (allDown) {
+    console.warn('[online] all probed machines unreachable — updating statuses to offline');
+    sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(Date.now()) }).catch(() => {});
+  } else {
+    sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
   }
-  if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
+
   for (const { dev, up } of results) {
     if (up) {
       if (!dev.online) { changed++; cameOnline.push(dev.name); cameOnlineDevs.push(dev); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }

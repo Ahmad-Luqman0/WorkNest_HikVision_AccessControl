@@ -110,7 +110,7 @@ function showCloudBlockedBar(blocked) {
   // grid whose direct children are columns, and an in-flow banner there
   // shoves the whole page sideways.
   bar.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:200;max-width:340px;background:#7a2e2e;color:#ffd7d7;padding:10px 14px;font-size:12.5px;line-height:1.45;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:auto;';
-  bar.innerHTML = '<b>Machines unreachable from the dashboard server.</b> Statuses shown are the last verified ones. Clears automatically once any machine answers. <span style="float:right;cursor:pointer;margin-left:8px;font-weight:700" onclick="this.parentElement.remove()">✕</span>';
+  bar.innerHTML = '<b>Machines unreachable from the dashboard server.</b> Terminals are offline in real time. Clears automatically once machines reconnect. <span style="float:right;cursor:pointer;margin-left:8px;font-weight:700" onclick="this.parentElement.remove()">✕</span>';
   document.body.appendChild(bar);
 }
 
@@ -771,6 +771,32 @@ async function dashboard() {
       slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
       slot.firstElementChild.addEventListener('click', () => go('users'));
     }).catch(() => { });
+
+    api.post('/online-check').then((r) => {
+      showCloudBlockedBar(!!r?.blocked);
+      if (r?.blocked) {
+        const badge = document.getElementById('heroBadge');
+        if (badge) {
+          badge.className = 'exec-greeting-badge alert';
+          badge.innerHTML = `<span class="live-dot" style="background:var(--red);box-shadow:0 0 8px var(--red)"></span> All Terminals Offline`;
+        }
+        document.querySelectorAll('#dashExecHero .live-dot').forEach((dot) => {
+          dot.style.background = 'var(--red)';
+          dot.style.boxShadow = '0 0 8px var(--red)';
+        });
+        document.querySelectorAll('.list-row .status-dot.on').forEach((dot) => {
+          dot.className = 'status-dot off';
+        });
+        document.querySelectorAll('.list-row span.badge.online').forEach((b) => {
+          b.className = 'badge offline';
+          b.textContent = 'Offline';
+        });
+        if (Array.isArray(_cmdCachedDevs)) {
+          _cmdCachedDevs.forEach((d) => (d.online = 0));
+        }
+      }
+      if (r?.ok && r.changed && current === 'dashboard' && !document.querySelector('#modalBackdrop:not([hidden])')) overview();
+    }).catch(() => { });
   }, 1000);
 
   const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
@@ -1243,6 +1269,15 @@ async function devices() {
   // needed there); refresh the list only if any machine changed state.
   api.post('/online-check').then((r) => {
     showCloudBlockedBar(!!r?.blocked);
+    if (r?.blocked) {
+      content.querySelectorAll('span.badge.online').forEach((b) => {
+        b.className = 'badge offline';
+        b.textContent = 'Offline';
+      });
+      if (Array.isArray(_cmdCachedDevs)) {
+        _cmdCachedDevs.forEach((d) => (d.online = 0));
+      }
+    }
     if (r?.ok && r.changed && current === 'devices' && !document.querySelector('#modalBackdrop:not([hidden])')) devices();
   }).catch(() => { });
 }
@@ -4555,10 +4590,11 @@ function renderCommandPalette(query) {
       run: async () => {
         closeCommandPalette();
         toast('Running reachability check…');
-        const r = await api.post('/online-check');
+        const r = await api.post('/online-check?force=1');
         showCloudBlockedBar(!!r?.blocked);
-        toast(r?.blocked ? 'This server can’t reach the site — statuses unchanged' : r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok && !r?.blocked ? 'ok' : 'err');
+        toast(r?.blocked ? 'Terminals unreachable — marked offline' : r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok && !r?.blocked ? 'ok' : 'err');
         if (current === 'devices') devices();
+        else if (current === 'dashboard') overview();
       },
     },
     {
