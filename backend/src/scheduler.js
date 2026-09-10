@@ -76,14 +76,25 @@ export async function runOnlineCheck() {
   let changed = 0;
   const cameOnline = [];
   const cameOnlineDevs = [];
-  await Promise.all(devices.map(async (dev) => {
-    let up = false;
+  const results = await Promise.all(devices.map(async (dev) => {
     try {
       // Short timeout: on Vercel this runs inside a request with a 60s cap,
       // and a mostly-offline fleet must still finish within it.
       await isapi.getDeviceInfo(dev, { timeout: 2000 });
-      up = true;
-    } catch { up = false; }
+      return { dev, up: true };
+    } catch { return { dev, up: false }; }
+  }));
+  // Every single machine unreachable means it's OUR path that's dead — e.g.
+  // the office router/ISP drops traffic from cloud providers, so probes from
+  // Vercel all time out while the fleet is actually fine (verified 2026-09:
+  // both bom1 and sin1 blocked while a Pakistani connection gets through).
+  // Don't clobber the stored statuses from a vantage point that can't see
+  // anything; whoever CAN see the machines keeps the flags truthful.
+  if (devices.length && !results.some((r) => r.up)) {
+    console.warn('[online] all machines unreachable from here — leaving stored statuses untouched');
+    return { checked: devices.length, changed: 0, cameOnline: [], blocked: true };
+  }
+  for (const { dev, up } of results) {
     if (up) {
       if (!dev.online) { changed++; cameOnline.push(dev.name); cameOnlineDevs.push(dev); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1 });
@@ -91,7 +102,7 @@ export async function runOnlineCheck() {
       if (dev.online) { changed++; logSync(null, dev.id, 'offline', false, 'machine stopped responding'); }
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
     }
-  }));
+  }
   // A machine that just came back gets reconciled right away: queued ops
   // first, then the credential sync copies fingerprints/cards/faces for every
   // person matched by employee # + name. (On serverless the watcher and the
