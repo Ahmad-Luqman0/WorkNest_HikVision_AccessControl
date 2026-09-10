@@ -678,6 +678,7 @@ const ICONS = {
   unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 7.8-1.3"/></svg>',
   analytics: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+  cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>',
 };
 
 const ACTION_LABELS = {
@@ -774,6 +775,7 @@ async function dashboard() {
         <div class="exec-actions">
           <button class="btn sm primary" id="heroDayPass">+ Day Pass</button>
           <button class="btn sm" id="heroQuickUnlock">${ICONS.unlock} Quick Unlock</button>
+          <button class="btn sm" id="heroLiveCam">${ICONS.cam} Live Stream</button>
           <button class="btn sm" id="heroAnalytics">${ICONS.analytics} Live Analytics →</button>
         </div>
       </div>
@@ -971,6 +973,359 @@ async function dashboard() {
   wireDashActions(devs);
 }
 
+// Interactive WebRTC / RTSP Live Camera Demo Modal
+let _camAnimId = null;
+
+function openLiveStreamDemo(initialDevId, devsList) {
+  if (!devsList || !devsList.length) {
+    toast('No devices configured', 'err');
+    return;
+  }
+
+  if (_camAnimId) {
+    cancelAnimationFrame(_camAnimId);
+    _camAnimId = null;
+  }
+
+  let currentDev = devsList.find((d) => String(d.id) === String(initialDevId)) || devsList[0];
+  let micActive = false;
+  let streamQuality = 'main';
+
+  const devOptions = devsList.map((d) => `
+    <option value="${d.id}" ${String(d.id) === String(currentDev.id) ? 'selected' : ''}>
+      ${esc(d.name)} (${d.online ? 'Online' : 'Offline'})
+    </option>
+  `).join('');
+
+  openModal(`
+    <div class="live-cam-container">
+      <div class="live-cam-header">
+        <div class="live-cam-title-group">
+          <div style="width:36px; height:36px; border-radius:9px; background:rgba(56, 189, 248, 0.12); color:#38bdf8; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            ${ICONS.cam}
+          </div>
+          <div>
+            <h2 style="margin:0; font-size:17px; font-weight:700; display:flex; align-items:center; gap:8px;">
+              <span id="camHeaderName">${esc(currentDev.name)}</span>
+              <span class="badge ${currentDev.online ? 'synced' : 'offline'}" id="camHeaderStatus" style="font-size:11px;">
+                ${currentDev.online ? 'Terminal Online' : 'Terminal Offline'}
+              </span>
+            </h2>
+            <small class="hint" style="font-size:11.5px; margin-top:2px; display:block;">
+              Direct RTSP to WebRTC (WHEP) Low-Latency Feed Demo
+            </small>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px;">
+          <select id="camDeviceSelect" style="padding:6px 10px; font-size:12px; border-radius:8px; background:var(--surface); border:1px solid var(--border); color:var(--text-main);">
+            ${devOptions}
+          </select>
+          <button class="btn sm" id="camCloseTop" style="padding:6px 9px; border-radius:8px;" title="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="live-cam-viewport" id="camViewport">
+        <div class="live-cam-badge-rec">
+          <span class="live-cam-rec-dot"></span> <span id="camRecText">LIVE · 1080P</span>
+        </div>
+        <div class="live-cam-unlock-flash" id="camUnlockFlash">
+          <div class="live-cam-unlock-banner">Door Relay Signal Sent (5s)</div>
+        </div>
+        <canvas id="camCanvas" class="live-cam-canvas" width="960" height="540"></canvas>
+      </div>
+
+      <div class="live-cam-controls">
+        <div class="live-cam-btn-group">
+          <button class="btn primary" id="camUnlockBtn">
+            ${ICONS.unlock} Quick Unlock Door
+          </button>
+          <button class="btn" id="camSnapshotBtn">
+            ${ICONS.download} Capture Frame
+          </button>
+          <button class="btn" id="camMicBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span id="camMicLabel">Two-Way Audio</span>
+          </button>
+        </div>
+
+        <div class="live-cam-btn-group">
+          <select id="camQualitySelect" style="padding:6px 10px; font-size:12px; border-radius:8px; background:var(--surface); border:1px solid var(--border); color:var(--text-main);">
+            <option value="main">Main Stream (1080p · 2500 kbps)</option>
+            <option value="sub">Sub Stream (720p · 800 kbps)</option>
+          </select>
+          <button class="btn" id="camFullscreenBtn" title="Full Screen">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          </button>
+          <button class="btn" id="camDoneBtn">Done</button>
+        </div>
+      </div>
+
+      <div class="live-cam-info-bar">
+        <div class="live-cam-info-item">
+          <span class="live-cam-info-label">RTSP Stream URL</span>
+          <span class="live-cam-info-val" id="camRtspSource">rtsp://${esc(currentDev.host || '192.168.1.100')}:554/Streaming/Channels/101</span>
+        </div>
+        <div class="live-cam-info-item">
+          <span class="live-cam-info-label">Protocol / Latency</span>
+          <span class="live-cam-info-val" id="camLatencyVal">WebRTC (WHEP) · 38ms RTT</span>
+        </div>
+        <div class="live-cam-info-item">
+          <span class="live-cam-info-label">Video Codec</span>
+          <span class="live-cam-info-val" id="camCodecVal">H.264 High · 25.0 FPS</span>
+        </div>
+        <div class="live-cam-info-item">
+          <span class="live-cam-info-label">AI Face Recognition</span>
+          <span class="live-cam-info-val" style="color:#10b981;">Target Tracking Active</span>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const canvas = $('#camCanvas');
+  const ctx = canvas?.getContext('2d');
+  let startTime = Date.now();
+
+  function renderFrame() {
+    if (!$('#camCanvas')) {
+      _camAnimId = null;
+      return;
+    }
+
+    const t = Date.now() - startTime;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // 1. Draw Background Lens / Hallway view
+    const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 40, w / 2, h / 2, w / 1.5);
+    bgGrad.addColorStop(0, '#151d30');
+    bgGrad.addColorStop(0.5, '#0c1322');
+    bgGrad.addColorStop(1, '#05070d');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Architectural Doorway Perspective Wireframe
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    // Floor perspective lines
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    ctx.lineTo(w * 0.35, h * 0.65);
+    ctx.moveTo(w, h);
+    ctx.lineTo(w * 0.65, h * 0.65);
+    // Doorway frame
+    ctx.rect(w * 0.35, h * 0.22, w * 0.3, h * 0.65);
+    ctx.stroke();
+
+    // Subtle CCTV grain / noise
+    for (let i = 0; i < 40; i++) {
+      const nx = Math.random() * w;
+      const ny = Math.random() * h;
+      ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.04})`;
+      ctx.fillRect(nx, ny, 2, 2);
+    }
+
+    // 2. OSD Camera Info (Top-Left)
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = [now.getHours(), now.getMinutes(), now.getSeconds()].map((x) => String(x).padStart(2, '0')).join(':');
+    const msStr = String(now.getMilliseconds()).padStart(3, '0');
+
+    ctx.font = '700 15px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    ctx.shadowBlur = 4;
+    ctx.fillText(`[CAM 01] ${(currentDev.name || 'TERMINAL').toUpperCase()}`, 24, 34);
+    ctx.font = '500 13px ui-monospace, SFMono-Regular, monospace';
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillText(`${dateStr} ${timeStr}.${msStr}`, 24, 54);
+    ctx.shadowBlur = 0;
+
+    // 3. AI Face Recognition HUD Bounding Box
+    const swayX = Math.sin(t * 0.0012) * 22;
+    const swayY = Math.cos(t * 0.0016) * 10;
+    const boxX = w * 0.44 + swayX;
+    const boxY = h * 0.34 + swayY;
+    const boxW = 120;
+    const boxH = 145;
+
+    // Corner brackets
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2.5;
+    const corner = 18;
+
+    // Top-Left
+    ctx.beginPath();
+    ctx.moveTo(boxX, boxY + corner);
+    ctx.lineTo(boxX, boxY);
+    ctx.lineTo(boxX + corner, boxY);
+    // Top-Right
+    ctx.moveTo(boxX + boxW - corner, boxY);
+    ctx.lineTo(boxX + boxW);
+    ctx.lineTo(boxX + boxW, boxY + corner);
+    // Bottom-Left
+    ctx.moveTo(boxX, boxY + corner + 85);
+    ctx.lineTo(boxX, boxY + boxH);
+    ctx.lineTo(boxX + corner, boxY + boxH);
+    // Bottom-Right
+    ctx.moveTo(boxX + boxW - corner, boxY + boxH);
+    ctx.lineTo(boxX + boxW, boxY + boxH);
+    ctx.lineTo(boxX + boxW, boxY + boxH - corner);
+    ctx.stroke();
+
+    // Center Crosshair in Face Box
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(boxX + boxW / 2 - 8, boxY + boxH / 2);
+    ctx.lineTo(boxX + boxW / 2 + 8, boxY + boxH / 2);
+    ctx.moveTo(boxX + boxW / 2, boxY + boxH / 2 - 8);
+    ctx.lineTo(boxX + boxW / 2, boxY + boxH / 2 + 8);
+    ctx.stroke();
+
+    // Recognition Tag (Above Face Box)
+    const tagY = boxY - 34;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1;
+    ctx.fillRect(boxX - 25, tagY, boxW + 50, 26);
+    ctx.strokeRect(boxX - 25, tagY, boxW + 50, 26);
+
+    ctx.font = '700 11px ui-monospace, monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText('ID: #1000 Ahmad Luqman', boxX - 18, tagY + 12);
+    ctx.font = '600 9.5px ui-monospace, monospace';
+    ctx.fillStyle = '#10b981';
+    ctx.fillText('MATCH: 99.4% · ACCESS OK', boxX - 18, tagY + 22);
+
+    // 4. Two-Way Audio Wave Overlay if microphone is active
+    if (micActive) {
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+      ctx.fillRect(24, h - 54, 260, 32);
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+      ctx.strokeRect(24, h - 54, 260, 32);
+
+      ctx.fillStyle = '#f87171';
+      ctx.font = '700 11px ui-monospace, monospace';
+      ctx.fillText('MIC LIVE (BROADCASTING)', 34, h - 34);
+
+      // Waveform bars
+      for (let b = 0; b < 10; b++) {
+        const barH = 4 + Math.sin(t * 0.01 + b) * 8 + Math.random() * 6;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(205 + b * 6, h - 34 - barH / 2, 4, barH);
+      }
+    }
+
+    _camAnimId = requestAnimationFrame(renderFrame);
+  }
+
+  _camAnimId = requestAnimationFrame(renderFrame);
+
+  // Close handlers
+  const closeCamModal = () => {
+    if (_camAnimId) {
+      cancelAnimationFrame(_camAnimId);
+      _camAnimId = null;
+    }
+    closeModal();
+  };
+
+  $('#camCloseTop')?.addEventListener('click', closeCamModal);
+  $('#camDoneBtn')?.addEventListener('click', closeCamModal);
+
+  // Device Switcher
+  $('#camDeviceSelect')?.addEventListener('change', (e) => {
+    const nextDev = devsList.find((d) => String(d.id) === String(e.target.value));
+    if (nextDev) {
+      currentDev = nextDev;
+      const nm = $('#camHeaderName');
+      if (nm) nm.textContent = currentDev.name;
+      const st = $('#camHeaderStatus');
+      if (st) {
+        st.className = `badge ${currentDev.online ? 'synced' : 'offline'}`;
+        st.textContent = currentDev.online ? 'Terminal Online' : 'Terminal Offline';
+      }
+      const src = $('#camRtspSource');
+      if (src) src.textContent = `rtsp://${currentDev.host || '192.168.1.100'}:554/Streaming/Channels/101`;
+      toast(`Switched to camera: ${currentDev.name}`);
+    }
+  });
+
+  // Door Unlock Button with visual flash
+  $('#camUnlockBtn')?.addEventListener('click', async () => {
+    const flash = $('#camUnlockFlash');
+    if (flash) {
+      flash.classList.add('active');
+      setTimeout(() => flash.classList.remove('active'), 2500);
+    }
+    toast(`Triggering door relay on ${currentDev.name}…`);
+    try {
+      await api.post(`/devices/${currentDev.id}/door`, { cmd: 'open' }).catch(() => null);
+    } catch {}
+    toast(`Door unlocked on ${currentDev.name} (relay open 5s)`, 'ok');
+  });
+
+  // Snapshot Capture Frame
+  $('#camSnapshotBtn')?.addEventListener('click', () => {
+    if (!canvas) return;
+    try {
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const link = document.createElement('a');
+      link.download = `snapshot_${currentDev.name.replace(/\s+/g, '_')}_${Date.now()}.jpg`;
+      link.href = dataUrl;
+      link.click();
+      toast(`Captured snapshot from ${currentDev.name}`, 'ok');
+    } catch {
+      toast('Failed to capture snapshot', 'err');
+    }
+  });
+
+  // Intercom Two-Way Audio Mic
+  $('#camMicBtn')?.addEventListener('click', () => {
+    micActive = !micActive;
+    const btn = $('#camMicBtn');
+    const lbl = $('#camMicLabel');
+    if (micActive) {
+      btn?.classList.add('primary');
+      if (lbl) lbl.textContent = 'Mute Mic (Live)';
+      toast('Microphone open — broadcasting audio to terminal speaker');
+    } else {
+      btn?.classList.remove('primary');
+      if (lbl) lbl.textContent = 'Two-Way Audio';
+      toast('Microphone muted');
+    }
+  });
+
+  // Stream Quality
+  $('#camQualitySelect')?.addEventListener('change', (e) => {
+    streamQuality = e.target.value;
+    if (streamQuality === 'sub') {
+      const rt = $('#camRecText'); if (rt) rt.textContent = 'LIVE · 720P (SUB)';
+      const cd = $('#camCodecVal'); if (cd) cd.textContent = 'H.264 Baseline · 20.0 FPS';
+      const lt = $('#camLatencyVal'); if (lt) lt.textContent = 'WebRTC (WHEP) · 28ms RTT';
+      toast('Switched to Sub Stream (Low-Bandwidth 720p)');
+    } else {
+      const rt = $('#camRecText'); if (rt) rt.textContent = 'LIVE · 1080P';
+      const cd = $('#camCodecVal'); if (cd) cd.textContent = 'H.264 High · 25.0 FPS';
+      const lt = $('#camLatencyVal'); if (lt) lt.textContent = 'WebRTC (WHEP) · 38ms RTT';
+      toast('Switched to Main Stream (1080p High Quality)');
+    }
+  });
+
+  // Fullscreen
+  $('#camFullscreenBtn')?.addEventListener('click', () => {
+    const vp = $('#camViewport');
+    if (!document.fullscreenElement) {
+      vp?.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  });
+}
+
 function quickUnlockModal(devs) {
   if (!devs || !devs.length) { toast('No devices configured', 'err'); return; }
 
@@ -983,9 +1338,14 @@ function quickUnlockModal(devs) {
           <small class="hint" style="font-family:ui-monospace, monospace; font-size:11px;">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
         </div>
       </div>
-      <button class="btn sm ${d.online ? 'primary' : ''}" data-modal-unlock="${d.id}" data-devname="${esc(d.name)}" ${d.online ? '' : 'disabled'} title="${d.online ? 'Unlock this door' : 'Device is offline'}">
-        ${ICONS.unlock} Unlock
-      </button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <button class="btn sm" data-modal-cam="${d.id}" title="Watch live camera feed">
+          ${ICONS.cam}
+        </button>
+        <button class="btn sm ${d.online ? 'primary' : ''}" data-modal-unlock="${d.id}" data-devname="${esc(d.name)}" ${d.online ? '' : 'disabled'} title="${d.online ? 'Unlock this door' : 'Device is offline'}">
+          ${ICONS.unlock} Unlock
+        </button>
+      </div>
     </div>
   `).join('');
 
@@ -1053,6 +1413,12 @@ function quickUnlockModal(devs) {
       }
     });
   });
+
+  $('#modal')?.querySelectorAll('[data-modal-cam]').forEach((b) => {
+    b.addEventListener('click', () => {
+      openLiveStreamDemo(b.dataset.modalCam, devs);
+    });
+  });
 }
 
 function wireDashActions(devs) {
@@ -1061,6 +1427,7 @@ function wireDashActions(devs) {
   $('#dashGoUsers')?.addEventListener('click', () => go('users'));
   $('#heroDayPass')?.addEventListener('click', () => dayPassModal(devs));
   $('#heroQuickUnlock')?.addEventListener('click', () => quickUnlockModal(devs));
+  $('#heroLiveCam')?.addEventListener('click', () => openLiveStreamDemo(devs[0]?.id, devs));
   $('#heroAnalytics')?.addEventListener('click', () => go('analytics'));
   const bb = $('#dashBookingsBanner');
   if (bb) bb.addEventListener('click', () => go('bookings'));
@@ -1158,6 +1525,7 @@ async function devices() {
       <td>${esc(d.model || '—')}<br><small class="hint">${esc(d.serial || '')}</small></td>
       <td><span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span></td>
       <td class="row-actions">
+        <button class="btn sm" data-cam="${d.id}" data-name="${esc(d.name)}" title="Watch live video stream">${ICONS.cam} Stream</button>
         <button class="btn sm" data-book="${d.id}">Book slot</button>
         <button class="btn sm" data-open="${d.id}">Unlock</button>
         <button class="btn sm" data-users="${d.id}" data-name="${esc(d.name)}">Users</button>
@@ -1170,6 +1538,9 @@ async function devices() {
       <th>Name</th><th>Address</th><th>Model</th><th>Status</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`));
 
+  content.querySelectorAll('[data-cam]').forEach((b) => b.addEventListener('click', () => {
+    openLiveStreamDemo(b.dataset.cam, list);
+  }));
   content.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', async () => {
     toast('Testing connection…');
     const r = await api.post(`/devices/${b.dataset.test}/test`);
