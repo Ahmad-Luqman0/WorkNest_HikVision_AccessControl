@@ -3497,13 +3497,16 @@ async function showUserAnalyticsBreakdown(empNo, name) {
     `).join('') || '<div class="hint" style="padding:6px 0;">No door scans recorded in this date range.</div>';
 
     // Grants / Accessible Gates chips
-    const grantChips = (r.grants || []).map((g) => `
-      <span class="uab-gate-chip">
-        <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:7px;height:7px;"></span>
-        ${esc(g.name)}
-        ${g.directEnroll ? '<small class="hint" style="margin-left:4px;font-style:italic;">(device enrolled)</small>' : (g.grp ? `<small class="hint">(${esc(g.grp)})</small>` : '')}
+    const hasGrants = r.grants && r.grants.length > 0;
+    const isDirectEnroll = hasGrants && r.grants.some((g) => g.directEnroll);
+
+    const grantChips = hasGrants ? (r.grants || []).map((g) => `
+      <span class="uab-gate-chip" title="${g.directEnroll ? 'Authorized via physical reader' : (g.grp ? `Access Group: ${esc(g.grp)}` : 'Access Granted')}">
+        <span class="status-dot ${g.online ? 'on' : 'off'}" style="width:6px;height:6px;flex-shrink:0;"></span>
+        <span>${esc(g.name)}</span>
+        ${!g.directEnroll && g.grp ? `<small class="hint" style="font-size:10px;">(${esc(g.grp)})</small>` : ''}
       </span>
-    `).join('') || '<span class="hint">Enrolled on local terminal; no centralized access group assigned yet.</span>';
+    `).join('') : '<span class="hint" style="font-size:12px;padding:4px 0;display:block;">Enrolled on local terminal; no centralized access group assigned yet.</span>';
 
     // Recent scans table
     const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
@@ -3573,10 +3576,16 @@ async function showUserAnalyticsBreakdown(empNo, name) {
     <!-- Authorized Gates / Doors -->
     <div class="uab-section-title">
       <span>Assigned Access Permissions</span>
-      <span class="tabular-nums">${r.grants ? r.grants.length : 0} gates</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${isDirectEnroll ? '<span class="badge" style="font-size:10px;padding:2px 7px;font-weight:500;">Terminal Enrolled</span>' : ''}
+        <span class="tabular-nums" style="font-size:11.5px;font-weight:600;">${r.grants ? r.grants.length : 0} gates</span>
+      </div>
     </div>
-    <div class="uab-gate-chips">
-      ${grantChips}
+    <div class="uab-gates-container">
+      ${isDirectEnroll ? '<div class="hint" style="font-size:11px;margin-bottom:8px;color:var(--text-muted);display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="8"/></svg> Verified on-device credentials active across physical readers:</div>' : ''}
+      <div class="uab-gate-chips">
+        ${grantChips}
+      </div>
     </div>
 
     <!-- Recent Scans Timeline Table -->
