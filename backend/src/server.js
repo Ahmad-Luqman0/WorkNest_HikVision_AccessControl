@@ -11,7 +11,7 @@ import { bookingsRouter } from './routes/bookings.js';
 import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
-import { getRoster, invalidateRoster } from './machineCache.js';
+import { getRoster, getCardTable, invalidateRoster } from './machineCache.js';
 import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
@@ -307,18 +307,22 @@ app.post('/api/bookings', async (req, res) => {
 // window, role, fingerprint/face counts and the actual card numbers.
 app.get('/api/profile', async (req, res) => {
   const employeeNo = String(req.query.employeeNo || '');
-  const name = String(req.query.name || '');
+  const name = String(req.query.name || '').trim().toLowerCase();
   if (!employeeNo) return res.status(400).json({ error: 'employeeNo required' });
+  // Served from the shared snapshots — clicking a profile used to query all
+  // 55 machines live (~29s); this answers in the time of a few DB reads.
   const devices = await getAllDevices();
-  const machines = [];
-  await Promise.all(devices.map(async (dev) => {
+  const machines = await Promise.all(devices.map(async (dev) => {
     try {
-      const p = await isapi.getPerson(dev, employeeNo);
-      const match = p && (!name || String(p.name || '').trim().toLowerCase() === name.trim().toLowerCase());
-      if (!match) { machines.push({ device_id: dev.id, device: dev.name, host: dev.host, present: false }); return; }
+      const users = await getRoster(dev);
+      const p = users.find((u) => String(u.employeeNo) === employeeNo
+        && (!name || String(u.name || '').trim().toLowerCase() === name));
+      if (!p) return { device_id: dev.id, device: dev.name, host: dev.host, present: false };
       let cards = [];
-      try { cards = await isapi.readCards(dev, employeeNo); } catch { /* leave empty */ }
-      machines.push({
+      try {
+        cards = (await getCardTable(dev)).filter((c) => String(c.employeeNo) === employeeNo).map((c) => c.cardNo);
+      } catch { /* cards unknown — counts still shown */ }
+      return {
         device_id: dev.id,
         device: dev.name,
         host: dev.host,
@@ -331,9 +335,9 @@ app.get('/api/profile', async (req, res) => {
         numOfFace: Number(p.numOfFace) || 0,
         cards,
         name: p.name,
-      });
+      };
     } catch {
-      machines.push({ device_id: dev.id, device: dev.name, host: dev.host, present: null }); // unreachable
+      return { device_id: dev.id, device: dev.name, host: dev.host, present: null }; // unreachable
     }
   }));
   machines.sort((a, b) => a.device_id - b.device_id);

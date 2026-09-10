@@ -65,9 +65,20 @@ async function scan(dev) {
 // machine is unreachable. maxAge can stretch the acceptable staleness.
 export function getRoster(dev, maxAge = TTL) {
   if (!dev.online) {
-    const e = entries.get(dev.id);
-    if (e?.data) return Promise.resolve(e.data);
-    return Promise.reject(new Error('machine offline'));
+    const e0 = entries.get(dev.id);
+    if (e0?.data) return Promise.resolve(e0.data);
+    // last known snapshot (any age) beats showing nothing for a dead machine
+    return (async () => {
+      const snap = await dbSnapshot(dev.id);
+      if (snap?.roster) {
+        try {
+          const users = JSON.parse(snap.roster);
+          entries.set(dev.id, { at: Date.now(), data: users });
+          return users;
+        } catch { /* corrupt */ }
+      }
+      throw new Error('machine offline');
+    })();
   }
   const e = entries.get(dev.id);
   const now = Date.now();
@@ -110,7 +121,7 @@ export function getCardTable(dev, maxAge = CARDS_TTL) {
   if (e?.inflight) return e.inflight;
   const inflight = (async () => {
     const snap = await dbSnapshot(dev.id);
-    if (snap?.cards && freshEnough(snap.cards_at, maxAge)) {
+    if (snap?.cards && (freshEnough(snap.cards_at, maxAge) || !dev.online)) {
       try {
         const list = JSON.parse(snap.cards);
         cardEntries.set(dev.id, { at: Date.now(), data: list });

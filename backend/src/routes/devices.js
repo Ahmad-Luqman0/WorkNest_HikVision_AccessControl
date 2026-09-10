@@ -367,6 +367,8 @@ devicesRouter.get('/:id/users/:employeeNo/access', async (req, res) => {
   const src = await getDeviceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
+  // Snapshot-served: the access dialog used to query all machines live
+  // (~27s to open); rosters answer the same fields in milliseconds.
   const devices = await getAllDevices();
   let name = null;
   const machines = await Promise.all(devices.map(async (d) => {
@@ -374,13 +376,14 @@ devicesRouter.get('/:id/users/:employeeNo/access', async (req, res) => {
     let enabled = true;
     let validEnd = null;
     try {
-      const p = await isapi.getPerson(d, employeeNo);
+      const users = await getRoster(d);
+      const p = users.find((u) => String(u.employeeNo) === employeeNo);
       present = !!p;
       enabled = p ? p.Valid?.enable !== false : true;
       validEnd = p?.Valid?.endTime || null;
       if (p && (d.id === src.id || !name)) name = p.name;
     } catch {
-      present = null; // unreachable
+      present = null; // unreachable and no snapshot
     }
     return { device_id: d.id, name: d.name, host: d.host, grp: d.grp || null, present, enabled, valid_end: validEnd, isSource: d.id === src.id };
   }));
