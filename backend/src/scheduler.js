@@ -107,11 +107,12 @@ export async function runOnlineCheck() {
       return { dev, up: true };
     } catch { return { dev, up: false }; }
   }));
-  // Every single probed machine unreachable means it's OUR path that's dead
-  // (site link down, or this server's traffic dropped) — not 50 machines
-  // dying at once. Don't clobber the stored statuses from a vantage point
-  // that can't see anything; whoever CAN see the machines keeps them honest.
-  if (targets.length && !results.some((r) => r.up)) {
+  // On the CLOUD only: every probed machine unreachable more likely means
+  // this server's traffic is being dropped (the router has banned it before)
+  // than 50 machines dying at once — don't let that vantage clobber the
+  // statuses. The local/PK server is the authority: whatever it observes is
+  // the truth, including a full site outage, which SHOULD show as offline.
+  if (process.env.VERCEL && targets.length && !results.some((r) => r.up)) {
     console.warn('[online] all machines unreachable from here — leaving stored statuses untouched');
     // Remember the blockage (only meaningful for the cloud deployment) so
     // live-action endpoints can fail fast instead of hanging on timeouts.
