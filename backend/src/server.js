@@ -906,11 +906,30 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
 
     // 1. Employee profile from DB
     let emp = null;
-    if (rawEmpNo && rawEmpNo !== 'null' && rawEmpNo !== 'undefined') {
+    if (rawEmpNo && rawEmpNo !== 'null' && rawEmpNo !== 'undefined' && rawEmpNo !== '0') {
       emp = await getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE employee_no = ?', [rawEmpNo]).catch(() => null);
     }
     if (!emp && nameQuery) {
       emp = await getRow('SELECT * FROM dbo.WN_HIK_Employees WHERE name = ?', [nameQuery]).catch(() => null);
+    }
+
+    const empNo = emp?.employee_no || (rawEmpNo !== '0' && rawEmpNo !== 'null' && rawEmpNo !== 'undefined' ? rawEmpNo : '');
+    const empName = emp?.name || nameQuery;
+
+    let userWhere = '';
+    let userParams = [];
+    if (empNo && empName) {
+      userWhere = '(employee_no = ? OR name = ?)';
+      userParams = [empNo, empName];
+    } else if (empNo) {
+      userWhere = 'employee_no = ?';
+      userParams = [empNo];
+    } else if (empName) {
+      userWhere = 'name = ?';
+      userParams = [empName];
+    } else {
+      userWhere = '1=0';
+      userParams = [];
     }
 
     // 2. Assigned devices/doors from AccessGrants (or derived from active terminal events)
@@ -925,18 +944,16 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       ).catch(() => []);
     }
 
-    const empNo = emp?.employee_no || rawEmpNo;
-    const empName = emp?.name || nameQuery;
-
-    if (grants.length === 0) {
+    if (grants.length === 0 && userWhere !== '1=0') {
       // If user was enrolled directly on a physical terminal (not provisioned via web dashboard),
       // discover the gates/terminals they are authorized on from event logs
+      const eventWhere = userWhere.replace(/\bemployee_no\b/g, 'e.employee_no').replace(/\bname\b/g, 'e.name');
       const activeDevs = await getRows(
         `SELECT DISTINCT d.id, d.name, d.location, d.grp, d.online
          FROM dbo.WN_HIK_Events e WITH (NOLOCK)
          JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = e.device_id OR d.name = e.device_name
-         WHERE (e.employee_no = ? OR (e.employee_no IS NULL AND e.name = ?))`,
-        [empNo, empName]
+         WHERE ${eventWhere}`,
+        userParams
       ).catch(() => []);
       if (activeDevs.length > 0) {
         grants = activeDevs.map((d) => ({ ...d, directEnroll: true }));
@@ -947,21 +964,21 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
     const doorBreakdown = await getRows(
       `SELECT device_name AS name, COUNT(*) AS count
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
-       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+       WHERE ${userWhere}
          AND event_time BETWEEN ? AND ?
        GROUP BY device_name
        ORDER BY count DESC`,
-      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+      [...userParams, `${from}T00:00:00`, `${to}T23:59:59`]
     ).catch(() => []);
 
     // 4. Hourly distribution for user
     const hourlyRows = await getRows(
       `SELECT DATEPART(hour, event_time) AS hr, COUNT(*) AS count
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
-       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+       WHERE ${userWhere}
          AND event_time BETWEEN ? AND ?
        GROUP BY DATEPART(hour, event_time)`,
-      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+      [...userParams, `${from}T00:00:00`, `${to}T23:59:59`]
     ).catch(() => []);
 
     const hourly = new Array(24).fill(0);
@@ -983,27 +1000,39 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
     const metaRow = await getRow(
       `SELECT COUNT(*) AS total, MIN(event_time) AS first_scan, MAX(event_time) AS last_scan
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
-       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+       WHERE ${userWhere}
          AND event_time BETWEEN ? AND ?`,
-      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+      [...userParams, `${from}T00:00:00`, `${to}T23:59:59`]
     ).catch(() => ({ total: 0, first_scan: null, last_scan: null }));
 
-    // 6. Recent scan event log entries (latest 30)
-    const recentEvents = await getRows(
+    // 6. Recent scan event log entries (latest 30 in range, or fallback to latest historical)
+    let recentEvents = await getRows(
       `SELECT TOP 30 id, device_name, event_time, card_no, minor
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
-       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))
+       WHERE ${userWhere}
          AND event_time BETWEEN ? AND ?
        ORDER BY event_time DESC`,
-      [empNo, empName, `${from}T00:00:00`, `${to}T23:59:59`]
+      [...userParams, `${from}T00:00:00`, `${to}T23:59:59`]
     ).catch(() => []);
+
+    let fallbackAllTime = false;
+    if (recentEvents.length === 0) {
+      recentEvents = await getRows(
+        `SELECT TOP 20 id, device_name, event_time, card_no, minor
+         FROM dbo.WN_HIK_Events WITH (NOLOCK)
+         WHERE ${userWhere}
+         ORDER BY event_time DESC`,
+        userParams
+      ).catch(() => []);
+      if (recentEvents.length > 0) fallbackAllTime = true;
+    }
 
     // 7. All-time total scans
     const allTimeRow = await getRow(
       `SELECT COUNT(*) AS total
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
-       WHERE (employee_no = ? OR (employee_no IS NULL AND name = ?))`,
-      [empNo, empName]
+       WHERE ${userWhere}`,
+      userParams
     ).catch(() => ({ total: 0 }));
 
     const totalScans = Number(metaRow?.total) || 0;
@@ -1038,6 +1067,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
         cardNo: e.card_no,
         minor: e.minor,
       })),
+      fallbackAllTime,
       range: { from, to },
     });
   } catch (e) {
