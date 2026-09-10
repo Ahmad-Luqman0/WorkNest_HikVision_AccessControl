@@ -106,9 +106,12 @@ function showCloudBlockedBar(blocked) {
   if (bar) return;
   bar = document.createElement('div');
   bar.id = 'cloudBlockedBar';
-  bar.style.cssText = 'position:sticky;top:0;z-index:60;background:#7a2e2e;color:#ffd7d7;padding:8px 14px;font-size:13px;line-height:1.45;';
-  bar.innerHTML = '<b>Machines unreachable from the dashboard server right now.</b> Statuses shown are the last verified ones; live machine actions (unlock, capture, test) will fail until the site is reachable again. This clears automatically as soon as any machine answers.';
-  document.body.prepend(bar);
+  // position:fixed so it NEVER participates in layout — the app body is a
+  // grid whose direct children are columns, and an in-flow banner there
+  // shoves the whole page sideways.
+  bar.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:200;max-width:340px;background:#7a2e2e;color:#ffd7d7;padding:10px 14px;font-size:12.5px;line-height:1.45;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:auto;';
+  bar.innerHTML = '<b>Machines unreachable from the dashboard server.</b> Statuses shown are the last verified ones. Clears automatically once any machine answers. <span style="float:right;cursor:pointer;margin-left:8px;font-weight:700" onclick="this.parentElement.remove()">✕</span>';
+  document.body.appendChild(bar);
 }
 
 function openModal(html) {
