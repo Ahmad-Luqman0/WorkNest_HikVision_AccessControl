@@ -73,6 +73,28 @@ app.get('/api/cron/online-check', async (req, res) => {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
+// Connectivity diagnostic: probe one machine from THIS deployment and report
+// the raw outcome — separates "machine down" from "this network can't reach
+// the site" (e.g. the office router filtering foreign traffic).
+app.get('/api/cron/probe', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret && req.get('authorization') !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    const dev = await getDeviceById(Number(req.query.device));
+    if (!dev) return res.status(404).json({ error: 'unknown device' });
+    const t0 = Date.now();
+    try {
+      const info = await isapi.getDeviceInfo(dev, { timeout: Number(req.query.timeout) || 6000 });
+      res.json({ ok: true, ms: Date.now() - t0, model: info?.model || info?.deviceName || null });
+    } catch (e) {
+      res.json({ ok: false, ms: Date.now() - t0, error: String(e.message || e) });
+    }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 app.use('/api', requireAuth);   // everything else needs a logged-in session
 app.use('/api/devices', devicesRouter);
 app.use('/api/cards', cardsRouter);
