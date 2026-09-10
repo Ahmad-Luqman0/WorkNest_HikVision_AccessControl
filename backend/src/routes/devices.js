@@ -120,9 +120,22 @@ devicesRouter.post('/:id/test', async (req, res) => {
     logSync(null, dev.id, 'test', true, info);
     res.json({ ok: true, info });
   } catch (e) {
-    await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
-    logSync(null, dev.id, 'test', false, String(e.message || e));
-    res.status(502).json({ ok: false, error: String(e.message || e) });
+    // Before declaring the machine down, prove OUR path to the site works by
+    // probing another machine that is currently flagged online. If that fails
+    // too, this server is what's blocked (the office router drops traffic
+    // from cloud providers) — don't falsify the stored status.
+    let pathOk = false;
+    try {
+      const witness = (await getAllDevices()).find((d) => d.online && d.id !== dev.id);
+      if (witness) { await isapi.getDeviceInfo(witness, { timeout: 3000 }); pathOk = true; }
+    } catch { /* witness unreachable too */ }
+    if (pathOk) {
+      await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
+      logSync(null, dev.id, 'test', false, String(e.message || e));
+      return res.status(502).json({ ok: false, error: String(e.message || e) });
+    }
+    logSync(null, dev.id, 'test', false, 'site unreachable from this server — status left unchanged');
+    res.status(502).json({ ok: false, blocked: true, error: 'This server cannot reach the site at all (the office router blocks cloud traffic), so this test says nothing about the machine. Status left unchanged — test from the local network, or fix the router to allow all source IPs on the port forwards.' });
   }
 });
 
