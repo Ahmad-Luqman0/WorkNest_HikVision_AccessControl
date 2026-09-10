@@ -185,10 +185,37 @@ app.post('/api/online-check', async (req, res) => {
   try {
     const last = await sp('WN_HIK_Settings_Get', { key: 'online_check_at' });
     const now = Date.now();
+    const blockedFresh = async () => {
+      try { const b = await sp('WN_HIK_Settings_Get', { key: 'path_blocked_at' }); return Number(b[0]?.value) > Date.now() - 600000; }
+      catch { return false; }
+    };
     if (Number(last[0]?.value) > now - 60000) {
-      return res.json({ ok: true, skipped: true, changed: 0 });
+      return res.json({ ok: true, skipped: true, changed: 0, blocked: await blockedFresh() });
     }
     await sp('WN_HIK_Settings_Set', { key: 'online_check_at', value: String(now) });
+    // Known-blocked cloud path: don't burn ~30s probing the whole fleet on
+    // every visit. Try two witness machines; only a reply proves the path is
+    // back and warrants the full check. DB-only backups still run meanwhile.
+    if (process.env.VERCEL && await blockedFresh()) {
+      const devs = await getAllDevices();
+      const witnesses = (devs.filter((d) => d.online).length ? devs.filter((d) => d.online) : devs).slice(0, 2);
+      let reachable = false;
+      for (const w of witnesses) {
+        try { await isapi.getDeviceInfo(w, { timeout: 2500 }); reachable = true; break; } catch { /* still blocked */ }
+      }
+      if (!reachable) {
+        await sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(now) });
+        try {
+          const lastB = await sp('WN_HIK_Settings_Get', { key: 'backup_ran_at' });
+          if (!(Number(lastB[0]?.value) > Date.now() - 300000)) {
+            await sp('WN_HIK_Settings_Set', { key: 'backup_ran_at', value: String(Date.now()) });
+            await syncUsersTable().catch(() => {}); // snapshot-based — works while blocked
+          }
+        } catch { /* next visit */ }
+        return res.json({ ok: true, blocked: true, changed: 0 });
+      }
+      await sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' });
+    }
     const check = await runOnlineCheck();
     let replayed = 0;
     try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }

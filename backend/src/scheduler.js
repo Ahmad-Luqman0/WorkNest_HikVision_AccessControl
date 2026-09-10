@@ -92,8 +92,12 @@ export async function runOnlineCheck() {
   // anything; whoever CAN see the machines keeps the flags truthful.
   if (devices.length && !results.some((r) => r.up)) {
     console.warn('[online] all machines unreachable from here — leaving stored statuses untouched');
+    // Remember the blockage (only meaningful for the cloud deployment) so
+    // live-action endpoints can fail fast instead of hanging on timeouts.
+    if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(Date.now()) }).catch(() => {});
     return { checked: devices.length, changed: 0, cameOnline: [], blocked: true };
   }
+  if (process.env.VERCEL) sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' }).catch(() => {});
   for (const { dev, up } of results) {
     if (up) {
       if (!dev.online) { changed++; cameOnline.push(dev.name); cameOnlineDevs.push(dev); logSync(null, dev.id, 'online', true, 'machine is reachable again'); }

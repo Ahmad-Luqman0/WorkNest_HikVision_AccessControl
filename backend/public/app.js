@@ -97,6 +97,20 @@ function toast(msg, kind = '') {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 3200);
 }
 
+// Persistent warning shown when the HOSTED server cannot reach the machines
+// (the office router blocks cloud traffic). Data pages keep working from
+// snapshots; live machine actions need the local network until it's fixed.
+function showCloudBlockedBar(blocked) {
+  let bar = document.getElementById('cloudBlockedBar');
+  if (!blocked) { if (bar) bar.remove(); return; }
+  if (bar) return;
+  bar = document.createElement('div');
+  bar.id = 'cloudBlockedBar';
+  bar.style.cssText = 'position:sticky;top:0;z-index:60;background:#7a2e2e;color:#ffd7d7;padding:8px 14px;font-size:13px;line-height:1.45;';
+  bar.innerHTML = '<b>Cloud server can’t reach the machines.</b> The office router is blocking traffic from cloud providers, so live machine actions (unlock, capture, test) won’t work from this hosted dashboard — data pages still work from snapshots. Fix: allow ALL source IPs on the router’s port forwards (disable foreign-IP/geo blocking).';
+  document.body.prepend(bar);
+}
+
 function openModal(html) {
   $('#modal').innerHTML = html;
   $('#modalBackdrop').hidden = false;
@@ -175,10 +189,10 @@ function initSse() {
       try {
         const data = JSON.parse(ev.data);
         if (data.type === 'activity') onLiveActivityEvent(data);
-      } catch {}
+      } catch { }
     };
-    _sseSource.onerror = () => {};
-  } catch {}
+    _sseSource.onerror = () => { };
+  } catch { }
 }
 
 function onLiveActivityEvent(entry) {
@@ -307,11 +321,11 @@ function generateBezierAreaChartSvg(dataPoints, width = 740, height = 240) {
   const padBottom = 30;
   const chartW = width - padLeft - padRight;
   const chartH = height - padTop - padBottom;
-  
+
   const safeData = Array.isArray(dataPoints) && dataPoints.length === 24 ? dataPoints : Array(24).fill(0);
   const maxVal = Math.max(5, ...safeData);
   const n = safeData.length;
-  
+
   const coords = safeData.map((val, i) => {
     const x = padLeft + (i / (n - 1)) * chartW;
     const y = padTop + chartH - (val / maxVal) * chartH;
@@ -421,7 +435,7 @@ function wireBezierChart() {
       if (dot) dot.style.opacity = '0';
       if (tt) tt.style.opacity = '0';
     });
-  } catch {}
+  } catch { }
 }
 
 // ---- Space Utilization Donut Generator ----
@@ -616,7 +630,7 @@ function go(view) {
   const breadcrumb = $('#viewBreadcrumb');
   if (breadcrumb) breadcrumb.textContent = title;
   $('#viewActions').innerHTML = '';
-  
+
   const searchContainer = $('#globalSearchContainer');
   if (searchContainer) {
     searchContainer.hidden = (view === 'dashboard');
@@ -753,7 +767,7 @@ async function dashboard() {
       }
       slot.innerHTML = `<div class="notice-banner">${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines (cards/fingerprints/faces differ) — open <b>Users</b> for details.</div>`;
       slot.firstElementChild.addEventListener('click', () => go('users'));
-    }).catch(() => {});
+    }).catch(() => { });
   }, 1000);
 
   const totalMachines = (s && s.devices > 0) ? s.devices : devs.length;
@@ -1225,21 +1239,22 @@ async function devices() {
   // Kick a live reachability check (works on Vercel too — no background jobs
   // needed there); refresh the list only if any machine changed state.
   api.post('/online-check').then((r) => {
+    showCloudBlockedBar(!!r?.blocked);
     if (r?.ok && r.changed && current === 'devices' && !document.querySelector('#modalBackdrop:not([hidden])')) devices();
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 // Live list of persons enrolled on a device (pulled straight from the terminal).
 function usersModal(srcDev, users, devs = []) {
   const rows = users.length
     ? users.map((u) => {
-        const creds = [];
-        if (u.cards && u.cards.length) creds.push(`card${u.cards.length > 1 ? 's' : ''} ${u.cards.join(', ')}`);
-        else if (u.numOfCard) creds.push(`${u.numOfCard} card`);
-        if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
-        if (u.numOfFace) creds.push(`${u.numOfFace} face`);
-        const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
-        return `<tr>
+      const creds = [];
+      if (u.cards && u.cards.length) creds.push(`card${u.cards.length > 1 ? 's' : ''} ${u.cards.join(', ')}`);
+      else if (u.numOfCard) creds.push(`${u.numOfCard} card`);
+      if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
+      if (u.numOfFace) creds.push(`${u.numOfFace} face`);
+      const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
+      return `<tr>
           <td>${esc(u.employeeNo)}</td>
           <td><b>${esc(u.name || '—')}</b></td>
           <td class="nowrap"><small class="hint">${esc(end)}</small></td>
@@ -1249,7 +1264,7 @@ function usersModal(srcDev, users, devs = []) {
             <button class="btn sm danger" data-del="${esc(u.employeeNo)}" data-uname="${esc(u.name || '')}">Delete</button>
           </td>
         </tr>`;
-      }).join('')
+    }).join('')
     : '<tr><td colspan="5" class="muted">No users enrolled on this device.</td></tr>';
   openModal(`
     <h2>Users on ${esc(srcDev.name)}</h2>
@@ -1835,7 +1850,7 @@ async function loadUsersTable(devs) {
       try {
         const r = await api.post('/expiring/extend', { employeeNo: it.u.employeeNo, name: it.u.name || undefined, days: 30 });
         if (r.ok) successCount++;
-      } catch {}
+      } catch { }
     }
     toast(`Successfully extended ${successCount} of ${selected.length} members`, successCount ? 'ok' : 'err');
     loadUsersTable(devs);
@@ -1901,7 +1916,7 @@ async function loadUsersTable(devs) {
       toast(err && !copied ? `Failed: ${err}` : `Done — copied ${copied} credential(s)`, err && !copied ? 'err' : 'ok');
       if (current === 'users') loadUsersTable(devs);
     }));
-  }).catch(() => {});
+  }).catch(() => { });
 
   holder.querySelectorAll('[data-profile]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userProfileModal(entries[Number(b.dataset.profile)]); }));
   // Whole row opens the profile — except clicks on buttons/links/inputs inside it.
@@ -2365,7 +2380,7 @@ async function userProfileModal(entry) {
     if (aCount && data?.ok && Array.isArray(data.logs)) {
       aCount.textContent = String(data.logs.length);
     }
-  }).catch(() => {});
+  }).catch(() => { });
 
   $('#ptab_doors')?.addEventListener('click', () => {
     $('#ptab_doors')?.classList.add('active');
@@ -2777,7 +2792,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       <select id="au_room">
         <option value="">— not a room tenant —</option>
         ${devs.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
-          .map((d) => `<option value="${d.id}">Room ${esc(d.code)}${d.name && d.name !== 'Room ' + d.code ? ' — ' + esc(d.name) : ''}</option>`).join('')}
+      .map((d) => `<option value="${d.id}">Room ${esc(d.code)}${d.name && d.name !== 'Room ' + d.code ? ' — ' + esc(d.name) : ''}</option>`).join('')}
       </select>
     </div>
     <div class="field"><label>Create on machines <small class="hint">(pick one or more)</small></label>
@@ -2814,7 +2829,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
   api.get('/devices/next-employee-no').then((r) => {
     const inp = $('#au_no');
     if (r?.ok && inp && !inp.value.trim()) inp.value = String(r.next);
-  }).catch(() => {});
+  }).catch(() => { });
   // Fingerprint-capture machine list mirrors whichever machines are ticked.
   // With an RFID card # entered, the fingerprint becomes optional — a
   // "card only" choice appears (and is preselected when the card came first).
@@ -2911,8 +2926,8 @@ async function cards() {
     // Holder names only — the machine list collapses into the Access column.
     const assignedHtml = byEmp.size
       ? [...byEmp.entries()].map(([no, x]) =>
-          `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)}</small>`
-        ).join('<br>')
+        `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)}</small>`
+      ).join('<br>')
       : nDev
         ? `standalone ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
         : '<span class="muted">not assigned</span>';
@@ -3720,7 +3735,7 @@ async function analyticsView() {
   $('#an_preset').addEventListener('change', () => {
     _anRange.preset = $('#an_preset').value;
     if (_anRange.preset !== 'custom') analyticsView();
-    else ['an_from', 'an_to', 'an_apply'].forEach((id) => { $('#' + id).style.display = ''; });
+    else['an_from', 'an_to', 'an_apply'].forEach((id) => { $('#' + id).style.display = ''; });
   });
   $('#an_apply').addEventListener('click', () => {
     _anRange.from = $('#an_from').value || null;
@@ -3781,8 +3796,8 @@ async function showUserAnalyticsBreakdown(empNo, name) {
     }
 
     const u = r.user || {};
-    const statusBadge = u.status === 'expired' 
-      ? '<span class="badge error">Expired</span>' 
+    const statusBadge = u.status === 'expired'
+      ? '<span class="badge error">Expired</span>'
       : '<span class="badge synced">Active Member</span>';
     const roomBadge = u.roomNo ? `<span class="badge">Room ${esc(u.roomNo)}</span>` : '';
     const cardBadge = u.cardNo ? `<span class="badge monospace">Card: ${copyableBadge(u.cardNo)}</span>` : '<span class="badge">No card registered</span>';
@@ -3855,7 +3870,7 @@ async function showUserAnalyticsBreakdown(empNo, name) {
       `;
     }).join('') || '<tr><td colspan="4" class="list-empty" style="padding:16px;">No recent scan logs found for this user.</td></tr>';
 
-  body.innerHTML = `
+    body.innerHTML = `
     <!-- Top Meta Badges -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
       ${statusBadge}
@@ -3929,15 +3944,15 @@ async function showUserAnalyticsBreakdown(empNo, name) {
     </div>
   `;
 
-  // Left action: jump to users view
-  const footerLeft = $('#uab_footer_left');
-  if (footerLeft && (empNo || u.employeeNo)) {
-    footerLeft.innerHTML = `<button class="btn sm" id="uab_jump_user">Manage in Users</button>`;
-    $('#uab_jump_user')?.addEventListener('click', () => {
-      closeModal();
-      go('users');
-    });
-  }
+    // Left action: jump to users view
+    const footerLeft = $('#uab_footer_left');
+    if (footerLeft && (empNo || u.employeeNo)) {
+      footerLeft.innerHTML = `<button class="btn sm" id="uab_jump_user">Manage in Users</button>`;
+      $('#uab_jump_user')?.addEventListener('click', () => {
+        closeModal();
+        go('users');
+      });
+    }
   } catch (err) {
     console.error('Failed to load user activity breakdown:', err);
     if (body) body.innerHTML = `<div class="empty">Failed to load user breakdown: ${esc(err?.message || err)}</div>`;
@@ -4423,7 +4438,7 @@ function openCommandPalette() {
         _cmdCachedDevs = d;
         if (_cmdPaletteOpen) renderCommandPalette($('#cmdPaletteInput')?.value || '');
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   if (!_cmdCachedEntries.length && !_cmdRosterFetching) {
@@ -4538,7 +4553,8 @@ function renderCommandPalette(query) {
         closeCommandPalette();
         toast('Running reachability check…');
         const r = await api.post('/online-check');
-        toast(r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok ? 'ok' : 'err');
+        showCloudBlockedBar(!!r?.blocked);
+        toast(r?.blocked ? 'This server can’t reach the site — statuses unchanged' : r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok && !r?.blocked ? 'ok' : 'err');
         if (current === 'devices') devices();
       },
     },

@@ -42,6 +42,27 @@ async function adminTargetError(req, dev, employeeNo) {
 const hideAdmins = (req, users) =>
   (req.auth?.role || 'user') === 'admin' ? users : users.filter((u) => !u.localUIRight);
 
+// When the cloud deployment's path to the site is known-blocked (the office
+// router drops traffic from cloud providers), live machine actions would just
+// hang through timeouts. Fail fast with an honest explanation instead. The
+// flag is written by the online check and clears itself when machines answer.
+let _blockedCache = { at: 0, val: 0 };
+async function pathBlockedAt() {
+  if (!process.env.VERCEL) return 0;
+  if (Date.now() - _blockedCache.at < 60000) return _blockedCache.val;
+  let v = 0;
+  try { const r = await sp('WN_HIK_Settings_Get', { key: 'path_blocked_at' }); v = Number(r[0]?.value) || 0; } catch { /* fail open */ }
+  _blockedCache = { at: Date.now(), val: v };
+  return v;
+}
+const liveOnly = async (req, res, next) => {
+  const t = await pathBlockedAt();
+  if (t && Date.now() - t < 600000) {
+    return res.status(503).json({ ok: false, blocked: true, error: 'The hosted dashboard cannot reach the machines: the office router blocks traffic from cloud servers. This action needs a live machine connection, so run it while on the office/local network — or fix the router port-forwards to allow all source IPs, which makes everything work from the cloud.' });
+  }
+  next();
+};
+
 devicesRouter.get('/', async (req, res) => {
   const rows = await getAllDevices();
   // never leak passwords to the UI
@@ -645,7 +666,7 @@ devicesRouter.post('/:id/users/:employeeNo/role', async (req, res) => {
 
 // Trigger the terminal to capture a fingerprint (it prompts the person to press
 // their finger), then store the captured template against that user on the device.
-devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', liveOnly, async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const fingerNo = Number(req.body?.fingerNo) || 1;
@@ -699,7 +720,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', async (req, res
 
 // Tag a card: prompt the terminal to read a card at its reader, then attach the
 // captured card number to this user on the device.
-devicesRouter.post('/:id/users/:employeeNo/capture-card', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/capture-card', liveOnly, async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
@@ -735,7 +756,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-card', async (req, res) => {
 
 // Unlock (or control) many machines at once. Body: { device_ids?[], cmd? }.
 // With no device_ids, applies to every machine.
-devicesRouter.post('/door', async (req, res) => {
+devicesRouter.post('/door', liveOnly, async (req, res) => {
   const allowed = ['open', 'close', 'alwaysOpen', 'alwaysClose'];
   const cmd = allowed.includes(req.body?.cmd) ? req.body.cmd : 'open';
   const ids = Array.isArray(req.body?.device_ids) && req.body.device_ids.length
@@ -763,7 +784,7 @@ devicesRouter.post('/door', async (req, res) => {
 
 // Detach a card number from machines (removes it from whichever user holds it;
 // the user profile itself stays). Defaults to every machine.
-devicesRouter.post('/card/delete', async (req, res) => {
+devicesRouter.post('/card/delete', liveOnly, async (req, res) => {
   const cardNo = String(req.body?.card_no || '').trim();
   if (!cardNo) return res.status(400).json({ error: 'card_no required' });
   const ids = Array.isArray(req.body?.device_ids) && req.body.device_ids.length
@@ -809,7 +830,7 @@ devicesRouter.get('/:id/users/:employeeNo/cards', async (req, res) => {
 
 // Enroll a face: the terminal shows its face-capture UI, the person looks at
 // the camera, and the captured face is stored for this user on the device.
-devicesRouter.post('/:id/users/:employeeNo/capture-face', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/capture-face', liveOnly, async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
@@ -845,7 +866,7 @@ devicesRouter.post('/:id/users/:employeeNo/capture-face', async (req, res) => {
 // Delete a user's fingerprints (all slots) on the given machines, keeping
 // face, cards and profile. Deleting on only some machines may be undone by
 // the credential auto-sync if the template is exportable elsewhere.
-devicesRouter.post('/:id/users/:employeeNo/delete-fingerprints', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/delete-fingerprints', liveOnly, async (req, res) => {
   const src = await getDeviceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
@@ -870,7 +891,7 @@ devicesRouter.post('/:id/users/:employeeNo/delete-fingerprints', async (req, res
 // Delete a user's enrolled face(s) while keeping fingerprints, cards and the
 // profile. Applies to every given machine — deleting on just one would be
 // undone by the credential auto-sync copying the face back.
-devicesRouter.post('/:id/users/:employeeNo/delete-face', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/delete-face', liveOnly, async (req, res) => {
   const src = await getDeviceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'not found' });
   const employeeNo = String(req.params.employeeNo);
@@ -891,7 +912,7 @@ devicesRouter.post('/:id/users/:employeeNo/delete-face', async (req, res) => {
 });
 
 // Attach a typed card number to an existing user on a device (no tap needed).
-devicesRouter.post('/:id/users/:employeeNo/card', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/card', liveOnly, async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const cardNo = String(req.body?.card_no || '').trim();
@@ -912,7 +933,7 @@ devicesRouter.post('/:id/users/:employeeNo/card', async (req, res) => {
 });
 
 // Remote door control from the dashboard (default: momentary unlock).
-devicesRouter.post('/:id/door', async (req, res) => {
+devicesRouter.post('/:id/door', liveOnly, async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
   const allowed = ['open', 'close', 'alwaysOpen', 'alwaysClose'];
@@ -937,7 +958,7 @@ devicesRouter.post('/:id/door', async (req, res) => {
 // Copy one enrolled person (identity + cards + fingerprints) from this device to
 // one or more target machines, with a chosen access-until deadline enforced by
 // the terminal itself. Face photos cannot be exported from a device.
-devicesRouter.post('/:id/users/:employeeNo/copy', async (req, res) => {
+devicesRouter.post('/:id/users/:employeeNo/copy', liveOnly, async (req, res) => {
   const src = await getDeviceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'source machine not found' });
   const employeeNo = String(req.params.employeeNo);
