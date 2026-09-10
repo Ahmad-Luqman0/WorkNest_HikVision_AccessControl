@@ -2268,25 +2268,119 @@ async function userProfileModal(entry) {
   }).join('');
 
   body.innerHTML = `
-    <div class="profile-summary-bar">
-      <div class="psb-item"><span class="psb-label">Credentials:</span> <span class="psb-val">${esc(credsSummary)}</span></div>
-      <div class="psb-item"><span class="psb-label">Access:</span> <span class="psb-val">${accessCount} of ${r.machines.length} doors</span></div>
+    <div class="profile-tabs">
+      <button class="profile-tab-btn active" id="ptab_doors">
+        Door Access
+      </button>
+      <button class="profile-tab-btn" id="ptab_audit">
+        Audit & Credential Diffs <span class="profile-tab-count" id="ptab_audit_count">…</span>
+      </button>
     </div>
-    <div class="table-wrapper" style="max-height:340px; overflow-y:auto;">
-      <table class="profile-table">
-        <thead>
-          <tr>
-            <th>Machine / Door</th>
-            <th>Valid Until</th>
-            <th>Role</th>
-            <th>Access Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
+
+    <div id="pview_doors">
+      <div class="profile-summary-bar">
+        <div class="psb-item"><span class="psb-label">Credentials:</span> <span class="psb-val">${esc(credsSummary)}</span></div>
+        <div class="psb-item"><span class="psb-label">Access:</span> <span class="psb-val">${accessCount} of ${r.machines.length} doors</span></div>
+      </div>
+      <div class="table-wrapper" style="max-height:340px; overflow-y:auto;">
+        <table class="profile-table">
+          <thead>
+            <tr>
+              <th>Machine / Door</th>
+              <th>Valid Until</th>
+              <th>Role</th>
+              <th>Access Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="pview_audit" style="display:none;">
+      <div id="ptab_audit_content">
+        <div class="empty" style="padding:24px 0;">Loading audit trail and change history…</div>
+      </div>
     </div>`;
+
+  let auditLoaded = false;
+  const loadUserAudit = async () => {
+    if (auditLoaded) return;
+    const aContent = $('#ptab_audit_content');
+    const aCount = $('#ptab_audit_count');
+    if (!aContent) return;
+    try {
+      const data = await api.get(`/audit-logs?limit=100&employeeNo=${encodeURIComponent(u.employeeNo)}`);
+      auditLoaded = true;
+      if (!data?.ok || !data.logs || !data.logs.length) {
+        if (aCount) aCount.textContent = '0';
+        aContent.innerHTML = `<div class="empty" style="padding:24px 0;">No logged credential changes or audit events recorded for this member yet.</div>`;
+        return;
+      }
+      if (aCount) aCount.textContent = String(data.logs.length);
+      const itemsHtml = data.logs.map((log, idx) => {
+        const diff = parseAuditDiff(log);
+        return `
+          <div class="diff-timeline-item">
+            <div class="diff-timeline-icon">
+              ${diff.type === 'access' ? ICONS.machine : diff.type === 'extend' ? ICONS.clock : diff.type === 'card' ? ICONS.card : ICONS.audit}
+            </div>
+            <div class="diff-timeline-card">
+              <div class="diff-timeline-head">
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <span class="diff-timeline-title">${esc(diff.title)}</span>
+                  <span class="badge ${diff.badgeCls}" style="font-size:10px;">${esc(diff.badge)}</span>
+                </div>
+                <span class="diff-timeline-time tabular-nums">${esc(log.ts)}</span>
+              </div>
+              <div class="diff-timeline-body">
+                <div>${diff.summaryHtml}</div>
+              </div>
+              <div class="diff-timeline-footer">
+                <span>Actor: <b>${esc(log.actor || 'admin')}</b> (${esc(log.ip || '127.0.0.1')})</span>
+                <button class="btn sm diff-btn" data-usr-diff="${idx}">Inspect Diff ▾</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      aContent.innerHTML = `<div class="diff-timeline">${itemsHtml}</div>`;
+      aContent.querySelectorAll('[data-usr-diff]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const l = data.logs[Number(b.dataset.usrDiff)];
+          if (l) openVisualDiffModal(l);
+        });
+      });
+    } catch (err) {
+      aContent.innerHTML = `<div class="empty" style="padding:20px 0;">Failed to load audit history: ${esc(err?.message || err)}</div>`;
+    }
+  };
+
+  // Prefetch count in background
+  api.get(`/audit-logs?limit=50&employeeNo=${encodeURIComponent(u.employeeNo)}`).then((data) => {
+    const aCount = $('#ptab_audit_count');
+    if (aCount && data?.ok && Array.isArray(data.logs)) {
+      aCount.textContent = String(data.logs.length);
+    }
+  }).catch(() => {});
+
+  $('#ptab_doors')?.addEventListener('click', () => {
+    $('#ptab_doors')?.classList.add('active');
+    $('#ptab_audit')?.classList.remove('active');
+    $('#pview_doors')?.style.setProperty('display', '');
+    $('#pview_audit')?.style.setProperty('display', 'none');
+  });
+
+  $('#ptab_audit')?.addEventListener('click', () => {
+    $('#ptab_audit')?.classList.add('active');
+    $('#ptab_doors')?.classList.remove('active');
+    $('#pview_doors')?.style.setProperty('display', 'none');
+    $('#pview_audit')?.style.setProperty('display', '');
+    loadUserAudit();
+  });
 }
 
 // Edit a user's name / employee # across every machine they exist on.
@@ -3850,45 +3944,459 @@ async function showUserAnalyticsBreakdown(empNo, name) {
   }
 }
 
+// ====================================================
+// ---- Visual Credential Change Diff Viewer & Audit ----
+// ====================================================
+
+function parseAuditDiff(l) {
+  let info = {};
+  if (typeof l.info === 'object' && l.info !== null) {
+    info = l.info;
+  } else if (typeof l.info === 'string') {
+    try { info = JSON.parse(l.info); } catch { info = { raw: l.info }; }
+  } else if (typeof l.detail === 'object' && l.detail !== null) {
+    info = l.detail;
+  } else if (typeof l.detail === 'string') {
+    try { info = JSON.parse(l.detail); } catch { info = { raw: l.detail }; }
+  }
+
+  const act = String(l.action || l.rawAction || '').toLowerCase();
+  const res = {
+    type: 'other',
+    badge: 'Event',
+    badgeCls: 'pending',
+    title: l.action || 'Audit Event',
+    summaryHtml: '',
+    hasDiff: false,
+    beforeItems: [],
+    afterItems: [],
+    meta: {
+      actor: l.actor || 'system',
+      target: l.target || '—',
+      ts: l.ts || '',
+      ip: l.ip || '—',
+    },
+  };
+
+  // 1. Access Permission Changes
+  if (act.includes('access_permission') || act.includes('access-grant') || act.includes('access-revoke') || act.includes('access-update')) {
+    res.type = 'access';
+    res.badge = 'Access Permission';
+    res.badgeCls = 'admin';
+    res.title = 'Door Access Permissions Changed';
+    res.hasDiff = true;
+
+    const granted = Array.isArray(info.granted) ? info.granted : [];
+    const revoked = Array.isArray(info.revoked) ? info.revoked : [];
+
+    if (!granted.length && !revoked.length) {
+      if (act.includes('grant')) {
+        const devName = l.target || l.device_name || 'Terminal';
+        granted.push(devName);
+      } else if (act.includes('revoke')) {
+        const devName = l.target || l.device_name || 'Terminal';
+        revoked.push(devName);
+      }
+    }
+
+    const pills = [];
+    if (granted.length) {
+      pills.push(...granted.map((g) => `<span class="diff-chip added"><span class="diff-prefix-icon">+</span> ${esc(g)}</span>`));
+      res.afterItems.push(...granted.map((g) => ({ type: 'added', text: `Granted access to ${g}` })));
+    }
+    if (revoked.length) {
+      pills.push(...revoked.map((r) => `<span class="diff-chip removed"><span class="diff-prefix-icon">-</span> ${esc(r)}</span>`));
+      res.beforeItems.push(...revoked.map((r) => ({ type: 'removed', text: `Access revoked from ${r}` })));
+    }
+
+    if (info.validEnd) {
+      const endStr = esc(String(info.validEnd).replace('T', ' ').slice(0, 16));
+      res.afterItems.push({ type: 'modified', text: `Valid until: ${endStr}` });
+    }
+
+    res.summaryHtml = pills.length ? `<div class="diff-chip-list">${pills.join('')}</div>` : `<small class="hint">${esc(l.target || 'Updated permissions')}</small>`;
+    return res;
+  }
+
+  // 2. Validity Extension
+  if (act.includes('extend')) {
+    res.type = 'extend';
+    res.badge = 'Validity Extended';
+    res.badgeCls = 'synced';
+    res.title = 'Access Validity Extended';
+    res.hasDiff = true;
+
+    const days = info.days || 30;
+    const newEnd = info.newValidEnd || info.validEnd;
+    const prevEnd = info.prevValidEnd || info.curEnd;
+
+    if (prevEnd) {
+      const pStr = esc(String(prevEnd).replace('T', ' ').slice(0, 16));
+      res.beforeItems.push({ type: 'neutral', text: `Previous Expiry: ${pStr}` });
+    } else {
+      res.beforeItems.push({ type: 'neutral', text: 'Previous Expiry: Earlier Deadline' });
+    }
+
+    if (newEnd) {
+      const nStr = esc(String(newEnd).replace('T', ' ').slice(0, 16));
+      res.afterItems.push({ type: 'added', text: `New Expiry: ${nStr} (+${days} days)` });
+    } else {
+      res.afterItems.push({ type: 'added', text: `Extended by +${days} days` });
+    }
+
+    if (Array.isArray(info.devices) && info.devices.length) {
+      res.afterItems.push({ type: 'neutral', text: `Applied to: ${info.devices.join(', ')}` });
+    }
+
+    res.summaryHtml = `<span class="diff-chip added"><span class="diff-prefix-icon">+</span> Extended +${days} Days</span>`;
+    return res;
+  }
+
+  // 3. Card Credential (Assign / Remove)
+  if (act.includes('card')) {
+    res.type = 'card';
+    const cardNo = info.cardNo || l.cardNo || '';
+    if (act.includes('remove') || act.includes('delete')) {
+      res.badge = 'Card Removed';
+      res.badgeCls = 'error';
+      res.title = 'RFID Card Removed';
+      res.hasDiff = true;
+      res.beforeItems.push({ type: 'removed', text: `Card #${cardNo || 'Enrolled Card'} attached to account` });
+      res.afterItems.push({ type: 'neutral', text: 'Card unlinked / de-allocated' });
+      res.summaryHtml = `<span class="diff-chip removed"><span class="diff-prefix-icon">-</span> Card #${esc(cardNo || 'removed')}</span>`;
+    } else {
+      res.badge = 'Card Assigned';
+      res.badgeCls = 'synced';
+      res.title = 'RFID Card Attached';
+      res.hasDiff = true;
+      res.beforeItems.push({ type: 'neutral', text: 'No card or previous badge' });
+      res.afterItems.push({ type: 'added', text: `Active RFID Card #${cardNo || 'Enrolled'}` });
+      res.summaryHtml = `<span class="diff-chip added"><span class="diff-prefix-icon">+</span> Card #${esc(cardNo || 'attached')}</span>`;
+    }
+    return res;
+  }
+
+  // 4. Biometric Changes (Fingerprint / Face)
+  if (act.includes('finger') || act.includes('face') || act.includes('biometric')) {
+    res.type = 'biometric';
+    const isRemove = act.includes('delete') || act.includes('remove');
+    const isFace = act.includes('face');
+    const bioName = isFace ? 'Facial Biometric' : 'Fingerprint Template';
+
+    res.badge = isRemove ? `${bioName} Deleted` : `${bioName} Enrolled`;
+    res.badgeCls = isRemove ? 'error' : 'synced';
+    res.title = isRemove ? `Biometric Removed: ${bioName}` : `Biometric Enrolled: ${bioName}`;
+    res.hasDiff = true;
+
+    if (isRemove) {
+      res.beforeItems.push({ type: 'removed', text: `${bioName} active on terminal` });
+      res.afterItems.push({ type: 'neutral', text: 'Biometric template wiped from hardware' });
+      res.summaryHtml = `<span class="diff-chip removed"><span class="diff-prefix-icon">-</span> ${bioName} Purged</span>`;
+    } else {
+      res.beforeItems.push({ type: 'neutral', text: 'No biometric credentials' });
+      res.afterItems.push({ type: 'added', text: `${bioName} captured & stored` });
+      res.summaryHtml = `<span class="diff-chip added"><span class="diff-prefix-icon">+</span> ${bioName} Enrolled</span>`;
+    }
+    return res;
+  }
+
+  // 5. Role Changes
+  if (act.includes('role')) {
+    res.type = 'role';
+    res.badge = 'Role Change';
+    res.badgeCls = 'admin';
+    res.title = 'Administrative Role Modified';
+    res.hasDiff = true;
+
+    const newR = info.role || (act.includes('admin') ? 'admin' : 'user');
+    const prevR = info.previousRole || (newR === 'admin' ? 'user' : 'admin');
+
+    res.beforeItems.push({ type: 'removed', text: `Role: ${prevR.toUpperCase()}` });
+    res.afterItems.push({ type: 'added', text: `Role: ${newR.toUpperCase()}` });
+    res.summaryHtml = `<span class="diff-chip modified"><span class="diff-prefix-icon">Δ</span> Role: ${prevR} → ${newR}</span>`;
+    return res;
+  }
+
+  // 6. User Profile Update
+  if (act.includes('user_profile') || act.includes('edit-user')) {
+    res.type = 'user';
+    res.badge = 'User Edited';
+    res.badgeCls = 'pending';
+    res.title = 'User Profile Details Updated';
+    res.hasDiff = true;
+
+    if (info.fromName && info.toName && info.fromName !== info.toName) {
+      res.beforeItems.push({ type: 'removed', text: `Name: ${info.fromName}` });
+      res.afterItems.push({ type: 'added', text: `Name: ${info.toName}` });
+    }
+    if (info.fromNo && info.toNo && info.fromNo !== info.toNo) {
+      res.beforeItems.push({ type: 'removed', text: `Employee #: ${info.fromNo}` });
+      res.afterItems.push({ type: 'added', text: `Employee #: ${info.toNo}` });
+    }
+    if (!res.beforeItems.length) {
+      res.afterItems.push({ type: 'modified', text: `Updated user info: ${info.newName || l.target || 'Profile'}` });
+    }
+
+    res.summaryHtml = `<span class="diff-chip modified"><span class="diff-prefix-icon">Δ</span> Profile Info Updated</span>`;
+    return res;
+  }
+
+  // 7. Door Unlock Commands
+  if (act.includes('door') || act.includes('unlock')) {
+    res.type = 'door';
+    res.badge = 'Door Unlock';
+    res.badgeCls = 'synced';
+    res.title = 'Remote Door Pulse Command';
+    res.summaryHtml = `<small class="hint">${esc(l.target || 'Door')} — ${esc(info.cmd || 'Momentary unlock pulse')}</small>`;
+    return res;
+  }
+
+  // 8. Auth / Security Logins
+  if (act.includes('login') || act.includes('logout') || act.includes('password') || act.includes('dash_user')) {
+    res.type = 'auth';
+    const isOk = act.includes('success') || act.includes('create');
+    res.badge = act.includes('success') ? 'Login Success' : act.includes('fail') ? 'Login Failed' : 'Security';
+    res.badgeCls = isOk ? 'synced' : 'error';
+    res.title = `Security Event: ${l.action}`;
+    res.summaryHtml = `<small class="hint">${esc(typeof info === 'string' ? info : info.info || info.raw || 'User authentication')}</small>`;
+    return res;
+  }
+
+  // Fallback generic
+  res.summaryHtml = `<small class="hint">${esc(typeof l.info === 'string' ? l.info : JSON.stringify(l.info || ''))}</small>`;
+  return res;
+}
+
+function openVisualDiffModal(log) {
+  const diff = parseAuditDiff(log);
+  const infoJson = typeof log.info === 'object' ? JSON.stringify(log.info, null, 2) : String(log.info || '');
+
+  let diffBodyHtml = '';
+  if (diff.hasDiff && (diff.beforeItems.length || diff.afterItems.length)) {
+    const renderItems = (items, fallbackText) => {
+      if (!items.length) {
+        return `<div class="hint" style="font-size:12px;padding:8px 0;">${fallbackText}</div>`;
+      }
+      return items.map((it) => {
+        const cls = it.type === 'added' ? 'added' : it.type === 'removed' ? 'removed' : it.type === 'modified' ? 'modified' : 'neutral';
+        const prefix = it.type === 'added' ? '+' : it.type === 'removed' ? '-' : it.type === 'modified' ? 'Δ' : '•';
+        return `
+          <div class="diff-chip ${cls}" style="display:flex;width:fit-content;margin-bottom:4px;">
+            <span class="diff-prefix-icon">${prefix}</span>
+            <span>${esc(it.text)}</span>
+          </div>
+        `;
+      }).join('');
+    };
+
+    diffBodyHtml = `
+      <div class="diff-side-by-side">
+        <div class="diff-box before">
+          <div class="diff-box-head">
+            <span>Previous State (Before)</span>
+            <span class="diff-prefix-icon">-</span>
+          </div>
+          <div class="diff-box-body">
+            ${renderItems(diff.beforeItems, 'No prior restriction or removed items')}
+          </div>
+        </div>
+        <div class="diff-box after">
+          <div class="diff-box-head">
+            <span>Resulting State (After)</span>
+            <span class="diff-prefix-icon">+</span>
+          </div>
+          <div class="diff-box-body">
+            ${renderItems(diff.afterItems, 'No newly granted permissions')}
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    diffBodyHtml = `
+      <div class="notice-banner" style="cursor:default;">
+        <b>Event Summary:</b> ${diff.summaryHtml}
+      </div>
+    `;
+  }
+
+  openModal(`
+    <div class="diff-modal-container">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <h2 style="margin:0 0 4px;font-size:18px;">${esc(diff.title)}</h2>
+          <span class="hint" style="font-size:12px;">Visual Audit Trail & Credential Comparison</span>
+        </div>
+        <span class="badge ${diff.badgeCls}" style="font-size:11px;">${esc(diff.badge)}</span>
+      </div>
+
+      <div class="diff-meta-bar">
+        <div class="diff-meta-item">
+          <span class="diff-meta-label">Operator / Actor</span>
+          <span class="diff-meta-val">${esc(diff.meta.actor)}</span>
+        </div>
+        <div class="diff-meta-item">
+          <span class="diff-meta-label">Target Subject</span>
+          <span class="diff-meta-val">${esc(diff.meta.target)}</span>
+        </div>
+        <div class="diff-meta-item">
+          <span class="diff-meta-label">IP Address</span>
+          <span class="diff-meta-val">${esc(diff.meta.ip)}</span>
+        </div>
+        <div class="diff-meta-item">
+          <span class="diff-meta-label">Timestamp</span>
+          <span class="diff-meta-val">${esc(diff.meta.ts)}</span>
+        </div>
+      </div>
+
+      ${diffBodyHtml}
+
+      <details style="margin-top:4px;">
+        <summary style="font-size:11.5px;color:var(--text-muted);cursor:pointer;">Show raw event payload</summary>
+        <pre style="background:rgba(0,0,0,0.3);padding:10px;border-radius:8px;font-size:11px;overflow-x:auto;margin-top:8px;max-height:180px;"><code>${esc(infoJson)}</code></pre>
+      </details>
+
+      <div class="modal-actions" style="margin-top:12px;">
+        <button class="btn" id="diff_close">Close</button>
+      </div>
+    </div>
+  `);
+
+  $('#diff_close')?.addEventListener('click', closeModal);
+}
+
 // ---- Admin Audit Log View ----
+let _auditFilter = 'all';
+let _auditSearch = '';
+
 async function auditView() {
   if (dashRole !== 'admin') { content.innerHTML = '<div class="empty">Admin Audit is available to admin accounts only.</div>'; return; }
   clearInterval(_autoTimer);
   content.innerHTML = '<div class="empty">Loading admin audit trail…</div>';
-  const data = await api.get('/audit-logs?limit=200');
+  const data = await api.get('/audit-logs?limit=300');
   if (current !== 'audit') return;
   if (!data.ok) { content.innerHTML = `<div class="empty">Failed to load audit trail: ${esc(data.error)}</div>`; return; }
 
-  const rows = data.logs.length ? data.logs.map((l) => {
-    const actCls = l.action.includes('SUCCESS') || l.action.includes('CREATE') ? 'synced' : l.action.includes('FAIL') || l.action.includes('DELETE') ? 'error' : 'pending';
-    return `
-      <tr>
-        <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
-        <td><b>${esc(l.actor)}</b></td>
-        <td><span class="badge ${actCls}">${esc(l.action)}</span></td>
-        <td>${esc(l.target || '—')}</td>
-        <td class="nowrap"><small class="hint">${esc(l.ip || '127.0.0.1')}</small></td>
-        <td><small class="hint">${esc(typeof l.info === 'string' ? l.info : JSON.stringify(l.info))}</small></td>
-      </tr>`;
-  }).join('') : '<tr><td colspan="6" class="list-empty">No admin audit events recorded yet.</td></tr>';
+  const allLogs = data.logs || [];
 
-  content.innerHTML = `<div>
+  content.innerHTML = `
+    <div class="audit-toolbar">
+      <div class="audit-search-wrapper">
+        ${ICONS.search}
+        <input type="text" id="auditSearchInput" class="audit-search-input" value="${esc(_auditSearch)}" placeholder="Search actor, target person/device, IP, action..." autocomplete="off" />
+        <button id="auditSearchClear" class="user-search-clear" style="${_auditSearch ? '' : 'display:none'}" title="Clear search">✕</button>
+      </div>
+
+      <div class="filter-bar" id="auditFilterBar" style="margin:0;">
+        <button class="filter-chip ${_auditFilter === 'all' ? 'active' : ''}" data-afilter="all">All Events</button>
+        <button class="filter-chip ${_auditFilter === 'access' ? 'active' : ''}" data-afilter="access">Access Changes</button>
+        <button class="filter-chip ${_auditFilter === 'extend' ? 'active' : ''}" data-afilter="extend">Validity Extensions</button>
+        <button class="filter-chip ${_auditFilter === 'creds' ? 'active' : ''}" data-afilter="creds">Cards & Biometrics</button>
+        <button class="filter-chip ${_auditFilter === 'door' ? 'active' : ''}" data-afilter="door">Door Unlocks</button>
+        <button class="filter-chip ${_auditFilter === 'auth' ? 'active' : ''}" data-afilter="auth">Logins & Security</button>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px;">
+      <span class="hint tabular-nums" id="auditMatchCount" style="font-size:12px;">Showing ${allLogs.length} of ${allLogs.length} events</span>
+    </div>
+
     <div class="table-wrapper">
       <table>
         <thead>
           <tr>
             <th>Timestamp</th>
-            <th>Admin / User</th>
-            <th>Action</th>
-            <th>Target Device / Account</th>
+            <th>Operator / Actor</th>
+            <th>Category</th>
+            <th>Target Subject</th>
             <th>IP Address</th>
-            <th>Details</th>
+            <th>Credential / Permission Changes</th>
+            <th style="text-align:right;">Diff Action</th>
           </tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody id="auditTableBody"></tbody>
       </table>
     </div>
-  </div>`;
+  `;
+
+  const renderAuditRows = () => {
+    const q = _auditSearch.trim().toLowerCase();
+    const filtered = allLogs.filter((l) => {
+      const diff = parseAuditDiff(l);
+      if (_auditFilter === 'access' && diff.type !== 'access') return false;
+      if (_auditFilter === 'extend' && diff.type !== 'extend') return false;
+      if (_auditFilter === 'creds' && diff.type !== 'card' && diff.type !== 'biometric') return false;
+      if (_auditFilter === 'door' && diff.type !== 'door') return false;
+      if (_auditFilter === 'auth' && diff.type !== 'auth') return false;
+
+      if (q) {
+        const str = `${l.actor} ${l.target} ${l.ip} ${l.action} ${diff.title} ${JSON.stringify(l.info || '')}`.toLowerCase();
+        if (!str.includes(q)) return false;
+      }
+      return true;
+    });
+
+    const countEl = $('#auditMatchCount');
+    if (countEl) countEl.textContent = `Showing ${filtered.length} of ${allLogs.length} events`;
+
+    const tbody = $('#auditTableBody');
+    if (!tbody) return;
+
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="list-empty">No matching audit events found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = filtered.map((l, idx) => {
+      const diff = parseAuditDiff(l);
+      return `
+        <tr>
+          <td class="nowrap"><small class="hint tabular-nums">${esc(l.ts)}</small></td>
+          <td><b>${esc(l.actor)}</b></td>
+          <td><span class="badge ${diff.badgeCls}">${esc(diff.badge)}</span></td>
+          <td>${esc(l.target || '—')}</td>
+          <td class="nowrap"><small class="hint tabular-nums">${esc(l.ip || '127.0.0.1')}</small></td>
+          <td style="max-width:320px;">${diff.summaryHtml}</td>
+          <td style="text-align:right; white-space:nowrap;">
+            <button class="btn sm diff-btn" data-audit-diff="${idx}">Inspect Diff ▾</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('[data-audit-diff]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const l = filtered[Number(b.dataset.auditDiff)];
+        if (l) openVisualDiffModal(l);
+      });
+    });
+  };
+
+  renderAuditRows();
+
+  $('#auditSearchInput')?.addEventListener('input', (e) => {
+    _auditSearch = e.target.value;
+    const clr = $('#auditSearchClear');
+    if (clr) clr.style.display = _auditSearch ? '' : 'none';
+    renderAuditRows();
+  });
+
+  $('#auditSearchClear')?.addEventListener('click', () => {
+    _auditSearch = '';
+    const inp = $('#auditSearchInput');
+    if (inp) { inp.value = ''; inp.focus(); }
+    const clr = $('#auditSearchClear');
+    if (clr) clr.style.display = 'none';
+    renderAuditRows();
+  });
+
+  $('#auditFilterBar')?.querySelectorAll('.filter-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      $('#auditFilterBar')?.querySelectorAll('.filter-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      _auditFilter = chip.dataset.afilter || 'all';
+      renderAuditRows();
+    });
+  });
 }
 
 // ==========================================

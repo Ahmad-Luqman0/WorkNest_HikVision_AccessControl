@@ -487,6 +487,16 @@ devicesRouter.post('/:id/users/:employeeNo/access', async (req, res) => {
         return { device_id: d.id, device: d.name, state: 'error', error: String(e.message || e) };
       }
     }));
+    const grantedDevs = results.filter((r) => r.state === 'granted' || r.state === 'unblocked').map((r) => r.device);
+    const revokedDevs = results.filter((r) => r.state === 'blocked').map((r) => r.device);
+    if (grantedDevs.length || revokedDevs.length) {
+      logAudit(req.auth?.username || 'admin', 'ACCESS_PERMISSION_CHANGE', person.name || `User ${employeeNo}`, getClientIp(req), {
+        employeeNo,
+        granted: grantedDevs,
+        revoked: revokedDevs,
+        validEnd: validEnd || person.Valid?.endTime,
+      });
+    }
     invalidateRoster();
     res.json({ ok: true, results });
   } catch (e) {
@@ -565,6 +575,13 @@ devicesRouter.post('/:id/users/:employeeNo/update', async (req, res) => {
   }
   for (const dev of targets) invalidateRoster(dev.id);
   const okCount = results.filter((x) => x.ok).length;
+  if (okCount > 0) {
+    logAudit(req.auth?.username || 'admin', 'USER_PROFILE_UPDATE', newName || `User ${employeeNo}`, getClientIp(req), {
+      employeeNo,
+      newName,
+      newEmployeeNo: newEmployeeNo || employeeNo,
+    });
+  }
   res.status(okCount ? 200 : 502).json({ ok: okCount > 0, results });
 });
 
@@ -602,6 +619,11 @@ devicesRouter.post('/:id/users/:employeeNo/role', async (req, res) => {
     );
     logSync(null, dev.id, `set-role:${admin ? 'admin' : 'user'}`, r.ok, { employeeNo, ...r });
     if (!r.ok) return res.status(502).json({ ok: false, error: isapi.describe(r) });
+    logAudit(req.auth?.username || 'admin', 'ROLE_CHANGE', p.name || `User ${employeeNo}`, getClientIp(req), {
+      employeeNo,
+      role: admin ? 'admin' : 'user',
+      previousRole: admin ? 'user' : 'admin',
+    });
     res.json({ ok: true, role: admin ? 'admin' : 'user' });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
@@ -865,6 +887,11 @@ devicesRouter.post('/:id/users/:employeeNo/card', async (req, res) => {
     const r = await isapi.addCard(dev, String(req.params.employeeNo), cardNo);
     logSync(null, dev.id, 'store-card', r.ok, { employeeNo: req.params.employeeNo, cardNo, ...r });
     if (!r.ok) return res.status(502).json({ ok: false, error: isapi.describe(r) });
+    logAudit(req.auth?.username || 'admin', 'CARD_ASSIGN', `User ${req.params.employeeNo}`, getClientIp(req), {
+      employeeNo: req.params.employeeNo,
+      cardNo,
+      device: dev.name,
+    });
     res.json({ ok: true, cardNo });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });

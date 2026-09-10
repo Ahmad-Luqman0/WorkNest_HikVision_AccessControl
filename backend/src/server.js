@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync, setLogSyncSubscriber } from './db.js';
+import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync, logAudit, setLogSyncSubscriber } from './db.js';
 import * as isapi from './isapi.js';
 import { devicesRouter } from './routes/devices.js';
 import { cardsRouter } from './routes/cards.js';
@@ -655,6 +655,14 @@ app.post('/api/expiring/extend', async (req, res) => {
   if (!results.length) return res.status(404).json({ ok: false, error: 'user not found on any machine' });
   if (newEnd) {
     await sp('WN_HIK_Access_Extend', { employee_no: String(employeeNo), valid_end: newEnd, valid_begin: null });
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = forwarded ? forwarded.split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '127.0.0.1');
+    logAudit(req.auth?.username || 'admin', 'EXTEND_VALIDITY', name || `User ${employeeNo}`, clientIp, {
+      employeeNo,
+      days,
+      newValidEnd: newEnd,
+      devices: results.filter((x) => x.ok).map((x) => x.device),
+    });
   }
   const okCount = results.filter((x) => x.ok).length;
   res.status(okCount ? 200 : 502).json({ ok: okCount > 0, newEnd, results });
@@ -731,28 +739,48 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/audit-logs', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const employeeNo = req.query.employeeNo ? String(req.query.employeeNo).trim() : null;
     let logs = [];
-    try {
-      logs = await sp('WN_HIK_Activity_Recent', { limit });
-    } catch {
-      logs = await getRows(
-        `SELECT TOP (${limit}) l.*, d.name AS device_name
-         FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
-         LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
-         ORDER BY l.id DESC`
-      ).catch(() => []);
+    if (employeeNo) {
+      try {
+        logs = await getRows(
+          `SELECT TOP (${limit}) l.*, d.name AS device_name
+           FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
+           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
+           WHERE (l.employee_id = @empNo OR l.detail LIKE '%' + @empNo + '%' OR l.action LIKE '%' + @empNo + '%')
+           ORDER BY l.id DESC`,
+          { empNo: employeeNo }
+        );
+      } catch {
+        const all = await sp('WN_HIK_Activity_Recent', { limit: 500 }).catch(() => []);
+        logs = all.filter((l) => String(l.employee_id) === employeeNo || String(l.detail || '').includes(employeeNo));
+      }
+    } else {
+      try {
+        logs = await sp('WN_HIK_Activity_Recent', { limit });
+      } catch {
+        logs = await getRows(
+          `SELECT TOP (${limit}) l.*, d.name AS device_name
+           FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
+           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
+           ORDER BY l.id DESC`
+        ).catch(() => []);
+      }
     }
     const parsed = logs.map((l) => {
       let info = {};
-      try { info = JSON.parse(l.detail || '{}'); } catch {}
+      try { info = JSON.parse(l.detail || '{}'); } catch { info = l.detail || ''; }
       return {
         id: l.id,
         ts: l.ts,
         action: String(l.action).replace(/^AUDIT:/, ''),
+        rawAction: l.action,
         actor: typeof info === 'object' && info?.actor ? info.actor : (String(l.action).startsWith('AUDIT:') ? 'admin' : 'system'),
         target: typeof info === 'object' && info?.target ? info.target : (l.device_name || ''),
+        device_name: l.device_name || '',
         ip: typeof info === 'object' && info?.ip ? info.ip : '',
-        info: typeof info === 'object' && info?.info ? info.info : (l.detail || ''),
+        info: typeof info === 'object' && info?.info !== undefined ? info.info : (typeof info === 'object' ? info : (l.detail || '')),
+        rawDetail: l.detail || '',
         ok: l.ok,
       };
     });
