@@ -72,6 +72,15 @@ export async function runClockSync() {
 // Ping every machine; update online/last_seen and log transitions so the
 // dashboard can show offline alerts.
 export async function runOnlineCheck() {
+  if (process.env.VERCEL && !process.env.CLOUD_CAN_SCAN) {
+    // Never sweep the whole fleet from the cloud: rapid probes across 55
+    // forwarded ports from one server read as a port scan to the office
+    // router, which blackholes the source IP — that froze the deployment on
+    // 2026-09-10. Statuses are maintained from the local/PK side. After the
+    // router is configured to allow it, set CLOUD_CAN_SCAN=1 in Vercel env
+    // to enable full cloud-side checking.
+    return { checked: 0, changed: 0, cameOnline: [], cloudPassive: true };
+  }
   const devices = await getAllDevices();
   let changed = 0;
   const cameOnline = [];

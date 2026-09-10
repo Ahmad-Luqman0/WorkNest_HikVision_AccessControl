@@ -57,9 +57,12 @@ async function req(device, method, path, { json, xml, headers, timeout } = {}) {
     h['Content-Type'] = 'application/xml';
   }
 
-  // Port matters: the whole fleet is port-forwarded through one public IP, so
-  // keying by host alone would throttle 55 separate machines as if they were one.
-  const host = device.host ? `${device.host}:${device.port || 0}` : 'default';
+  // Deliberately keyed by host WITHOUT port: the whole fleet sits behind one
+  // public IP, and keeping at most 2 connections to that IP is what the office
+  // router tolerates. Keying per machine opened 6 parallel connections across
+  // many ports at once — to the router that looks like a port scan, and it
+  // responds by blackholing the source (which froze the cloud deployment).
+  const host = device.host || 'default';
   await acquireSlot(host);
 
   try {

@@ -64,9 +64,11 @@ app.get('/api/cron/online-check', async (req, res) => {
   }
   try {
     const check = await runOnlineCheck();
-    try { await replayPendingOps(); } catch { /* next run */ }
-    try { await archiveEvents(); } catch { /* next run */ }
-    try { await sweepFaceVault(); } catch { /* next run */ }
+    if (!process.env.VERCEL || process.env.CLOUD_CAN_SCAN) {
+      try { await replayPendingOps(); } catch { /* next run */ }
+      try { await archiveEvents(); } catch { /* next run */ }
+      try { await sweepFaceVault(); } catch { /* next run */ }
+    }
     try { await syncUsersTable(); } catch { /* next run */ }
     res.json({ ok: true, ...check });
   } catch (e) {
@@ -193,42 +195,23 @@ app.post('/api/online-check', async (req, res) => {
       return res.json({ ok: true, skipped: true, changed: 0, blocked: await blockedFresh() });
     }
     await sp('WN_HIK_Settings_Set', { key: 'online_check_at', value: String(now) });
-    // Known-blocked cloud path: don't burn ~30s probing the whole fleet on
-    // every visit. Try two witness machines; only a reply proves the path is
-    // back and warrants the full check. DB-only backups still run meanwhile.
-    if (process.env.VERCEL && await blockedFresh()) {
-      const devs = await getAllDevices();
-      const witnesses = (devs.filter((d) => d.online).length ? devs.filter((d) => d.online) : devs).slice(0, 2);
-      let reachable = false;
-      for (const w of witnesses) {
-        try { await isapi.getDeviceInfo(w, { timeout: 2500 }); reachable = true; break; } catch { /* still blocked */ }
-      }
-      if (!reachable) {
-        await sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: String(now) });
-        try {
-          const lastB = await sp('WN_HIK_Settings_Get', { key: 'backup_ran_at' });
-          if (!(Number(lastB[0]?.value) > Date.now() - 300000)) {
-            await sp('WN_HIK_Settings_Set', { key: 'backup_ran_at', value: String(Date.now()) });
-            await syncUsersTable().catch(() => {}); // snapshot-based — works while blocked
-          }
-        } catch { /* next visit */ }
-        return res.json({ ok: true, blocked: true, changed: 0 });
-      }
-      await sp('WN_HIK_Settings_Set', { key: 'path_blocked_at', value: '0' });
-    }
     const check = await runOnlineCheck();
+    // Machine-touching maintenance stays off the cloud (fleet sweeps trip the
+    // office router's port-scan protection); the local/PK side handles it.
+    const cloudPassive = process.env.VERCEL && !process.env.CLOUD_CAN_SCAN;
     let replayed = 0;
-    try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
-    // Backups ride on dashboard traffic so NOTHING depends on the local dev
-    // server: entry archive, face vault and the members backup table refresh
-    // at most every 5 minutes, triggered by whoever has the dashboard open.
+    if (!cloudPassive) {
+      try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
+    }
     try {
       const lastB = await sp('WN_HIK_Settings_Get', { key: 'backup_ran_at' });
       if (!(Number(lastB[0]?.value) > Date.now() - 300000)) {
         await sp('WN_HIK_Settings_Set', { key: 'backup_ran_at', value: String(Date.now()) });
-        await archiveEvents().catch(() => {});
-        await sweepFaceVault().catch(() => {});
-        await syncUsersTable().catch(() => {});
+        if (!cloudPassive) {
+          await archiveEvents().catch(() => {});
+          await sweepFaceVault().catch(() => {});
+        }
+        await syncUsersTable().catch(() => {}); // snapshot-based — safe anywhere
       }
     } catch { /* next visit picks it up */ }
     res.json({ ok: true, ...check, replayed });
