@@ -3,7 +3,7 @@
 // Period natively — these jobs handle the extras (status flips, auto-delete,
 // keeping credentials identical everywhere).
 import cron from 'node-cron';
-import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates, saveFaceTemplate, getFaceTemplate } from './db.js';
+import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates, saveFpTemplate, saveFaceTemplate, getFaceTemplate } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
@@ -177,38 +177,55 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   // the DB vault (filled at capture time) is the primary source; anything a
   // machine does export is unioned in too.
   try {
-    const sets = await Promise.all(members.map(async (m) => ({ m, prints: await isapi.readFingerprints(m.dev, employeeNo) })));
+    // Per-machine error handling everywhere: one unreachable machine must
+    // only skip itself, not abort the sync for the other 49.
+    const sets = (await Promise.all(members.map(async (m) => {
+      try { return { m, prints: await isapi.readFingerprints(m.dev, employeeNo) }; }
+      catch { return null; } /* unreachable this round */
+    }))).filter(Boolean);
     const union = new Map();
     try {
       for (const v of await getFpTemplates(employeeNo, members[0].u.name)) union.set(Number(v.finger_no) || 1, v.template);
     } catch { /* vault unavailable — machine reads only */ }
     for (const s of sets) for (const p of s.prints) if (!union.has(p.fingerPrintID)) union.set(p.fingerPrintID, p.fingerData);
+    // Anything a machine exported that the vault lacks: vault it now, so the
+    // template survives even if every machine holding it dies later.
+    for (const s of sets) for (const p of s.prints) {
+      if (p.fingerData) saveFpTemplate(employeeNo, members[0].u.name, p.fingerPrintID || 1, p.fingerData).catch(() => {});
+    }
     await Promise.all(sets.filter((s) => writable(s.m)).map(async (s) => {
-      if (Number(s.m.u.numOfFP) >= union.size && union.size) return; // already complete
-      const have = new Set(s.prints.map((p) => p.fingerPrintID));
-      for (const [fid, data] of union) {
-        if (have.has(fid)) continue;
-        const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
-        const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
-        logSync(null, s.m.dev.id, 'sync-fingerprint', ok, { employeeNo, fingerPrintID: fid });
-        if (r.ok) copied++;
-      }
+      try {
+        if (Number(s.m.u.numOfFP) >= union.size && union.size) return; // already complete
+        const have = new Set(s.prints.map((p) => p.fingerPrintID));
+        for (const [fid, data] of union) {
+          if (have.has(fid)) continue;
+          const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
+          const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+          logSync(null, s.m.dev.id, 'sync-fingerprint', ok, { employeeNo, fingerPrintID: fid });
+          if (r.ok) copied++;
+        }
+      } catch { /* this machine only — retried next round */ }
     }));
   } catch { /* partial failure — retried next round */ }
 
   // Cards: union of card numbers.
   try {
-    const sets = await Promise.all(members.map(async (m) => ({ m, cards: await isapi.readCards(m.dev, employeeNo) })));
+    const sets = (await Promise.all(members.map(async (m) => {
+      try { return { m, cards: await isapi.readCards(m.dev, employeeNo) }; }
+      catch { return null; } /* unreachable this round */
+    }))).filter(Boolean);
     const union = new Set(sets.flatMap((s) => s.cards));
     await Promise.all(sets.filter((s) => writable(s.m)).map(async (s) => {
-      const have = new Set(s.cards);
-      for (const c of union) {
-        if (have.has(c)) continue;
-        const r = await isapi.addCard(s.m.dev, employeeNo, c);
-        const ok = r.ok || /alreadyexist|duplicate/i.test(String(r.subStatusCode || ''));
-        logSync(null, s.m.dev.id, 'sync-card', ok, { employeeNo, cardNo: c });
-        if (r.ok) copied++;
-      }
+      try {
+        const have = new Set(s.cards);
+        for (const c of union) {
+          if (have.has(c)) continue;
+          const r = await isapi.addCard(s.m.dev, employeeNo, c);
+          const ok = r.ok || /alreadyexist|duplicate/i.test(String(r.subStatusCode || ''));
+          logSync(null, s.m.dev.id, 'sync-card', ok, { employeeNo, cardNo: c });
+          if (r.ok) copied++;
+        }
+      } catch { /* this machine only — retried next round */ }
     }));
   } catch { /* retried next round */ }
 
@@ -229,11 +246,13 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
       }
       if (faces.length) {
         await Promise.all(without.map(async (m) => {
-          const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
-          // 'deviceUserAlreadyExistFace' = the face is already there — success.
-          const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
-          logSync(null, m.dev.id, 'sync-face', ok, { employeeNo });
-          if (r.ok) copied++;
+          try {
+            const r = await isapi.addFaceByModel(m.dev, employeeNo, faces[0].modelData);
+            // 'deviceUserAlreadyExistFace' = the face is already there — success.
+            const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+            logSync(null, m.dev.id, 'sync-face', ok, { employeeNo });
+            if (r.ok) copied++;
+          } catch { /* this machine only — retried next round */ }
         }));
       }
     }
