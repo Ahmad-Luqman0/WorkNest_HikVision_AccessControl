@@ -958,6 +958,13 @@ td:last-child {
   border: 1px solid var(--border);
   letter-spacing: 0.03em;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes badgePulse {
+  0% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
 .badge::before {
@@ -967,6 +974,10 @@ td:last-child {
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
+}
+
+.badge.online::before, .status-dot.on {
+  animation: badgePulse 2s infinite ease-in-out;
 }
 
 .badge.online, .badge.active, .badge.synced {
@@ -3846,6 +3857,124 @@ tr.selected-row {
   align-items: center;
   white-space: nowrap;
 }
+
+/* ==========================================================================
+   Machines Page Toolbar & Interactive Controls
+   ========================================================================== */
+.devices-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+@media (max-width: 1024px) { .devices-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .devices-kpi-grid { grid-template-columns: 1fr; } }
+
+.devices-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.devices-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.devices-search-box {
+  position: relative;
+  min-width: 250px;
+  max-width: 360px;
+  flex: 1;
+}
+
+.devices-search-box svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.devices-search-input {
+  width: 100%;
+  padding: 8px 30px 8px 34px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  color: var(--text-main);
+  font-size: 13px;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.devices-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+[data-theme="light"] .devices-search-input:focus {
+  background: #ffffff;
+}
+
+.devices-search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.devices-search-clear:hover { color: var(--text-main); }
+
+@keyframes rowPulseHighlight {
+  0% { background: rgba(99, 102, 241, 0.35); }
+  100% { background: transparent; }
+}
+
+tr.highlight-jump {
+  animation: rowPulseHighlight 2.5s ease-out;
+}
+
+/* Command Palette Keyboard Hints Footer */
+.cmd-palette-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .cmd-palette-footer {
+  background: #f8fafc;
+}
+
+.cmd-palette-footer kbd {
+  padding: 2px 5px;
+  font-size: 10.5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+
 
 
 

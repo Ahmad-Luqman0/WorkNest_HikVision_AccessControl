@@ -614,6 +614,8 @@ let _autoTimer = null; // live-refresh timer for dashboard / activity views
 let _cmdCachedEntries = [];
 let _cmdCachedUsers = [];
 let _cmdCachedDevs = [];
+let _deviceFilter = 'all';
+let _deviceSearch = '';
 document.querySelectorAll('nav a').forEach((a) =>
   a.addEventListener('click', () => go(a.dataset.view))
 );
@@ -1179,12 +1181,13 @@ async function devices() {
   _autoTimer = setInterval(() => {
     if (current === 'devices' && $('#modalBackdrop').hidden) devices();
   }, 30000);
-  if (!content.querySelector('table')) {
+  if (!content.querySelector('table') && !content.querySelector('.devices-kpi-grid')) {
     content.innerHTML = skeletonTable(['Name', 'Address', 'Model', 'Status', ''], 4);
   }
   const list = await api.get('/devices');
   if (Array.isArray(list)) _cmdCachedDevs = list;
   if (current !== 'devices') return; // view changed while loading
+
   $('#viewActions').innerHTML =
     (dashRole === 'admin' ? '<button class="btn" id="addMachine">+ Add machine</button>' : '') +
     (list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
@@ -1206,75 +1209,228 @@ async function devices() {
       failed.length ? (r.okCount ? '' : 'err') : 'ok'
     );
   });
-  content.innerHTML = '';
-  if (!list.length) { content.appendChild(el('<div class="empty">No machines. Machines are provisioned in the database — add them via <code>data/machines.json</code> or a direct INSERT into <code>devices</code>, then restart.</div>')); return; }
-  const rows = list.map((d) => `
-    <tr>
-      <td><b>${esc(d.name)}</b> ${d.grp ? `<span class="badge">${esc(d.grp)}</span>` : ''} ${d.code ? `<span class="badge admin">room ${esc(d.code)}</span>` : ''}<br><small class="hint">${esc(d.location || '')}</small></td>
-      <td>${esc(d.host)}:${d.port}${d.use_https ? ' <small class="hint">https</small>' : ''}</td>
-      <td>${esc(d.model || '—')}<br><small class="hint">${esc(d.serial || '')}</small></td>
-      <td><span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span></td>
-      <td class="row-actions">
-        <button class="btn sm" data-book="${d.id}">Book slot</button>
-        <button class="btn sm" data-open="${d.id}">Unlock</button>
-        <button class="btn sm" data-users="${d.id}" data-name="${esc(d.name)}">Users</button>
-        <button class="btn sm" data-test="${d.id}">Test</button>
-        ${dashRole === 'admin' ? `<button class="btn sm" data-edit="${d.id}">Edit</button>
-        <button class="btn sm danger" data-del="${d.id}">Delete</button>` : ''}
-      </td>
-    </tr>`).join('');
-  content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
-      <th>Name</th><th>Address</th><th>Model</th><th>Status</th><th></th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`));
 
-  content.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', async () => {
-    const origText = b.textContent;
-    b.disabled = true;
-    b.textContent = 'Testing…';
-    toast('Testing connection…');
-    try {
-      const r = await api.post(`/devices/${b.dataset.test}/test`);
-      toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
-    } catch (err) {
-      toast(`Failed: ${err.message || 'connection error'}`, 'err');
-    } finally {
-      b.disabled = false;
-      b.textContent = origText;
-      devices();
+  content.innerHTML = '';
+  if (!list.length) {
+    content.appendChild(el('<div class="empty">No machines. Machines are provisioned in the database — add them via <code>data/machines.json</code> or a direct INSERT into <code>devices</code>, then restart.</div>'));
+    return;
+  }
+
+  // Calculate fleet metrics
+  const total = list.length;
+  const onlineCount = list.filter((d) => d.online).length;
+  const offlineCount = total - onlineCount;
+  const isEntrance = (d) =>
+    (d.grp && d.grp.toLowerCase().includes('entrance')) ||
+    d.name.toLowerCase().includes('entrance') ||
+    d.name.toLowerCase().includes('lift');
+  const isMeeting = (d) =>
+    d.name.toLowerCase().includes('meeting') ||
+    d.name.toLowerCase().includes('conferance') ||
+    d.name.toLowerCase().includes('conference');
+  const entranceCount = list.filter(isEntrance).length;
+  const meetingCount = list.filter(isMeeting).length;
+  const officeCount = Math.max(0, total - entranceCount - meetingCount);
+
+  // Filter machines based on selected chip and search query
+  const getFilteredList = () => {
+    return list.filter((d) => {
+      if (_deviceFilter === 'online' && !d.online) return false;
+      if (_deviceFilter === 'offline' && d.online) return false;
+      if (_deviceFilter === 'entrances' && !isEntrance(d)) return false;
+      if (_deviceFilter === 'meetings' && !isMeeting(d)) return false;
+      if (_deviceFilter === 'offices' && (isEntrance(d) || isMeeting(d))) return false;
+
+      if (_deviceSearch) {
+        const q = _deviceSearch.toLowerCase();
+        const s = `${d.name} ${d.host} ${d.port} ${d.model || ''} ${d.serial || ''} ${d.code || ''} ${d.location || ''} ${d.grp || ''}`.toLowerCase();
+        if (!s.includes(q)) return false;
+      }
+      return true;
+    });
+  };
+
+  const container = el(`<div>
+    <div class="devices-kpi-grid">
+      <div class="stat good">
+        <div class="stat-head"><span class="label">Total Fleet</span><div class="stat-icon">${ICONS.machine}</div></div>
+        <div class="value">${total}</div>
+        <div class="sub">Provisioned access points</div>
+      </div>
+      <div class="stat ${onlineCount > 0 ? 'good' : 'bad'}">
+        <div class="stat-head"><span class="label">Network Status</span><div class="stat-icon">${ICONS.zap}</div></div>
+        <div class="value">${onlineCount} <small style="font-size:14px;font-weight:500;color:var(--text-muted)">/ ${total} Online</small></div>
+        <div class="sub">${onlineCount === total ? 'All systems nominal' : `${offlineCount} terminal${offlineCount === 1 ? '' : 's'} unreachable`}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span class="label">Main Entrances</span><div class="stat-icon">${ICONS.unlock}</div></div>
+        <div class="value">${entranceCount}</div>
+        <div class="sub">Cargo lifts & turnstiles</div>
+      </div>
+      <div class="stat">
+        <div class="stat-head"><span class="label">Meeting Rooms</span><div class="stat-icon">${ICONS.clock}</div></div>
+        <div class="value">${meetingCount}</div>
+        <div class="sub">Conference & shared suites</div>
+      </div>
+    </div>
+
+    <div class="devices-toolbar">
+      <div class="devices-filters" id="deviceFilterBar">
+        <button class="filter-chip ${_deviceFilter === 'all' ? 'active' : ''}" data-dfilter="all">All <span class="chip-count">${total}</span></button>
+        <button class="filter-chip ${_deviceFilter === 'online' ? 'active' : ''}" data-dfilter="online">Online <span class="chip-count">${onlineCount}</span></button>
+        <button class="filter-chip ${_deviceFilter === 'offline' ? 'active' : ''}" data-dfilter="offline">Offline <span class="chip-count">${offlineCount}</span></button>
+        <button class="filter-chip ${_deviceFilter === 'entrances' ? 'active' : ''}" data-dfilter="entrances">Entrances <span class="chip-count">${entranceCount}</span></button>
+        <button class="filter-chip ${_deviceFilter === 'meetings' ? 'active' : ''}" data-dfilter="meetings">Meeting Rooms <span class="chip-count">${meetingCount}</span></button>
+        <button class="filter-chip ${_deviceFilter === 'offices' ? 'active' : ''}" data-dfilter="offices">Offices <span class="chip-count">${officeCount}</span></button>
+      </div>
+      <div class="devices-search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="deviceSearchInput" class="devices-search-input" placeholder="Search by name, room, IP..." value="${esc(_deviceSearch)}" />
+        <button class="devices-search-clear" id="deviceSearchClear" style="display:${_deviceSearch ? 'block' : 'none'}">✕</button>
+      </div>
+    </div>
+
+    <div class="table-wrapper" id="devicesTableWrapper"></div>
+  </div>`);
+
+  content.appendChild(container);
+
+  const renderTableRows = () => {
+    const filtered = getFilteredList();
+    const tableWrapper = $('#devicesTableWrapper');
+    if (!tableWrapper) return;
+
+    if (!filtered.length) {
+      tableWrapper.innerHTML = `<div class="empty" style="padding:48px 20px;text-align:center;">No machines matching filter "<b>${esc(_deviceFilter)}</b>"${_deviceSearch ? ` and query "<b>${esc(_deviceSearch)}</b>"` : ''}.</div>`;
+      return;
     }
-  }));
-  content.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
-    const ok = await confirmDialog({
-      title: 'Unlock Door',
-      message: 'Unlock the door on this machine now?',
-      confirmText: 'Unlock Door'
+
+    const rows = filtered.map((d) => `
+      <tr id="dev-row-${d.id}">
+        <td>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
+            <div>
+              <b>${esc(d.name)}</b>
+              ${d.grp ? `<span class="badge" style="margin-left:4px;">${esc(d.grp)}</span>` : ''}
+              ${d.code ? `<span class="badge admin" style="margin-left:4px;">room ${esc(d.code)}</span>` : ''}
+              ${d.location ? `<br><small class="hint">${esc(d.location)}</small>` : ''}
+            </div>
+          </div>
+        </td>
+        <td class="nowrap" style="font-family:monospace;font-size:12.5px;">
+          ${esc(d.host)}:${d.port}
+          ${d.use_https ? ' <span class="badge" style="font-size:10px;padding:1px 5px;">https</span>' : ''}
+        </td>
+        <td>
+          <b>${esc(d.model || '—')}</b>
+          ${d.serial ? `<br><small class="hint" style="font-family:monospace;font-size:11px;">${esc(d.serial)}</small>` : ''}
+        </td>
+        <td>
+          <span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span>
+        </td>
+        <td class="row-actions">
+          <button class="btn sm" data-open="${d.id}" title="Unlock door now">${ICONS.unlock} Unlock</button>
+          <button class="btn sm" data-test="${d.id}" title="Test connection">${ICONS.zap} Test</button>
+          <button class="btn sm" data-dev-menu="${d.id}" title="More machine actions" style="padding:5px 9px;font-weight:bold;">•••</button>
+        </td>
+      </tr>`).join('');
+
+    tableWrapper.innerHTML = `<table><thead><tr>
+        <th>Name</th><th>Address</th><th>Model</th><th>Status</th><th style="width:230px;"></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+
+    // Wire up row buttons
+    tableWrapper.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', async () => {
+      const dev = list.find((d) => d.id == b.dataset.open);
+      const ok = await confirmDialog({
+        title: 'Unlock Door',
+        message: `Unlock the door on ${dev?.name || 'this machine'} now?`,
+        confirmText: 'Unlock Door'
+      });
+      if (!ok) return;
+      toast('Unlocking…');
+      const r = await api.post(`/devices/${b.dataset.open}/door`, { cmd: 'open' });
+      toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
+    }));
+
+    tableWrapper.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', async () => {
+      const origText = b.innerHTML;
+      b.disabled = true;
+      b.textContent = 'Testing…';
+      toast('Testing connection…');
+      try {
+        const r = await api.post(`/devices/${b.dataset.test}/test`);
+        toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
+      } catch (err) {
+        toast(`Failed: ${err.message || 'connection error'}`, 'err');
+      } finally {
+        b.disabled = false;
+        b.innerHTML = origText;
+        devices();
+      }
+    }));
+
+    tableWrapper.querySelectorAll('[data-dev-menu]').forEach((b) => b.addEventListener('click', () => {
+      const dev = list.find((d) => d.id == b.dataset.devMenu);
+      if (!dev) return;
+      const items = [
+        ['📅 Book Slot', () => bookSlotModal(dev, list)],
+        ['👥 Enrolled Users', async () => {
+          toast('Fetching users from machine…');
+          const r = await api.get(`/devices/${dev.id}/users`);
+          if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
+          toast(`${r.total} user${r.total === 1 ? '' : 's'} on device`, 'ok');
+          usersModal(dev, r.users, list);
+        }],
+      ];
+      if (dashRole === 'admin') {
+        items.push(['✏️ Edit Configuration', () => deviceModal(dev, list)]);
+        items.push(['🗑️ Delete Machine', async () => {
+          const ok = await confirmDialog({
+            title: 'Delete Machine',
+            message: `Delete ${dev.name} from the dashboard? It will no longer be monitored.`,
+            confirmText: 'Delete Machine',
+            danger: true
+          });
+          if (!ok) return;
+          await api.del(`/devices/${dev.id}`);
+          devices();
+        }, true]);
+      }
+      showRowMenu(b, items);
+    }));
+  };
+
+  renderTableRows();
+
+  // Wire up filter chips
+  $('#deviceFilterBar')?.querySelectorAll('.filter-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      $('#deviceFilterBar')?.querySelectorAll('.filter-chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      _deviceFilter = chip.dataset.dfilter || 'all';
+      renderTableRows();
     });
-    if (!ok) return;
-    toast('Unlocking…');
-    const r = await api.post(`/devices/${b.dataset.open}/door`, { cmd: 'open' });
-    toast(r.ok ? 'Door unlocked' : `Failed: ${r.error || 'error'}`, r.ok ? 'ok' : 'err');
-  }));
-  content.querySelectorAll('[data-users]').forEach((b) => b.addEventListener('click', async () => {
-    toast('Fetching users from machine…');
-    const r = await api.get(`/devices/${b.dataset.users}/users`);
-    if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
-    toast(`${r.total} user${r.total === 1 ? '' : 's'} on device`, 'ok');
-    usersModal(list.find((d) => d.id == b.dataset.users), r.users, list);
-  }));
-  content.querySelectorAll('[data-book]').forEach((b) =>
-    b.addEventListener('click', () => bookSlotModal(list.find((d) => d.id == b.dataset.book), list)));
-  content.querySelectorAll('[data-edit]').forEach((b) =>
-    b.addEventListener('click', () => deviceModal(list.find((d) => d.id == b.dataset.edit), list)));
-  content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-    const ok = await confirmDialog({
-      title: 'Delete Machine',
-      message: 'Delete this machine from the dashboard? It will no longer be monitored.',
-      confirmText: 'Delete Machine',
-      danger: true
-    });
-    if (!ok) return;
-    await api.del(`/devices/${b.dataset.del}`); devices();
-  }));
+  });
+
+  // Wire up search input
+  $('#deviceSearchInput')?.addEventListener('input', (e) => {
+    _deviceSearch = e.target.value;
+    const clr = $('#deviceSearchClear');
+    if (clr) clr.style.display = _deviceSearch ? 'block' : 'none';
+    renderTableRows();
+  });
+
+  $('#deviceSearchClear')?.addEventListener('click', () => {
+    _deviceSearch = '';
+    const inp = $('#deviceSearchInput');
+    if (inp) { inp.value = ''; inp.focus(); }
+    const clr = $('#deviceSearchClear');
+    if (clr) clr.style.display = 'none';
+    renderTableRows();
+  });
+
   // Kick a live reachability check (works on Vercel too — no background jobs
   // needed there); refresh the list only if any machine changed state.
   api.post('/online-check').then((r) => {
@@ -4491,6 +4647,26 @@ function openCommandPalette() {
 
   if (!_cmdCachedEntries.length && !_cmdRosterFetching) {
     _cmdRosterFetching = true;
+    api.get('/users?limit=500').then((res) => {
+      if (res?.ok && Array.isArray(res.users) && res.users.length) {
+        _cmdCachedEntries = res.users.map((u) => ({
+          u: {
+            employeeNo: u.employee_no || u.employeeNo,
+            name: u.name,
+            email: u.email,
+            cards: u.cards || (u.card_no ? [u.card_no] : []),
+            numOfCard: u.num_of_card || (u.card_no ? 1 : 0),
+            numOfFP: u.num_of_fp || 0,
+            numOfFace: u.num_of_face || 0,
+            localUIRight: u.is_admin || false,
+          },
+          on: u.rooms ? u.rooms.map((r) => ({ code: r, name: `Room ${r}` })) : [],
+        }));
+        _cmdCachedUsers = _cmdCachedEntries.map((e) => e.u);
+        if (_cmdPaletteOpen) renderCommandPalette($('#cmdPaletteInput')?.value || '');
+      }
+    }).catch(() => { });
+
     api.get('/roster').then(async (rr) => {
       _cmdRosterFetching = false;
       if (!rr?.ok || !rr.rosters) return;
@@ -4738,6 +4914,38 @@ function renderCommandPalette(query) {
     },
   ];
 
+  // 2. Terminals & Machines (if query is present)
+  const devItems = [];
+  if (_cmdCachedDevs && _cmdCachedDevs.length && q) {
+    for (const dev of _cmdCachedDevs) {
+      const devSearch = `${dev.name} ${dev.location || ''} ${dev.code || ''} ${dev.host} ${dev.port} ${dev.model || ''} ${dev.serial || ''} ${dev.grp || ''}`.toLowerCase();
+      if (devSearch.includes(q)) {
+        devItems.push({
+          id: `dev-${dev.id}`,
+          group: 'Terminals & Machines',
+          title: dev.name,
+          subtitle: `${dev.host}:${dev.port} · ${dev.model || 'Hikvision Terminal'} · ${dev.code ? 'Room ' + dev.code : (dev.grp || 'Access Door')}`,
+          icon: ICONS.machine,
+          badge: dev.online ? 'Online' : 'Offline',
+          badgeCls: dev.online ? 'synced' : 'blocked',
+          search: devSearch,
+          run: () => {
+            closeCommandPalette();
+            go('devices');
+            setTimeout(() => {
+              const row = document.getElementById(`dev-row-${dev.id}`);
+              if (row) {
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                row.classList.add('highlight-jump');
+                setTimeout(() => row.classList.remove('highlight-jump'), 3000);
+              }
+            }, 300);
+          },
+        });
+      }
+    }
+  }
+
   // 3. Members & Employees (if query is present)
   const memberItems = [];
   if (_cmdCachedEntries && _cmdCachedEntries.length && q) {
@@ -4786,10 +4994,11 @@ function renderCommandPalette(query) {
     ? navItems.filter((n) => n.search.toLowerCase().includes(q) || n.title.toLowerCase().includes(q) || n.subtitle.toLowerCase().includes(q))
     : navItems;
 
-  // Assemble list with groups
+  // Assemble list with groups (terminals and members prioritized when searching)
   const groups = [];
-  if (matchedActions.length) groups.push({ title: 'Quick Actions', items: matchedActions });
+  if (devItems.length) groups.push({ title: 'Terminals & Machines', items: devItems.slice(0, 8) });
   if (memberItems.length) groups.push({ title: 'Members & Employees', items: memberItems.slice(0, 15) });
+  if (matchedActions.length) groups.push({ title: 'Quick Actions', items: matchedActions });
   if (matchedNav.length) groups.push({ title: 'Navigation', items: matchedNav });
 
   // Flatten items for indexing
