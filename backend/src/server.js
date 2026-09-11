@@ -768,9 +768,7 @@ app.get('/api/stats', async (req, res) => {
       getRow("SELECT COUNT(DISTINCT employee_no) AS n FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time >= CAST(GETDATE() AS DATE) AND employee_no IS NOT NULL").catch(async () => {
         return getRow("SELECT COUNT(DISTINCT employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST(ts AS DATE) = ? AND employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
       }),
-      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no FROM dbo.WN_HIK_Events WITH (NOLOCK) ORDER BY event_time DESC").catch(async () => {
-        return getRow("SELECT TOP 1 employee_id AS employee_no, '' AS name, '' AS device_name, ts AS event_time, '' AS card_no FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) ORDER BY id DESC").catch(() => null);
-      }),
+      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
     ]);
 
     const todayScans = todayRow?.n || 0;

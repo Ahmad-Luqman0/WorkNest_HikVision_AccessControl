@@ -226,9 +226,11 @@ function onLiveActivityEvent(entry) {
       scansEl.textContent = cur + 1;
     }
     const liveTicker = $('#presenceLiveTicker');
-    if (liveTicker) {
-      const who = entry.name || prettyAction(entry.action);
-      liveTicker.innerHTML = `<b>${esc(who)}</b> accessed <b>${esc(entry.device || 'Entrance')}</b> <span class="badge ${entry.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${entry.ok ? 'Granted' : 'Denied'}</span> <small class="hint">Just now</small>`;
+    if (liveTicker && (entry.name || entry.action === 'door:open' || entry.action === 'door:close')) {
+      const isRemote = entry.action === 'door:open';
+      const who = entry.name || 'Member';
+      const actionLabel = isRemote ? 'unlocked remotely' : 'accessed';
+      liveTicker.innerHTML = `<b>${esc(who)}</b> ${actionLabel} <b>${esc(entry.device || 'Entrance')}</b> <span class="badge ${Boolean(entry.ok) ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${Boolean(entry.ok) ? 'Granted' : 'Denied'}</span> <small class="hint">Just now</small>`;
       liveTicker.classList.add('ticker-pop');
       setTimeout(() => liveTicker.classList.remove('ticker-pop'), 1200);
     }
@@ -862,18 +864,35 @@ async function dashboard() {
   if (s && s.lastEvent && s.lastEvent.name) {
     latestSwipe = s.lastEvent;
   } else if (logsList && logsList.length) {
-    latestSwipe = {
-      name: logsList[0].employee_name || prettyAction(logsList[0].action),
-      deviceName: logsList[0].device_name || 'Entrance',
-      time: logsList[0].ts,
-      ok: logsList[0].ok !== false,
-    };
+    const accessEvent = logsList.find((l) =>
+      Boolean(l.employee_name) ||
+      Boolean(l.employee_id) ||
+      l.action === 'door:open' ||
+      l.action === 'door:close' ||
+      (l.action && (l.action.startsWith('card') || l.action.startsWith('face') || l.action.startsWith('finger')))
+    );
+    if (accessEvent) {
+      latestSwipe = {
+        name: accessEvent.employee_name || 'Member',
+        action: accessEvent.action,
+        deviceName: accessEvent.device_name || 'Entrance',
+        time: accessEvent.ts,
+        ok: Boolean(accessEvent.ok),
+      };
+    }
   }
-  const lastSwipeHtml = latestSwipe ? `
-    <b>${esc(latestSwipe.name || 'Member')}</b> accessed <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
-    <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span>
-    <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>
-  ` : '<span class="hint">No access events recorded today yet</span>';
+  let lastSwipeHtml;
+  if (latestSwipe) {
+    const isRemote = latestSwipe.action === 'door:open';
+    const actionLabel = isRemote ? 'unlocked remotely' : 'accessed';
+    lastSwipeHtml = `
+      <b>${esc(latestSwipe.name || 'Member')}</b> ${actionLabel} <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
+      <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span>
+      <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>
+    `;
+  } else {
+    lastSwipeHtml = '<span class="hint">No member access events recorded today (terminals offline)</span>';
+  }
 
   const presenceBarHtml = `
     <div class="facility-presence-bar" id="facilityPresenceBar">
@@ -1036,8 +1055,8 @@ async function dashboard() {
     const peakValEl = $('#presencePeakVal');
     if (peakValEl) peakValEl.textContent = peakHour;
     const tickerEl = $('#presenceLiveTicker');
-    if (tickerEl && latestSwipe) {
-      tickerEl.innerHTML = `<b>${esc(latestSwipe.name || 'Member')}</b> accessed <b>${esc(latestSwipe.deviceName || 'Entrance')}</b> <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span> <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>`;
+    if (tickerEl) {
+      tickerEl.innerHTML = lastSwipeHtml;
     }
 
     $('#dashOfflineBanner').innerHTML = offlineHtml;
