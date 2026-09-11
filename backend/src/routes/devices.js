@@ -146,6 +146,36 @@ devicesRouter.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Bulk test connectivity + update online status for all machines
+devicesRouter.post('/test-all', async (req, res) => {
+  const devs = await getAllDevices();
+  if (!devs.length) {
+    return res.json({ ok: true, total: 0, onlineCount: 0, offlineCount: 0, results: [] });
+  }
+  const results = [];
+  for (const dev of devs) {
+    try {
+      const info = await isapi.getDeviceInfo(dev, { timeout: 3000, attempts: 1, priority: true });
+      await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1, model: info.model || null, serial: info.serialNumber || null });
+      logSync(null, dev.id, 'test', true, info);
+      results.push({ id: dev.id, name: dev.name, ok: true, info });
+    } catch (e) {
+      await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
+      logSync(null, dev.id, 'test', false, String(e.message || e));
+      results.push({ id: dev.id, name: dev.name, ok: false, error: String(e.message || e) });
+    }
+  }
+  const onlineCount = results.filter((x) => x.ok).length;
+  const offlineCount = results.length - onlineCount;
+  res.json({
+    ok: true,
+    total: devs.length,
+    onlineCount,
+    offlineCount,
+    results,
+  });
+});
+
 // Test connectivity + pull model/serial.
 devicesRouter.post('/:id/test', async (req, res) => {
   const dev = await getDeviceById(req.params.id);

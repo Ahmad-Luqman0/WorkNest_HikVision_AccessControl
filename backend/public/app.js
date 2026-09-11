@@ -1316,8 +1316,36 @@ async function devices() {
 
   $('#viewActions').innerHTML =
     (dashRole === 'admin' ? '<button class="btn" id="addMachine">+ Add machine</button>' : '') +
-    (list.length ? '<button class="btn" id="syncTimeAll">Sync time</button><button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
+    (list.length ? '<button class="btn" id="testAllMachines">Test all machines</button><button class="btn" id="syncTimeAll">Sync time</button><button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
   $('#addMachine')?.addEventListener('click', () => deviceModal(null, list));
+  const testAllBtn = $('#testAllMachines');
+  if (testAllBtn) testAllBtn.addEventListener('click', async () => {
+    if (!list.length) return;
+    const origText = testAllBtn.innerHTML;
+    testAllBtn.disabled = true;
+    testAllBtn.textContent = 'Testing fleet…';
+    toast(`Testing connectivity on ${list.length} machine${list.length === 1 ? '' : 's'}…`);
+    try {
+      const r = await api.post('/devices/test-all');
+      if (r?.ok) {
+        if (r.onlineCount === r.total) {
+          toast(`All ${r.total} machine${r.total === 1 ? '' : 's'} online and reachable`, 'ok');
+        } else if (r.onlineCount === 0) {
+          toast(`Fleet test complete: all ${r.total} machines unreachable`, 'err');
+        } else {
+          toast(`Fleet test complete: ${r.onlineCount}/${r.total} online (${r.offlineCount} offline)`, 'ok');
+        }
+      } else {
+        toast(`Fleet test failed: ${r?.error || 'error'}`, 'err');
+      }
+    } catch (err) {
+      toast(`Fleet test failed: ${err.message || 'error'}`, 'err');
+    } finally {
+      testAllBtn.disabled = false;
+      testAllBtn.innerHTML = origText;
+      devices();
+    }
+  });
   const syncTimeBtn = $('#syncTimeAll');
   if (syncTimeBtn) syncTimeBtn.addEventListener('click', async () => {
     const onlineDevs = list.filter((d) => d.online);
@@ -5179,6 +5207,20 @@ function renderCommandPalette(query) {
         toast(r?.blocked ? 'Terminals unreachable — marked offline' : r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok && !r?.blocked ? 'ok' : 'err');
         if (current === 'devices') devices();
         else if (current === 'dashboard') overview();
+      },
+    },
+    {
+      id: 'act-test-all-machines',
+      group: 'Quick Actions',
+      title: 'Test All Machines',
+      subtitle: 'Probe connectivity and refresh online status across entire fleet',
+      icon: ICONS.online,
+      badge: 'Diagnostics',
+      search: 'test all machines probe ping connectivity health status check diagnostics',
+      run: () => {
+        closeCommandPalette();
+        go('devices');
+        setTimeout(() => $('#testAllMachines')?.click(), 300);
       },
     },
     {
