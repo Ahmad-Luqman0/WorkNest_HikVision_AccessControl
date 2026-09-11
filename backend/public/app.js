@@ -1375,8 +1375,8 @@ async function devices() {
       const dev = list.find((d) => d.id == b.dataset.devMenu);
       if (!dev) return;
       const items = [
-        ['📅 Book Slot', () => bookSlotModal(dev, list)],
-        ['👥 Enrolled Users', async () => {
+        ['Book Slot', () => bookSlotModal(dev, list)],
+        ['Enrolled Users', async () => {
           toast('Fetching users from machine…');
           const r = await api.get(`/devices/${dev.id}/users`);
           if (!r.ok) { toast(`Failed: ${r.error || 'error'}`, 'err'); return; }
@@ -1385,8 +1385,8 @@ async function devices() {
         }],
       ];
       if (dashRole === 'admin') {
-        items.push(['✏️ Edit Configuration', () => deviceModal(dev, list)]);
-        items.push(['🗑️ Delete Machine', async () => {
+        items.push(['Edit Configuration', () => deviceModal(dev, list)]);
+        items.push(['Delete Machine', async () => {
           const ok = await confirmDialog({
             title: 'Delete Machine',
             message: `Delete ${dev.name} from the dashboard? It will no longer be monitored.`,
