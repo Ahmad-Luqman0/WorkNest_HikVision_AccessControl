@@ -762,9 +762,15 @@ app.get('/api/stats', async (req, res) => {
     const yest = new Date(now.getTime() - 86400000);
     const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
 
-    const [todayRow, yestRow] = await Promise.all([
+    const [todayRow, yestRow, uniqueTodayRow, lastEventRow] = await Promise.all([
       getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
       getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
+      getRow("SELECT COUNT(DISTINCT employee_no) AS n FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time >= CAST(GETDATE() AS DATE) AND employee_no IS NOT NULL").catch(async () => {
+        return getRow("SELECT COUNT(DISTINCT employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST(ts AS DATE) = ? AND employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
+      }),
+      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no FROM dbo.WN_HIK_Events WITH (NOLOCK) ORDER BY event_time DESC").catch(async () => {
+        return getRow("SELECT TOP 1 employee_id AS employee_no, '' AS name, '' AS device_name, ts AS event_time, '' AS card_no FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) ORDER BY id DESC").catch(() => null);
+      }),
     ]);
 
     const todayScans = todayRow?.n || 0;
@@ -776,6 +782,15 @@ app.get('/api/stats', async (req, res) => {
       trendPct = 100;
     }
 
+    const uniqueToday = Number(uniqueTodayRow?.n) || 0;
+    const lastEvent = lastEventRow ? {
+      employeeNo: lastEventRow.employee_no || '',
+      name: lastEventRow.name || '',
+      deviceName: lastEventRow.device_name || '',
+      time: lastEventRow.event_time ? new Date(lastEventRow.event_time).toISOString() : null,
+      cardNo: lastEventRow.card_no || '',
+    } : null;
+
     res.json({
       devices,
       devicesOnline,
@@ -786,6 +801,8 @@ app.get('/api/stats', async (req, res) => {
       todayScans,
       yestScans,
       trendPct,
+      uniqueToday,
+      lastEvent,
     });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });

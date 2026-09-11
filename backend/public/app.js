@@ -225,6 +225,13 @@ function onLiveActivityEvent(entry) {
       const cur = Number(scansEl.textContent) || 0;
       scansEl.textContent = cur + 1;
     }
+    const liveTicker = $('#presenceLiveTicker');
+    if (liveTicker) {
+      const who = entry.name || prettyAction(entry.action);
+      liveTicker.innerHTML = `<b>${esc(who)}</b> accessed <b>${esc(entry.device || 'Entrance')}</b> <span class="badge ${entry.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${entry.ok ? 'Granted' : 'Denied'}</span> <small class="hint">Just now</small>`;
+      liveTicker.classList.add('ticker-pop');
+      setTimeout(() => liveTicker.classList.remove('ticker-pop'), 1200);
+    }
     const dot = $('.brand-text .live-dot');
     if (dot) {
       dot.style.transform = 'scale(1.6)';
@@ -607,6 +614,33 @@ function wireGroupSelect(items, checkboxClass) {
   refresh();
 }
 
+// Clean vector empty state generator (no emojis, crisp SVG iconography)
+function renderEmptyState({ icon = 'search', title = 'No results found', message = 'Try adjusting your search query or filters.', actionText = '', onAction = null }) {
+  const ICONS_MAP = {
+    search: '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
+    calendar: '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="12" cy="15" r="2"/></svg>',
+    devices: '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><circle cx="12" cy="9" r="2.6"/><line x1="8.5" y1="17" x2="15.5" y2="17"/></svg>',
+    check: '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
+    user: '<svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
+  };
+  const svg = ICONS_MAP[icon] || ICONS_MAP.search;
+  const actId = 'empty_act_' + Math.random().toString(36).slice(2, 8);
+  if (actionText && onAction) {
+    setTimeout(() => {
+      const btn = document.getElementById(actId);
+      if (btn) btn.addEventListener('click', onAction);
+    }, 0);
+  }
+  return `
+    <div class="modern-empty-state">
+      <div class="empty-icon-box">${svg}</div>
+      <div class="empty-title">${esc(title)}</div>
+      <div class="empty-message">${esc(message)}</div>
+      ${actionText && onAction ? `<button id="${actId}" class="btn sm primary empty-action-btn" type="button">${esc(actionText)}</button>` : ''}
+    </div>
+  `;
+}
+
 // ---- Router ----
 const views = { dashboard, devices, users, cards, logs, analytics: analyticsView, audit: auditView, dashusers, bookings: bookingsView };
 let current = 'dashboard';
@@ -616,6 +650,7 @@ let _cmdCachedUsers = [];
 let _cmdCachedDevs = [];
 let _deviceFilter = 'all';
 let _deviceSearch = '';
+let _bookingsViewMode = localStorage.getItem('wn_bookings_view_mode') || 'gantt';
 document.querySelectorAll('nav a').forEach((a) =>
   a.addEventListener('click', () => go(a.dataset.view))
 );
@@ -818,6 +853,68 @@ async function dashboard() {
   const ringCircumference = 238.76;
   const ringOffset = (ringCircumference * (1 - occupancyPct / 100)).toFixed(1);
 
+  const uniqueToday = (s && s.uniqueToday !== undefined)
+    ? s.uniqueToday
+    : (liveHeadcount || Math.min(s.todayScans || 0, s.active || 0));
+  const peakHour = analyticsData?.peakHourLabel || '09:00 - 10:00 AM';
+
+  let latestSwipe = null;
+  if (s && s.lastEvent && s.lastEvent.name) {
+    latestSwipe = s.lastEvent;
+  } else if (logsList && logsList.length) {
+    latestSwipe = {
+      name: logsList[0].employee_name || prettyAction(logsList[0].action),
+      deviceName: logsList[0].device_name || 'Entrance',
+      time: logsList[0].ts,
+      ok: logsList[0].ok !== false,
+    };
+  }
+  const lastSwipeHtml = latestSwipe ? `
+    <b>${esc(latestSwipe.name || 'Member')}</b> accessed <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
+    <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span>
+    <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>
+  ` : '<span class="hint">No access events recorded today yet</span>';
+
+  const presenceBarHtml = `
+    <div class="facility-presence-bar" id="facilityPresenceBar">
+      <div class="presence-metrics-group">
+        <div class="presence-metric">
+          <div class="presence-metric-icon">
+            ${ICONS.user}
+            <span class="presence-live-pulse"></span>
+          </div>
+          <div class="presence-metric-text">
+            <div class="presence-val tabular-nums" id="presenceUniqueVal">${uniqueToday}</div>
+            <div class="presence-lbl">Members On-Site Today</div>
+          </div>
+        </div>
+
+        <div class="presence-divider"></div>
+
+        <div class="presence-metric">
+          <div class="presence-metric-icon">
+            ${ICONS.clock}
+          </div>
+          <div class="presence-metric-text">
+            <div class="presence-val" id="presencePeakVal">${esc(peakHour)}</div>
+            <div class="presence-lbl">Peak Arrival Window</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="presence-divider"></div>
+
+      <div class="presence-ticker-box" id="presenceLiveTickerBox">
+        <div class="presence-ticker-tag">
+          <span class="ticker-live-dot"></span> Live Access
+        </div>
+        <div class="presence-ticker-content" id="presenceLiveTicker">
+          ${lastSwipeHtml}
+        </div>
+      </div>
+    </div>
+  `;
+
   const heroHtml = `
     <div class="exec-hero" id="dashExecHero">
       <div class="exec-hero-left">
@@ -934,6 +1031,15 @@ async function dashboard() {
     const capEl = $('#occupancyCapacitySub');
     if (capEl) capEl.textContent = `Capacity target: ${totalCapacity}`;
 
+    const presenceValEl = $('#presenceUniqueVal');
+    if (presenceValEl) presenceValEl.textContent = uniqueToday;
+    const peakValEl = $('#presencePeakVal');
+    if (peakValEl) peakValEl.textContent = peakHour;
+    const tickerEl = $('#presenceLiveTicker');
+    if (tickerEl && latestSwipe) {
+      tickerEl.innerHTML = `<b>${esc(latestSwipe.name || 'Member')}</b> accessed <b>${esc(latestSwipe.deviceName || 'Entrance')}</b> <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span> <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>`;
+    }
+
     $('#dashOfflineBanner').innerHTML = offlineHtml;
     $('#dashBookingsSlot').innerHTML = bookingsHtml;
     $('#kpiMachinesVal').textContent = totalMachines;
@@ -979,6 +1085,7 @@ async function dashboard() {
   };
 
   content.appendChild(el(`<div id="dashWrapper">
+    ${presenceBarHtml}
     ${heroHtml}
     <div id="dashOfflineBanner">${offlineHtml}</div>
     <div id="dashBookingsSlot">${bookingsHtml}</div>
@@ -1330,7 +1437,24 @@ async function devices() {
     if (!tableWrapper) return;
 
     if (!filtered.length) {
-      tableWrapper.innerHTML = `<div class="empty" style="padding:48px 20px;text-align:center;">No machines matching filter "<b>${esc(_deviceFilter)}</b>"${_deviceSearch ? ` and query "<b>${esc(_deviceSearch)}</b>"` : ''}.</div>`;
+      tableWrapper.innerHTML = renderEmptyState({
+        icon: 'devices',
+        title: 'No matching machines',
+        message: _deviceSearch
+          ? `No terminals matched "${esc(_deviceSearch)}" with filter "${esc(_deviceFilter)}".`
+          : `No machines found under filter "${esc(_deviceFilter)}".`,
+        actionText: 'Reset search & filters',
+        onAction: () => {
+          _deviceSearch = '';
+          _deviceFilter = 'all';
+          const inp = $('#deviceSearchInput');
+          if (inp) inp.value = '';
+          const clr = $('#deviceSearchClear');
+          if (clr) clr.style.display = 'none';
+          $('#deviceFilterBar')?.querySelectorAll('.filter-chip').forEach((c) => c.classList.toggle('active', c.dataset.dfilter === 'all'));
+          renderTableRows();
+        },
+      });
       return;
     }
 
@@ -1940,6 +2064,7 @@ async function loadUsersTable(devs) {
     ${note}
     ${filterBarHtml}
     <div id="consistencyNote"></div>
+    <div id="userEmptyNotice" style="display:none;"></div>
     <div id="userTableWrap" class="table-wrapper" style="${_userViewMode === 'grid' ? 'display:none' : ''}">
       <table>
         <thead>
@@ -2028,6 +2153,41 @@ async function loadUsersTable(devs) {
     if (matchEl) {
       matchEl.textContent = `Showing ${matchCount} of ${entries.length} members${q ? ` for "${q}"` : ''}`;
     }
+
+    const emptyNotice = $('#userEmptyNotice');
+    const tableWrap = $('#userTableWrap');
+    const gridWrap = $('#userGridWrap');
+    if (emptyNotice) {
+      if (matchCount === 0) {
+        emptyNotice.innerHTML = renderEmptyState({
+          icon: 'user',
+          title: 'No members found',
+          message: q
+            ? `No members matched "${esc(q)}" with active filter "${esc(filter)}".`
+            : `No members found matching filter "${esc(filter)}".`,
+          actionText: 'Reset search & filters',
+          onAction: () => {
+            _userSearchQuery = '';
+            const inp = $('#userLiveSearch');
+            if (inp) inp.value = '';
+            const clr = $('#userSearchClear');
+            if (clr) clr.style.display = 'none';
+            _userActiveFilter = 'all';
+            $('#userFilterBar')?.querySelectorAll('.filter-chip').forEach((c) => c.classList.toggle('active', c.dataset.ufilter === 'all'));
+            applyUserFilters();
+          },
+        });
+        emptyNotice.style.display = '';
+        if (tableWrap) tableWrap.style.display = 'none';
+        if (gridWrap) gridWrap.style.display = 'none';
+      } else {
+        emptyNotice.innerHTML = '';
+        emptyNotice.style.display = 'none';
+        if (tableWrap) tableWrap.style.display = _userViewMode === 'grid' ? 'none' : '';
+        if (gridWrap) gridWrap.style.display = _userViewMode === 'table' ? 'none' : '';
+      }
+    }
+
     updateDock();
   };
 
@@ -3568,7 +3728,18 @@ function renderEntries() {
   const note = (r.unreachable || []).length
     ? `<p class="hint" style="margin:0 0 10px">Unreachable: ${esc(r.unreachable.join(', '))} — their entries are not shown.</p>` : '';
   if (!events.length) {
-    holder.innerHTML = `${note}<div class="empty">${fMachine || fMethod || fResult ? 'No entries match the current filters.' : 'No entries recorded yet. Events appear here after someone uses a card, fingerprint or face at a machine.'}</div>`;
+    holder.innerHTML = `${note}${renderEmptyState({
+      icon: 'search',
+      title: 'No access events found',
+      message: fMachine || fMethod || fResult ? 'No entries match the selected filters.' : 'No entries recorded yet. Events appear here after someone scans a card, fingerprint, or face.',
+      actionText: fMachine || fMethod || fResult ? 'Reset log filters' : '',
+      onAction: fMachine || fMethod || fResult ? () => {
+        const m = $('#log_machine'); if (m) m.value = '';
+        const me = $('#log_method'); if (me) me.value = '';
+        const r = $('#log_result'); if (r) r.value = '';
+        renderEntries();
+      } : null,
+    })}`;
     return;
   }
   const METHOD_LABEL = { fingerprint: 'Fingerprint', card: 'Card', face: 'Face', other: '—' };
@@ -3600,14 +3771,180 @@ function renderEntries() {
 // ---- Bookings (from the booking system's WN_Bookings / WN_Spaces tables) ----
 const fmtDT = (v) => String(v || '—').replace('T', ' ').slice(0, 16);
 
+function renderBookingsGantt(items, devs = []) {
+  const spaceMap = new Map();
+  for (const b of items) {
+    const key = String(b.spaceCode || b.spaceName || 'Space').trim();
+    if (!spaceMap.has(key)) {
+      spaceMap.set(key, {
+        code: b.spaceCode,
+        name: b.spaceName || `Room ${b.spaceCode}`,
+        capacity: b.capacity || 0,
+        type: b.spaceType || 'Meeting Space',
+        machine: devs.find((d) => String(d.code || '').trim() === String(b.spaceCode).trim()),
+        bookings: [],
+      });
+    }
+    spaceMap.get(key).bookings.push(b);
+  }
+
+  for (const d of devs) {
+    const isMeeting = (d.name && d.name.toLowerCase().includes('meeting')) || (d.grp && d.grp.toLowerCase().includes('meeting')) || (d.code);
+    const key = String(d.code || d.name).trim();
+    if (isMeeting && !spaceMap.has(key)) {
+      spaceMap.set(key, {
+        code: d.code || '',
+        name: d.name,
+        capacity: 10,
+        type: 'Meeting Room',
+        machine: d,
+        bookings: [],
+      });
+    }
+  }
+
+  const spaces = [...spaceMap.values()];
+  if (!spaces.length) {
+    return `<div class="empty">No meeting spaces configured.</div>`;
+  }
+
+  const now = new Date();
+  const nowM = now.getHours() * 60 + now.getMinutes();
+  const showNow = nowM >= 480 && nowM <= 1200;
+  const nowPct = showNow ? (((nowM - 480) / 720) * 100).toFixed(2) : null;
+  const timeLabels = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'];
+
+  const rowsHtml = spaces.map((sp) => {
+    const sorted = [...sp.bookings].sort((a, b) => new Date(a.start) - new Date(b.start));
+    const blocksHtml = sorted.map((b) => {
+      const ds = new Date(b.start);
+      const de = new Date(b.end);
+      const sM = ds.getHours() * 60 + ds.getMinutes();
+      const eM = de.getHours() * 60 + de.getMinutes();
+      const sClamp = Math.max(480, sM);
+      const eClamp = Math.min(1200, eM);
+      if (eClamp <= sClamp) return '';
+      const left = (((sClamp - 480) / 720) * 100).toFixed(2);
+      const width = Math.max(2.5, ((eClamp - sClamp) / 720) * 100).toFixed(2);
+      const full = b.capacity > 0 && b.enrolled >= b.capacity;
+      const statusText = full ? 'Full' : `${b.enrolled}/${b.capacity || '∞'}`;
+      const timeStr = `${String(ds.getHours()).padStart(2, '0')}:${String(ds.getMinutes()).padStart(2, '0')} - ${String(de.getHours()).padStart(2, '0')}:${String(de.getMinutes()).padStart(2, '0')}`;
+
+      return `
+        <div class="gantt-slot-booked" style="left:${left}%; width:${width}%;" data-enroll="${b.id}" title="${esc(b.challan || b.ref)} · ${esc(b.customer || 'Booking')} (${timeStr}) — Click to manage attendees">
+          <div class="gantt-slot-title">${esc(b.customer || b.challan || b.ref)} · ${statusText}</div>
+          <div class="gantt-slot-time">${timeStr}</div>
+        </div>
+      `;
+    }).join('');
+
+    const gridLinesHtml = [0, 1, 2, 3, 4, 5, 6].map((i) =>
+      `<div class="gantt-grid-line" style="left:${(i * 16.666).toFixed(2)}%;"></div>`
+    ).join('');
+
+    const availableEmptyHtml = !sorted.length ? `
+      <div class="gantt-slot-available" style="left:1%; width:98%;" data-quick-book="${sp.machine ? sp.machine.id : ''}" data-spcode="${esc(sp.code)}" title="No bookings today — Click to reserve this room">
+        Available all day — click to reserve slot
+      </div>
+    ` : '';
+
+    return `
+      <div class="gantt-room-row">
+        <div class="gantt-room-info">
+          <div class="gantt-room-title" title="${esc(sp.name)}">${esc(sp.name)}</div>
+          <div class="gantt-room-meta">
+            ${sp.code ? `<span class="badge admin" style="font-size:10px;">room ${esc(sp.code)}</span>` : ''}
+            <span>${sp.capacity ? sp.capacity + ' seats' : (sp.type || 'Meeting')}</span>
+          </div>
+        </div>
+
+        <div class="gantt-track-wrapper">
+          ${gridLinesHtml}
+          ${showNow ? `
+            <div class="gantt-now-indicator" style="left:${nowPct}%;">
+              <span class="gantt-now-badge">NOW</span>
+            </div>
+          ` : ''}
+          ${availableEmptyHtml}
+          ${blocksHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="gantt-container">
+      <div class="gantt-header-row">
+        <div class="gantt-room-col-header">Meeting Space</div>
+        <div class="gantt-timeline-header">
+          ${timeLabels.map((t) => `<span>${t}</span>`).join('')}
+        </div>
+      </div>
+      <div class="gantt-body">
+        ${rowsHtml}
+      </div>
+    </div>
+  `;
+}
+
 async function bookingsView() {
-  $('#viewActions').innerHTML = '';
+  $('#viewActions').innerHTML = `
+    <div class="view-toggle-group">
+      <button id="bookingsViewGantt" class="view-toggle-btn ${_bookingsViewMode === 'gantt' ? 'active' : ''}" title="Timeline Schedule View">
+        ${ICONS.clock}
+      </button>
+      <button id="bookingsViewTable" class="view-toggle-btn ${_bookingsViewMode === 'table' ? 'active' : ''}" title="Table List View">
+        ${ICONS.table}
+      </button>
+    </div>
+  `;
   content.innerHTML = skeletonTable(['Booking', 'Space', 'Period', 'People', '']);
-  const r = await api.get('/bookings-feed');
-  if (current !== 'bookings') return; // view changed while loading
+  const [r, devs] = await Promise.all([
+    api.get('/bookings-feed'),
+    api.get('/devices').catch(() => []),
+  ]);
+  if (current !== 'bookings') return;
   if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">Couldn't load bookings: ${esc(r.error || 'error')}</div>`; return; }
   const items = r.items || [];
-  if (!items.length) { content.innerHTML = '<div class="empty">No current or upcoming bookings in the booking system.</div>'; return; }
+  if (Array.isArray(devs)) _cmdCachedDevs = devs;
+
+  $('#bookingsViewGantt')?.addEventListener('click', () => {
+    _bookingsViewMode = 'gantt';
+    localStorage.setItem('wn_bookings_view_mode', 'gantt');
+    bookingsView();
+  });
+  $('#bookingsViewTable')?.addEventListener('click', () => {
+    _bookingsViewMode = 'table';
+    localStorage.setItem('wn_bookings_view_mode', 'table');
+    bookingsView();
+  });
+
+  if (!items.length) {
+    content.innerHTML = renderEmptyState({
+      icon: 'calendar',
+      title: 'No active bookings',
+      message: 'No upcoming room reservations scheduled. You can book a meeting room slot directly.',
+      actionText: '+ Book a slot',
+      onAction: () => {
+        const meetingDev = (_cmdCachedDevs || []).find((d) => (d.name && d.name.toLowerCase().includes('meeting')) || (d.code));
+        bookSlotModal(meetingDev || (_cmdCachedDevs && _cmdCachedDevs[0]), _cmdCachedDevs || []);
+      },
+    });
+    return;
+  }
+
+  if (_bookingsViewMode === 'gantt') {
+    content.innerHTML = renderBookingsGantt(items, _cmdCachedDevs || []);
+    content.querySelectorAll('[data-enroll]').forEach((b) => b.addEventListener('click', () => bookingEnrollModal(Number(b.dataset.enroll))));
+    content.querySelectorAll('[data-quick-book]').forEach((b) => b.addEventListener('click', () => {
+      const devId = b.dataset.quickBook;
+      const spCode = b.dataset.spcode;
+      const dev = (_cmdCachedDevs || []).find((d) => d.id == devId || String(d.code) === String(spCode));
+      bookSlotModal(dev || (_cmdCachedDevs && _cmdCachedDevs[0]), _cmdCachedDevs || []);
+    }));
+    return;
+  }
+
   const rows = items.map((b) => {
     const full = b.capacity > 0 && b.enrolled >= b.capacity;
     const none = b.enrolled === 0;
