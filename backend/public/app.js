@@ -1190,8 +1190,37 @@ async function devices() {
 
   $('#viewActions').innerHTML =
     (dashRole === 'admin' ? '<button class="btn" id="addMachine">+ Add machine</button>' : '') +
-    (list.length ? '<button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
+    (list.length ? '<button class="btn" id="syncTimeAll">Sync time</button><button class="btn primary" id="unlockAll">Unlock all doors</button>' : '');
   $('#addMachine')?.addEventListener('click', () => deviceModal(null, list));
+  const syncTimeBtn = $('#syncTimeAll');
+  if (syncTimeBtn) syncTimeBtn.addEventListener('click', async () => {
+    const onlineDevs = list.filter((d) => d.online);
+    if (!onlineDevs.length) {
+      toast('No machines are currently online', 'err');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Synchronize Machine Clocks',
+      message: `Sync the internal RTC clock on ${onlineDevs.length} online machine${onlineDevs.length === 1 ? '' : 's'} to match server time?\n\nThis ensures room bookings, access schedules, and event timestamps match exactly.`,
+      confirmText: 'Sync Clocks',
+    });
+    if (!ok) return;
+    toast('Synchronizing machine clocks…');
+    try {
+      const r = await api.post('/devices/time-sync-all');
+      if (r?.ok) {
+        if (r.failed > 0) {
+          toast(`Synced ${r.synced}/${r.total} machines — ${r.failed} failed`, 'err');
+        } else {
+          toast(`All ${r.synced} machine clock${r.synced === 1 ? '' : 's'} synchronized`, 'ok');
+        }
+      } else {
+        toast(`Sync failed: ${r?.error || 'error'}`, 'err');
+      }
+    } catch (err) {
+      toast(`Sync failed: ${err.message || 'error'}`, 'err');
+    }
+  });
   const unlockAllBtn = $('#unlockAll');
   if (unlockAllBtn) unlockAllBtn.addEventListener('click', async () => {
     const ok = await confirmDialog({
@@ -1375,6 +1404,19 @@ async function devices() {
       const dev = list.find((d) => d.id == b.dataset.devMenu);
       if (!dev) return;
       const items = [
+        ['Sync Time', async () => {
+          toast(`Syncing time on ${dev.name}…`);
+          try {
+            const r = await api.post(`/devices/${dev.id}/time-sync`);
+            if (r?.ok) {
+              toast(`Time synced: ${r.message || 'ok'}`, 'ok');
+            } else {
+              toast(`Failed: ${r?.error || 'unreachable'}`, 'err');
+            }
+          } catch (err) {
+            toast(`Failed: ${err.message || 'error'}`, 'err');
+          }
+        }],
         ['Book Slot', () => bookSlotModal(dev, list)],
         ['Enrolled Users', async () => {
           toast('Fetching users from machine…');
@@ -4781,6 +4823,20 @@ function renderCommandPalette(query) {
         toast(r?.blocked ? 'Terminals unreachable — marked offline' : r?.ok ? 'All terminal reachability checks completed' : 'Diagnostic check failed', r?.ok && !r?.blocked ? 'ok' : 'err');
         if (current === 'devices') devices();
         else if (current === 'dashboard') overview();
+      },
+    },
+    {
+      id: 'act-sync-clocks',
+      group: 'Quick Actions',
+      title: 'Sync Machine Clocks',
+      subtitle: 'Synchronize terminal RTC clocks with dashboard server time',
+      icon: ICONS.clock,
+      badge: 'Time',
+      search: 'sync time clock machine date rtc calibrate ntp time-sync',
+      run: () => {
+        closeCommandPalette();
+        go('devices');
+        setTimeout(() => $('#syncTimeAll')?.click(), 300);
       },
     },
     {

@@ -162,6 +162,71 @@ devicesRouter.post('/:id/test', async (req, res) => {
   }
 });
 
+// Bulk sync RTC clocks on all online machines to match dashboard server time
+devicesRouter.post('/time-sync-all', async (req, res) => {
+  const devs = await getAllDevices();
+  const onlineDevs = devs.filter((d) => d.online);
+  if (!onlineDevs.length) {
+    return res.json({ ok: true, total: 0, synced: 0, failed: 0, results: [] });
+  }
+  const now = new Date();
+  const results = [];
+  for (const dev of onlineDevs) {
+    try {
+      const r = await isapi.setDeviceTime(dev, now);
+      if (r?.ok) {
+        logSync(null, dev.id, 'time-sync', true, { syncedAt: now.toISOString() });
+        results.push({ id: dev.id, name: dev.name, ok: true });
+      } else {
+        results.push({ id: dev.id, name: dev.name, ok: false, error: r?.statusString || 'Failed' });
+      }
+    } catch (err) {
+      results.push({ id: dev.id, name: dev.name, ok: false, error: String(err.message || err) });
+    }
+  }
+  const okCount = results.filter((x) => x.ok).length;
+  const failCount = results.length - okCount;
+  res.json({
+    ok: true,
+    total: onlineDevs.length,
+    synced: okCount,
+    failed: failCount,
+    results,
+  });
+});
+
+// Sync RTC clock on a specific machine with server time
+devicesRouter.post('/:id/time-sync', async (req, res) => {
+  const dev = await getDeviceById(req.params.id);
+  if (!dev) return res.status(404).json({ error: 'not found' });
+  try {
+    const now = new Date();
+    let before = null;
+    try {
+      before = await isapi.getDeviceTime(dev, { timeout: 2500 });
+    } catch { /* proceed with sync */ }
+
+    const result = await isapi.setDeviceTime(dev, now);
+    if (!result?.ok) {
+      throw new Error(result?.statusString || `Failed to set time (HTTP ${result?.httpStatus || 500})`);
+    }
+
+    const driftSec = before ? Math.round((before.getTime() - now.getTime()) / 1000) : null;
+    logSync(null, dev.id, 'time-sync', true, { driftSec, syncedAt: now.toISOString() });
+    res.json({
+      ok: true,
+      serverTime: now.toISOString(),
+      driftSec,
+      message: driftSec !== null
+        ? (Math.abs(driftSec) < 3 ? 'Clock is in sync' : `Adjusted by ${Math.abs(driftSec)}s`)
+        : 'Time synchronized',
+    });
+  } catch (e) {
+    logSync(null, dev.id, 'time-sync', false, String(e.message || e));
+    res.json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // Live list of persons currently enrolled ON the device (pulled over ISAPI with DB fallback).
 devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
