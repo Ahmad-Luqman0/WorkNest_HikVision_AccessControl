@@ -66,12 +66,12 @@ async function changePasswordModal() {
     <h2>Change password <small class="hint">${esc(me.username)} \u00b7 ${esc(me.role)}</small></h2>
     <div class="field"><label>Current password</label><input id="cp_cur" type="password" autocomplete="current-password"></div>
     <div class="two-col">
-      <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="cp_new" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>New password</label><input id="cp_new" type="password" autocomplete="new-password"><div class="field-help">Minimum 6 characters.</div></div>
       <div class="field"><label>Repeat new password</label><input id="cp_new2" type="password" autocomplete="new-password"></div>
     </div>
     ${me.role === 'admin' ? '<p class="hint">Managing other accounts moved to <b>Dashboard Users</b> in the sidebar.</p>' : ''}
     <div class="modal-actions">
-      <button class="btn" id="cp_cancel">Cancel</button>
+      <button class="btn ghost" id="cp_cancel">Cancel</button>
       <button class="btn primary" id="cp_save">Change password</button>
     </div>`);
   $('#cp_cancel').addEventListener('click', closeModal);
@@ -287,6 +287,22 @@ function renderAvatar(name, size = 'sm') {
 // ---- Copy to Clipboard Helpers ----
 const COPY_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
 const CHECK_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+// "5m ago" style stamp with the full timestamp on hover.
+function relStamp(ts) {
+  if (!ts) return '<small class="hint">—</small>';
+  const str = String(ts).slice(0, 19).replace('T', ' ');
+  const t = new Date(String(ts).replace(' ', 'T')).getTime();
+  if (!Number.isFinite(t)) return `<small class="hint">${esc(str)}</small>`;
+  const s = Math.floor((Date.now() - t) / 1000);
+  let rel;
+  if (s < 45) rel = 'just now';
+  else if (s < 3600) rel = Math.floor(s / 60) + 'm ago';
+  else if (s < 86400) rel = Math.floor(s / 3600) + 'h ago';
+  else if (s < 7 * 86400) rel = Math.floor(s / 86400) + 'd ago';
+  else rel = str.slice(0, 16);
+  return `<small class="hint" title="${esc(str)}">${esc(rel)}</small>`;
+}
 
 function copyableBadge(text, display = null) {
   if (text === null || text === undefined || text === '') return '<small class="hint">—</small>';
@@ -649,6 +665,7 @@ let current = 'dashboard';
 let _autoTimer = null; // live-refresh timer for dashboard / activity views
 let _cmdCachedEntries = [];
 let _cmdCachedUsers = [];
+let _cnicMap = {}; // "emp||name" -> cnic (admins only — server withholds otherwise)
 let _cmdCachedDevs = [];
 let _deviceFilter = 'all';
 let _deviceSearch = '';
@@ -1191,7 +1208,7 @@ function quickUnlockModal(devs) {
 
       <div class="modal-actions" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center;">
         <button class="btn" id="modalUnlockAll" style="font-size:12px;">Unlock All Doors</button>
-        <button class="btn" id="modalUnlockClose">Close</button>
+        <button class="btn ghost" id="modalUnlockClose">Close</button>
       </div>
     </div>
   `);
@@ -1527,7 +1544,7 @@ async function devices() {
           ${d.serial ? `<br><small class="hint" style="font-family:monospace;font-size:11px;">${esc(d.serial)}</small>` : ''}
         </td>
         <td>
-          <span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span>
+          <span class="badge ${d.online ? 'online' : 'offline'}" title="${d.online ? 'Reachable at the last check' : 'Last seen: ' + (d.last_seen ? esc(String(d.last_seen).slice(0, 16).replace('T', ' ')) : 'never')}">${d.online ? 'Online' : 'Offline'}</span>
         </td>
         <td class="row-actions">
           <button class="btn sm" data-open="${d.id}" title="Unlock door now">${ICONS.unlock} Unlock</button>
@@ -1720,15 +1737,16 @@ function copyUserModal(srcDev, employeeNo, name, devs, users) {
     <h2>Copy “${esc(name || 'User ' + employeeNo)}” → machine(s)</h2>
     <p class="hint">From ${esc(srcDev.name)}. Copies identity, fingerprints, cards and the face template.</p>
     <div class="field">
-      <label>Access until <small class="hint">(deadline enforced by the machine)</small></label>
+      <label>Access until</label>
       <input id="copy_end" type="datetime-local">
+      <div class="field-help">Deadline enforced by the machine itself.</div>
     </div>
     <div class="field">
       <label>Target machines</label>
       <div class="device-checklist">${targetChecks}</div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="copy_cancel">Cancel</button>
+      <button class="btn ghost" id="copy_cancel">Cancel</button>
       <button class="btn primary" id="copy_go" ${targets.length ? '' : 'disabled'}>Copy</button>
     </div>`);
   $('#copy_cancel').addEventListener('click', closeModal);
@@ -1753,31 +1771,47 @@ function deviceModal(d = null, all = []) {
   const groups = [...new Set(all.map((x) => String(x.grp || '').trim()).filter(Boolean))].sort();
   openModal(`
     <h2>${d ? 'Edit machine' : 'Add machine'}</h2>
-    <div class="field"><label>Name</label><input id="d_name" value="${esc(d?.name || '')}" placeholder="Front door machine"></div>
-    <div class="two-col">
-      <div class="field"><label>IP / host</label><input id="d_host" value="${esc(d?.host || '')}" placeholder="192.168.1.64"></div>
-      <div class="field"><label>Port</label><input id="d_port" type="number" value="${d?.port || 80}"></div>
-    </div>
-    <div class="two-col">
-      <div class="field"><label>Username</label><input id="d_user" value="${esc(d?.username || 'admin')}"></div>
-      <div class="field"><label>Password</label><input id="d_pass" type="password" value="" placeholder="${d ? '•••• (unchanged)' : ''}"></div>
-    </div>
-    <div class="two-col">
-      <div class="field"><label>Location</label><input id="d_loc" value="${esc(d?.location || '')}" placeholder="Reception"></div>
-      <div class="field"><label>Room code <small class="hint">(matches a space's code)</small></label><input id="d_code" value="${esc(d?.code || '')}" placeholder="e.g. 355"></div>
-      <div class="field"><label>Group</label>
-        <select id="d_grp_sel">
-          <option value="">No group</option>
-          ${groups.map((g) => `<option value="${esc(g)}" ${(d?.grp || '') === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
-          <option value="__new">+ New group…</option>
-        </select>
-        <input id="d_grp_new" placeholder="New group name, e.g. Entrances" style="margin-top:8px; display:none">
+    <div class="form-section first">
+      <div class="form-section-head">Machine details</div>
+      <div class="two-col">
+        <div class="field"><label for="d_name">Name</label><input id="d_name" value="${esc(d?.name || '')}" placeholder="Front door machine"></div>
+        <div class="field"><label for="d_loc">Location</label><input id="d_loc" value="${esc(d?.location || '')}" placeholder="Reception"></div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label for="d_code">Room code</label>
+          <input id="d_code" value="${esc(d?.code || '')}" placeholder="355">
+          <div class="field-help">Matches a booking space's code.</div>
+        </div>
+        <div class="field"><label for="d_grp_sel">Group</label>
+          <select id="d_grp_sel">
+            <option value="">No group</option>
+            ${groups.map((g) => `<option value="${esc(g)}" ${(d?.grp || '') === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}
+            <option value="__new">+ New group…</option>
+          </select>
+          <input id="d_grp_new" placeholder="New group name, e.g. Entrances" style="margin-top:8px; display:none">
+        </div>
       </div>
     </div>
-    <div class="field check"><input id="d_https" type="checkbox" ${d?.use_https ? 'checked' : ''}><label>Use HTTPS</label></div>
+    <div class="form-section">
+      <div class="form-section-head">Connection</div>
+      <div class="two-col">
+        <div class="field"><label for="d_host">IP / host</label><input id="d_host" value="${esc(d?.host || '')}" placeholder="192.168.1.64"></div>
+        <div class="field"><label for="d_port">Port</label><input id="d_port" type="number" value="${d?.port || 80}"></div>
+      </div>
+      <div class="two-col">
+        <div class="field"><label for="d_user">Username</label><input id="d_user" value="${esc(d?.username || 'admin')}"></div>
+        <div class="field">
+          <label for="d_pass">Password</label>
+          <input id="d_pass" type="password" value="" placeholder="${d ? '••••' : ''}">
+          ${d ? '<div class="field-help">Leave empty to keep the current password.</div>' : ''}
+        </div>
+      </div>
+      <div class="field check"><input id="d_https" type="checkbox" ${d?.use_https ? 'checked' : ''}><label>Use HTTPS</label></div>
+    </div>
     <div class="modal-actions">
-      <button class="btn" id="d_cancel">Cancel</button>
-      <button class="btn primary" id="d_save">${d ? 'Save' : 'Add'}</button>
+      <button class="btn ghost" id="d_cancel">Cancel</button>
+      <button class="btn primary" id="d_save">${d ? 'Save changes' : 'Add machine'}</button>
     </div>`);
   $('#d_grp_sel').addEventListener('change', () => {
     const isNew = $('#d_grp_sel').value === '__new';
@@ -1916,7 +1950,7 @@ async function loadUsersTable(devs) {
   const unreachable = [];
   if (all) {
     const rr = await api.get('/roster'); // one request — server queries all machines in parallel
-    var _cnics = rr.cnics || {};
+    _cnicMap = rr.cnics || {};
     const results = devs.map((d) => {
       const row = rr.ok ? (rr.rosters || []).find((x) => x.device_id === d.id) : null;
       return { d, r: row?.ok ? { ok: true, users: row.users } : { ok: false, error: row?.error || rr.error } };
@@ -1939,7 +1973,7 @@ async function loadUsersTable(devs) {
     const srcDev = devs.find((d) => d.id == _usersDevId);
     const r = await api.get(`/devices/${_usersDevId}/users`);
     if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't reach ${esc(srcDev.name)}: ${esc(r.error || 'error')}</div>`; return; }
-    var _cnics = r.cnics || {};
+    _cnicMap = r.cnics || {};
     entries = r.users
       .map((u) => ({ u, on: [srcDev] }))
       .sort((a, b) =>
@@ -1977,7 +2011,7 @@ async function loadUsersTable(devs) {
     const tenantRooms = on.filter(isRoomDev);
     const roomList = tenantRooms.map((d) => 'room ' + d.code).join(', ');
     const cardStr = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
-    const cnic = (typeof _cnics !== 'undefined' && _cnics[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`]) || '';
+    const cnic = _cnicMap[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`] || '';
 
     let roomCell;
     if (!tenantRooms.length) roomCell = '<small class="hint">—</small>';
@@ -2463,22 +2497,32 @@ function bookSlotModal(dev, devs) {
   const dstr = `${d0.getFullYear()}-${p2(d0.getMonth() + 1)}-${p2(d0.getDate())}`;
   openModal(`
     <h2>Book slot — ${esc(dev.name)}</h2>
-    <div class="field"><label>Who</label>
-      <select id="bk_user"><option value="">Loading users…</option></select>
-    </div>
-    <div id="bk_visitor" hidden>
-      <div class="two-col">
-        <div class="field"><label>Visitor name</label><input id="bk_vname" placeholder="e.g. Meeting guest"></div>
-        <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="bk_vcard" placeholder="or Tag card later"></div>
+    <div class="form-section first">
+      <div class="form-section-head">Who</div>
+      <div class="field"><label for="bk_user">Person</label>
+        <select id="bk_user"><option value="">Loading users…</option></select>
+      </div>
+      <div id="bk_visitor" hidden>
+        <div class="two-col">
+          <div class="field"><label for="bk_vname">Visitor name</label><input id="bk_vname" placeholder="e.g. Meeting guest"></div>
+          <div class="field">
+            <label for="bk_vcard">RFID card number</label>
+            <input id="bk_vcard" placeholder="0012345678">
+            <div class="field-help">Optional — typed in, or Tag card later.</div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="two-col">
-      <div class="field"><label>Slot start</label><input id="bk_begin" type="datetime-local" value="${dstr}T13:00"></div>
-      <div class="field"><label>Slot end</label><input id="bk_end" type="datetime-local" value="${dstr}T15:00"></div>
+    <div class="form-section">
+      <div class="form-section-head">Slot window</div>
+      <div class="two-col">
+        <div class="field"><label for="bk_begin">Slot start</label><input id="bk_begin" type="datetime-local" value="${dstr}T13:00"></div>
+        <div class="field"><label for="bk_end">Slot end</label><input id="bk_end" type="datetime-local" value="${dstr}T15:00"></div>
+      </div>
+      <div class="field-help">The machine only opens for them inside the slot — enforced by the machine itself. Members keep their fingerprints and cards; visitors are auto-removed after the slot ends.</div>
     </div>
-    <p class="hint">The machine only opens for them inside the slot — enforced by the machine itself. Members keep their fingerprints/cards (copied over if they're not on this machine yet); visitors are auto-removed after the slot ends.</p>
     <div class="modal-actions">
-      <button class="btn" id="bk_cancel">Cancel</button>
+      <button class="btn ghost" id="bk_cancel">Cancel</button>
       <button class="btn primary" id="bk_save">Book slot</button>
     </div>`);
   (async () => {
@@ -2544,18 +2588,29 @@ function dayPassModal(devs) {
   ).join('');
   openModal(`
     <h2>Day pass</h2>
-    <div class="two-col">
-      <div class="field"><label>Visitor name</label><input id="dp_name" placeholder="e.g. Sara (visitor)"></div>
-      <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="dp_card" placeholder="or Tag card later"></div>
+    <div class="form-section first">
+      <div class="form-section-head">Visitor</div>
+      <div class="two-col">
+        <div class="field"><label for="dp_name">Visitor name</label><input id="dp_name" placeholder="e.g. Sara (visitor)"></div>
+        <div class="field">
+          <label for="dp_card">RFID card number</label>
+          <input id="dp_card" placeholder="0012345678">
+          <div class="field-help">Optional — typed in, or Tag card later.</div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="dp_end">Valid until</label>
+        <input id="dp_end" type="datetime-local" value="${tonight}">
+        <div class="field-help">At the deadline the machines block them and the dashboard auto-deletes them from the machines.</div>
+      </div>
     </div>
-    <div class="field"><label>Valid until</label><input id="dp_end" type="datetime-local" value="${tonight}"></div>
-    <div class="field"><label>Machines</label>
+    <div class="form-section">
+      <div class="form-section-head">Machines</div>
       ${groupSelectHtml(devs)}
       <div class="device-checklist">${checks}</div>
     </div>
-    <p class="hint">The visitor can enter until the deadline, then the machines block them and the dashboard <b>auto-deletes them from the machines</b>. Fingerprint or face can be added from their Users row after creating.</p>
     <div class="modal-actions">
-      <button class="btn" id="dp_cancel">Cancel</button>
+      <button class="btn ghost" id="dp_cancel">Cancel</button>
       <button class="btn primary" id="dp_save">Create day pass</button>
     </div>`);
   wireGroupSelect(devs, 'dp-dev');
@@ -2593,7 +2648,7 @@ function enrollFace(entry, devs) {
     <div class="field"><label>Capture at this machine</label><select id="ef_dev">${opts}</select></div>
     <p class="hint">Click <b>Start capture</b> — the chosen machine shows its face screen and the person stands in front of the camera (about 30s).${on.length > 1 ? ' The face is then copied to their other machines automatically.' : ''}</p>
     <div class="modal-actions">
-      <button class="btn" id="ef_cancel">Cancel</button>
+      <button class="btn ghost" id="ef_cancel">Cancel</button>
       <button class="btn primary" id="ef_start">Start capture</button>
     </div>`);
   $('#ef_cancel').addEventListener('click', closeModal);
@@ -2625,13 +2680,13 @@ function captureFpModal(entry, devs) {
     <h2>Capture fingerprint — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
     <div class="two-col">
       <div class="field"><label>Capture at this machine</label><select id="cf_dev">${opts}</select></div>
-      <div class="field"><label>Finger slot <small class="hint">(up to 10 per user)</small></label>
+      <div class="field"><label>Finger slot</label>
         <select id="cf_slot">${Array.from({ length: 10 }, (_, n) => `<option value="${n + 1}">Finger ${n + 1}${u.numOfFP && n < u.numOfFP ? ' (enrolled — will be replaced)' : ''}</option>`).join('')}</select>
       </div>
     </div>
-    <p class="hint">Click <b>Start capture</b> — the chosen machine prompts the person to press their finger. Each slot is one finger; capture again with a different slot to add more fingers.${on.length > 1 ? ' Fingerprints are copied to their other machines automatically.' : ''}</p>
+    <div class="field-help" style="margin-top:-8px">Each slot is one finger — up to 10 per person. Click <b>Start capture</b> and the chosen machine prompts for the finger.${on.length > 1 ? ' Fingerprints are copied to their other machines automatically.' : ''}</div>
     <div class="modal-actions">
-      <button class="btn" id="cf_cancel">Cancel</button>
+      <button class="btn ghost" id="cf_cancel">Cancel</button>
       <button class="btn primary" id="cf_start">Start capture</button>
     </div>`);
   // Default to the next free slot so a second capture ADDS a finger
@@ -2689,7 +2744,7 @@ async function userProfileModal(entry) {
         <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.45;"></span>
       </div>
     </div>
-    <div class="modal-actions"><button class="btn" id="up_close">Close</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" id="up_close">Close</button></div>`);
   $('#up_close').addEventListener('click', closeModal);
   const r = await api.get(`/profile?employeeNo=${encodeURIComponent(u.employeeNo)}&name=${encodeURIComponent(u.name || '')}`);
   const body = $('#up_body');
@@ -2869,13 +2924,17 @@ function editUserModal(entry, devs) {
   const { u, on } = entry;
   openModal(`
     <h2>Edit user <small class="hint">#${esc(u.employeeNo)}</small></h2>
-    <p class="hint">Applies on: <b>${esc(on.map((d) => d.name).join(', '))}</b>. Changing the employee # re-creates the user under the new number with all credentials (fingerprints, cards, face), then removes the old record.</p>
+    <p class="modal-sub">Applies on: <b>${esc(on.map((d) => d.name).join(', '))}</b></p>
     <div class="two-col">
       <div class="field"><label>Name</label><input id="eu_name" value="${esc(u.name || '')}"></div>
-      <div class="field"><label>Employee #</label><input id="eu_no" value="${esc(u.employeeNo)}"></div>
+      <div class="field">
+        <label>Employee #</label>
+        <input id="eu_no" value="${esc(u.employeeNo)}">
+        <div class="field-help">Changing the number re-creates the user with all credentials, then removes the old record.</div>
+      </div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="eu_cancel">Cancel</button>
+      <button class="btn ghost" id="eu_cancel">Cancel</button>
       <button class="btn primary" id="eu_save">Save</button>
     </div>`);
   $('#eu_cancel').addEventListener('click', closeModal);
@@ -2906,25 +2965,26 @@ async function userCardsModal(entry, devs) {
     <h2>Credentials — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
     <p class="hint">On ${on.length} machine${on.length === 1 ? '' : 's'}. Deleting a fingerprint or face from only some machines may be undone by the credential auto-sync copying it back.</p>
     <div class="field"><label>Cards</label><div id="uc_list"><div class="loading-bar-container"><div class="loading-bar-indeterminate"></div></div></div></div>
-    <div class="field"><label>Add a card <small class="hint">(typed — attached on every machine this user is on; or use Actions → Tag card)</small></label>
+    <div class="field"><label>Add a card</label>
       <div style="display:flex;gap:8px">
         <input id="uc_new" placeholder="e.g. 0012345678" style="flex:1">
         <button class="btn primary" id="uc_add">Attach card</button>
       </div>
+      <div class="field-help">Typed — attached on every machine this user is on. Or use Actions → Tag card.</div>
     </div>
-    <div class="field"><label>Fingerprint <small class="hint">${u.numOfFP ? `${u.numOfFP} enrolled` : 'none enrolled'}</small></label>
+    <div class="field"><label>Fingerprint <span class="badge" style="margin-left:6px">${u.numOfFP ? `${u.numOfFP} enrolled` : 'none'}</span></label>
       <div style="display:flex;gap:8px">
         <select id="uc_fpdev" style="flex:1">${machineOpts}</select>
         <button class="btn danger" id="uc_fpdel" ${u.numOfFP ? '' : 'disabled'}>Delete fingerprint</button>
       </div>
     </div>
-    <div class="field"><label>Face <small class="hint">${u.numOfFace ? 'enrolled' : 'none enrolled'}</small></label>
+    <div class="field"><label>Face <span class="badge" style="margin-left:6px">${u.numOfFace ? 'enrolled' : 'none'}</span></label>
       <div style="display:flex;gap:8px">
         <select id="uc_facedev" style="flex:1">${machineOpts}</select>
         <button class="btn danger" id="uc_facedel" ${u.numOfFace ? '' : 'disabled'}>Delete face</button>
       </div>
     </div>
-    <div class="modal-actions"><button class="btn" id="uc_close">Close</button></div>`);
+    <div class="modal-actions"><button class="btn ghost" id="uc_close">Close</button></div>`);
   $('#uc_close').addEventListener('click', closeModal);
   const chosen = (selId) => {
     const v = $(selId).value;
@@ -3071,11 +3131,11 @@ async function accessModal(srcDev, employeeNo, name, devs) {
     <p class="hint">Checked machines allow entry, and each machine has its own <b>access-until</b> deadline. Unchecking <b>blocks</b> the user there but keeps their fingerprints and cards enrolled — re-checking restores access instantly. Use Delete to fully remove a user.</p>
     <div class="field">
       ${groupSelectHtml(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })))}
-      <input id="acc_filter" placeholder="Search machines… e.g. 315" autocomplete="off" style="margin:8px 0">
+      <div class="input-wrap search"><svg class="input-icon left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input id="acc_filter" placeholder="Search machines… e.g. 315" autocomplete="off"></div>
       <div class="device-checklist">${checks}</div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="acc_cancel">Cancel</button>
+      <button class="btn ghost" id="acc_cancel">Cancel</button>
       <button class="btn primary" id="acc_save">Apply</button>
     </div>`);
   wireGroupSelect(r.machines.map((m) => ({ id: m.device_id, grp: m.grp })), 'acc-check');
@@ -3205,7 +3265,7 @@ function tagCard(entry, devs) {
     <div class="field"><label>Read the card at this machine</label><select id="tc_dev">${opts}</select></div>
     <p class="hint">Click <b>Start reading</b>, then tap the card on the chosen machine's reader (about 30s). The card is attached to this user${on.length > 1 ? ' and copied to their other machines automatically' : ''}.</p>
     <div class="modal-actions">
-      <button class="btn" id="tc_cancel">Cancel</button>
+      <button class="btn ghost" id="tc_cancel">Cancel</button>
       <button class="btn primary" id="tc_start">Start reading</button>
     </div>`);
   $('#tc_cancel').addEventListener('click', closeModal);
@@ -3566,7 +3626,7 @@ function assignCardModal(card, devs) {
     </div>
     <p class="hint" id="ac_hint">The card is attached on every machine where the chosen user exists.</p>
     <div class="modal-actions">
-      <button class="btn" id="ac_cancel">Cancel</button>
+      <button class="btn ghost" id="ac_cancel">Cancel</button>
       <button class="btn primary" id="ac_save">Assign</button>
     </div>`);
   // employeeNo -> { name, devs: [machines the user exists on] }
@@ -3633,24 +3693,35 @@ function cardModal(c = null, devs = []) {
     : '<span class="muted">No machines yet — provision one in the database first.</span>';
   openModal(`
     <h2>Edit card</h2>
-    <div class="two-col">
-      <div class="field"><label>RFID card #</label><input id="c_card" value="${esc(c.card_no || '')}" placeholder="e.g. 0012345678"></div>
-      <div class="field"><label>Label <small class="hint">(optional)</small></label><input id="c_label" value="${esc(labelVal)}" placeholder="e.g. Cleaner, Locker 12"></div>
+    <div class="form-section first">
+      <div class="form-section-head">Card</div>
+      <div class="two-col">
+        <div class="field"><label for="c_card">RFID card number</label><input id="c_card" value="${esc(c.card_no || '')}" placeholder="0012345678"></div>
+        <div class="field">
+          <label for="c_label">Label</label>
+          <input id="c_label" value="${esc(labelVal)}" placeholder="e.g. Cleaner, Locker 12">
+          <div class="field-help">Optional.</div>
+        </div>
+      </div>
     </div>
-    <div class="two-col">
-      <div class="field"><label>Access from</label><input id="c_begin" type="datetime-local" value="${toLocalInput(c.valid_begin)}"></div>
-      <div class="field"><label>Access until</label><input id="c_end" type="datetime-local" value="${toLocalInput(c.valid_end)}"></div>
+    <div class="form-section">
+      <div class="form-section-head">Access window</div>
+      <div class="two-col">
+        <div class="field"><label for="c_begin">Access from</label><input id="c_begin" type="datetime-local" value="${toLocalInput(c.valid_begin)}"></div>
+        <div class="field"><label for="c_end">Access until</label><input id="c_end" type="datetime-local" value="${toLocalInput(c.valid_end)}"></div>
+      </div>
+      <div class="field check"><input id="c_autodel" type="checkbox" ${c.auto_delete ? 'checked' : ''}><label>Auto-delete from machines after expiry</label></div>
+      <div class="field-help">If this card is assigned to a user, the access period applies to that user on every machine holding the card — machines enforce validity per person, so it covers all their credentials there.</div>
     </div>
-    <div class="field check"><input id="c_autodel" type="checkbox" ${c.auto_delete ? 'checked' : ''}><label>Auto-delete from machines after expiry</label></div>
-    <p class="hint">If this card is <b>assigned to a user</b>, the access period is applied to that user on every machine holding the card — machines enforce validity per person, so it covers all their credentials there.</p>
-    <div class="field">
-      <label>Machines <small class="hint">(standalone card only — pick one or more)</small></label>
+    <div class="form-section">
+      <div class="form-section-head">Machines</div>
+      <div class="field-help" style="margin:-6px 0 10px">Standalone card only — pick one or more.</div>
       ${groupSelectHtml(devs)}
       <div class="device-checklist">${deviceChecks}</div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="c_cancel">Cancel</button>
-      <button class="btn primary" id="c_save">Save & sync</button>
+      <button class="btn ghost" id="c_cancel">Cancel</button>
+      <button class="btn primary" id="c_save">Save &amp; sync</button>
     </div>`);
   wireGroupSelect(devs, 'card-dev-check');
   $('#c_cancel').addEventListener('click', closeModal);
@@ -3684,11 +3755,11 @@ function addCardModal() {
     <h2>Add card</h2>
     <div class="two-col">
       <div class="field"><label>RFID card #</label><input id="c_card" placeholder="e.g. 0012345678"></div>
-      <div class="field"><label>Name <small class="hint">(optional)</small></label><input id="c_label" placeholder="e.g. Cleaner, Locker 12"></div>
+      <div class="field"><label>Name</label><input id="c_label" placeholder="e.g. Cleaner, Locker 12"><div class="field-help">Optional.</div></div>
     </div>
     <p class="hint">After adding, use <b>Edit</b> to set the access period and which machines this card works on.</p>
     <div class="modal-actions">
-      <button class="btn" id="c_cancel">Cancel</button>
+      <button class="btn ghost" id="c_cancel">Cancel</button>
       <button class="btn primary" id="c_save">Add</button>
     </div>`);
   $('#c_cancel').addEventListener('click', closeModal);
@@ -3788,7 +3859,7 @@ async function loadLogTable(silent = false) {
       if (!Array.isArray(list)) return;
       if (!list.length) { $('#log_table').innerHTML = '<div class="empty">No activity yet.</div>'; return; }
       const rows = list.map((l) => `<tr>
-          <td class="nowrap"><small class="hint">${esc(l.ts)}</small></td>
+          <td class="nowrap">${relStamp(l.ts)}</td>
           <td>${esc(l.employee_name || '—')}</td>
           <td>${esc(l.device_name || '—')}</td>
           <td>${esc(prettyAction(l.action))}</td>
@@ -3865,7 +3936,7 @@ function renderEntries() {
     const cred = e.cardNo ? `card ${e.cardNo}` : (e.currentVerifyMode && e.currentVerifyMode !== 'invalid' ? e.currentVerifyMode : '');
     const denied = EVENT_DENIED.has(e.minor);
     return `<tr>
-      <td class="nowrap"><small class="hint">${esc(String(e.time || '').slice(0, 19).replace('T', ' '))}</small></td>
+      <td class="nowrap">${relStamp(e.time)}</td>
       <td>
         <div class="user-identity">
           ${renderAvatar(who, 'sm')}
@@ -4110,13 +4181,13 @@ async function bookingEnrollModal(bookingId) {
       ${(!b.capacity || r.attendees.length < b.capacity) ? `
       <div class="two-col">
         <div class="field"><label>Name</label><input id="ba_name" placeholder="Person's name"></div>
-        <div class="field"><label>RFID card # <small class="hint">(optional — typed)</small></label><input id="ba_card" placeholder="or capture fingerprint after"></div>
+        <div class="field"><label>RFID card number</label><input id="ba_card" placeholder="0012345678"><div class="field-help">Optional — or capture a fingerprint after.</div></div>
       </div>
       <div class="modal-actions" style="margin-top:4px">
-        <button class="btn" id="ba_close">Close</button>
+        <button class="btn ghost" id="ba_close">Close</button>
         <button class="btn primary" id="ba_add">Add person</button>
       </div>` : `
-      <div class="modal-actions"><button class="btn" id="ba_close">Close</button></div>`}`;
+      <div class="modal-actions"><button class="btn ghost" id="ba_close">Close</button></div>`}`;
     $('#ba_close').addEventListener('click', () => { closeModal(); if (current === 'bookings') bookingsView(); });
     const addBtn = $('#ba_add');
     if (addBtn) addBtn.addEventListener('click', async () => {
@@ -4209,13 +4280,13 @@ function addDashUserModal() {
     <h2>Add dashboard user</h2>
     <div class="two-col">
       <div class="field"><label>Username</label><input id="du_user" autocomplete="off" placeholder="e.g. frontdesk"></div>
-      <div class="field"><label>Password <small class="hint">(min 6 chars)</small></label><input id="du_pass" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>Password</label><input id="du_pass" type="password" autocomplete="new-password"><div class="field-help">Minimum 6 characters.</div></div>
     </div>
     <div class="field"><label>Role</label>
       <select id="du_role"><option value="user">User (dashboard access)</option><option value="admin">Admin (can manage accounts)</option></select>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="du_cancel">Cancel</button>
+      <button class="btn ghost" id="du_cancel">Cancel</button>
       <button class="btn primary" id="du_save">Add user</button>
     </div>`);
   $('#du_cancel').addEventListener('click', closeModal);
@@ -4236,11 +4307,11 @@ function resetDashPasswordModal(username, me) {
     <h2>Reset password <small class="hint">${esc(username)}</small></h2>
     ${isSelf ? '<div class="field"><label>Current password</label><input id="rp_cur" type="password" autocomplete="current-password"></div>' : '<p class="hint">Admin reset — no current password needed.</p>'}
     <div class="two-col">
-      <div class="field"><label>New password <small class="hint">(min 6 chars)</small></label><input id="rp_new" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>New password</label><input id="rp_new" type="password" autocomplete="new-password"><div class="field-help">Minimum 6 characters.</div></div>
       <div class="field"><label>Repeat new password</label><input id="rp_new2" type="password" autocomplete="new-password"></div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="rp_cancel">Cancel</button>
+      <button class="btn ghost" id="rp_cancel">Cancel</button>
       <button class="btn primary" id="rp_save">Set password</button>
     </div>`);
   $('#rp_cancel').addEventListener('click', closeModal);
@@ -4973,7 +5044,7 @@ function openVisualDiffModal(log) {
       </details>
 
       <div class="modal-actions" style="margin-top:12px;">
-        <button class="btn" id="diff_close">Close</button>
+        <button class="btn ghost" id="diff_close">Close</button>
       </div>
     </div>
   `);
@@ -5479,7 +5550,8 @@ function renderCommandPalette(query) {
       const u = e.u;
       const rooms = (e.on || []).map((d) => d.code ? `Room ${d.code}` : d.name).join(', ');
       const cards = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
-      const searchStr = `${u.name || ''} ${u.employeeNo || ''} ${cards} ${rooms} ${u.email || ''}`.toLowerCase();
+      const cnic = _cnicMap[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`] || '';
+      const searchStr = `${u.name || ''} ${u.employeeNo || ''} ${cards} ${cnic} ${rooms} ${u.email || ''}`.toLowerCase();
 
       if (searchStr.includes(q)) {
         const creds = [];
