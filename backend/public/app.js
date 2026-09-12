@@ -3237,6 +3237,9 @@ function addUserModal(srcDev, devs, checkAll = false) {
         <select id="au_role"><option value="user">User (door access only)</option>${dashRole === 'admin' ? '<option value="admin">Admin (can enter the machine menu)</option>' : ''}</select>
       </div>
     </div>
+    <div class="field"><label>CNIC <small class="hint">(13 digits — numbers only, no dashes)</small></label>
+      <input id="au_cnic" inputmode="numeric" maxlength="13" placeholder="e.g. 3520212345671" autocomplete="off">
+    </div>
     <div class="two-col">
       <div class="field"><label>Access from</label><input id="au_begin" type="datetime-local"></div>
       <div class="field"><label>Access until</label><input id="au_end" type="datetime-local"></div>
@@ -3307,9 +3310,17 @@ function addUserModal(srcDev, devs, checkAll = false) {
   refreshFpOptions();
 
   $('#au_cancel').addEventListener('click', closeModal);
+  // CNIC: digits only — anything else (dashes included) is stripped as typed.
+  $('#au_cnic')?.addEventListener('input', () => {
+    const c = $('#au_cnic');
+    const clean = c.value.replace(/\D/g, '').slice(0, 13);
+    if (c.value !== clean) c.value = clean;
+  });
   $('#au_save').addEventListener('click', async () => {
     const name = $('#au_name').value.trim();
     if (!name) { toast('Name required', 'err'); return; }
+    const cnic = $('#au_cnic').value.trim();
+    if (cnic && !/^\d{13}$/.test(cnic)) { toast('CNIC must be exactly 13 digits (numbers only, no dashes)', 'err'); return; }
     const deviceIds = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
     if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
     const body = {
@@ -3317,6 +3328,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       name,
       role: $('#au_role').value,
       card_no: $('#au_card').value.trim() || undefined,
+      cnic: cnic || undefined,
       valid_begin: fromLocalInput($('#au_begin').value),
       valid_end: fromLocalInput($('#au_end').value),
     };

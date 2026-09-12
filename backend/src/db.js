@@ -165,9 +165,12 @@ async function ensureUsersTable() {
         role NVARCHAR(16) NOT NULL CONSTRAINT DF_WN_HIK_Users_role DEFAULT ('user'),
         machines NVARCHAR(MAX) NULL,
         machine_count INT NOT NULL CONSTRAINT DF_WN_HIK_Users_mc DEFAULT (0),
+        cnic NVARCHAR(20) NULL,
         updated_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Users_upd DEFAULT (SYSDATETIME()),
         CONSTRAINT UQ_WN_HIK_Users UNIQUE (employee_no, name)
       )`);
+    // existing installs: add the column in place
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Users','cnic') IS NULL ALTER TABLE dbo.WN_HIK_Users ADD cnic NVARCHAR(20) NULL`);
   } catch (e) {
     console.error('[db] ensureUsersTable:', e.message);
   }

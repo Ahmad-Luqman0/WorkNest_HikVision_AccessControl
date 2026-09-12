@@ -358,6 +358,10 @@ devicesRouter.post('/users', async (req, res) => {
   const ids = [...new Set((req.body?.device_ids || []).map(Number))].filter(Boolean);
   if (!name) return res.status(400).json({ error: 'name required' });
   if (!ids.length) return res.status(400).json({ error: 'pick at least one machine' });
+  const cnic = String(req.body?.cnic || '').trim();
+  if (cnic && !/^\d{13}$/.test(cnic)) {
+    return res.status(400).json({ error: 'CNIC must be exactly 13 digits — numbers only, no dashes.' });
+  }
   // only_ids: create on just this batch (the UI batches machines to show a
   // progress bar); device_ids stays the FULL selection for the role check,
   // and later batches pass the employeeNo assigned by the first one.
@@ -411,6 +415,16 @@ devicesRouter.post('/users', async (req, res) => {
     }));
     for (const dev of devs) invalidateRoster(dev.id);
     const okCount = results.filter((x) => x.ok).length;
+    // CNIC lives in WN_HIK_Users (members themselves live on the machines).
+    // Upsert so continuation batches are harmless.
+    if (cnic && okCount) {
+      await run(
+        `MERGE dbo.WN_HIK_Users AS t USING (SELECT ? AS emp, ? AS nm) s ON t.employee_no=s.emp AND t.name=s.nm
+         WHEN MATCHED THEN UPDATE SET cnic=?
+         WHEN NOT MATCHED THEN INSERT (employee_no, name, cnic) VALUES (s.emp, s.nm, ?);`,
+        [employeeNo, String(name).trim(), cnic, cnic]
+      ).catch((e) => console.error('[users] cnic save failed:', e.message));
+    }
     res.status(okCount ? 200 : 502).json({ ok: okCount > 0, employeeNo, name, results });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });

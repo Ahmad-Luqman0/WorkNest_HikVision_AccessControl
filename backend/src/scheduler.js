@@ -339,10 +339,25 @@ export async function syncUsersTable() {
       if (dev.code && !isEntr && !p.rooms.includes(String(dev.code))) p.rooms.push(String(dev.code));
     }
   }
+  // CNIC is entered at creation, not stored on machines — carry it across
+  // the rebuild or it would be wiped every 5 minutes.
+  const cnics = new Map();
+  try {
+    for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
+      cnics.set(`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`, { emp: String(r.employee_no), name: String(r.name || '').trim(), cnic: r.cnic });
+  } catch { /* column may not exist yet on first run */ }
   await run('DELETE FROM dbo.WN_HIK_Users');
-  for (const p of people.values()) {
-    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count) VALUES (?,?,?,?,?,?)',
-      [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length]);
+  for (const [key, p] of people.entries()) {
+    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count, cnic) VALUES (?,?,?,?,?,?,?)',
+      [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length, cnics.get(key)?.cnic || null]);
+  }
+  // A person with a CNIC who isn't in any roster snapshot yet (just created,
+  // or all their machines are offline) keeps a minimal row so the CNIC is
+  // never lost — it fills out once their roster snapshot catches up.
+  for (const [key, c] of cnics.entries()) {
+    if (people.has(key)) continue;
+    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, machines, machine_count, cnic) VALUES (?,?,?,?,?)',
+      [c.emp, c.name, '[]', 0, c.cnic]).catch(() => {});
   }
   return { users: people.size };
 }
