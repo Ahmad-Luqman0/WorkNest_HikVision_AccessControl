@@ -1209,11 +1209,6 @@ td:last-child {
 }
 .two-col .field label {
   flex: 1;
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 5px;
-  align-items: flex-end;
-  align-content: flex-end;
 }
 
 .modal-actions {
