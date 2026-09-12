@@ -3229,53 +3229,97 @@ function addUserModal(srcDev, devs, checkAll = false) {
     const isChecked = isEntrance(d) || (!checkAll && d.id === srcDev.id);
     const displayName = (d.name && d.name !== d.host) ? d.name : (d.code ? `Machine ${d.code}` : `Machine #${d.id}`);
     return `
-    <label class="dev-check-item">
+    <label class="dev-check-item slim">
       <input type="checkbox" class="au-dev" value="${d.id}" ${isChecked ? 'checked' : ''}>
       <div class="dev-info">
         <span class="dev-name">${esc(displayName)}</span>
         ${d.location ? `<span class="dev-loc">${esc(d.location)}</span>` : ''}
       </div>
-      <span class="dev-host">${esc(d.host)}</span>
+      <span class="dev-host mono">${esc(d.host)}:${esc(String(d.port || ''))}</span>
     </label>`;
   }).join('');
   openModal(`
     <h2>Add user</h2>
-    <div class="two-col">
-      <div class="field"><label>Name</label><input id="au_name" placeholder="Full name"></div>
-      <div class="field"><label>Employee # <small class="hint">(auto-generated)</small></label><input id="au_no" readonly style="opacity:.75;cursor:default" tabindex="-1"></div>
-    </div>
-    <div class="two-col">
-      <div class="field"><label>RFID card # <small class="hint">(optional — typed, no tap needed)</small></label><input id="au_card" placeholder="e.g. 0012345678"></div>
-      <div class="field"><label>Access level</label>
-        <select id="au_role"><option value="user">User (door access only)</option>${dashRole === 'admin' ? '<option value="admin">Admin (can enter the machine menu)</option>' : ''}</select>
+    <p class="modal-sub">One employee # everywhere — the person is created on every machine you select.</p>
+
+    <div class="form-section first">
+      <div class="form-section-head">Basic information</div>
+      <div class="two-col">
+        <div class="field">
+          <label for="au_name">Full name</label>
+          <input id="au_name" placeholder="e.g. Ali Raza">
+        </div>
+        <div class="field">
+          <label for="au_no">Employee ID</label>
+          <div class="input-wrap">
+            <input id="au_no" readonly tabindex="-1" class="locked">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <div class="field-help">Auto-generated — first free number across all machines.</div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label for="au_cnic">CNIC</label>
+          <input id="au_cnic" inputmode="numeric" maxlength="13" placeholder="3520212345671" autocomplete="off">
+          <div class="field-help">13 digits, numbers only — dashes are stripped as you type.</div>
+        </div>
+        <div class="field">
+          <label for="au_card">RFID card number</label>
+          <input id="au_card" placeholder="0012345678">
+          <div class="field-help">Optional — typed in, no tap needed. Can also be tagged later.</div>
+        </div>
       </div>
     </div>
-    <div class="field"><label>CNIC <small class="hint">(13 digits — numbers only, no dashes)</small></label>
-      <input id="au_cnic" inputmode="numeric" maxlength="13" placeholder="e.g. 3520212345671" autocomplete="off">
-    </div>
-    <div class="two-col">
-      <div class="field"><label>Access from</label><input id="au_begin" type="datetime-local"></div>
-      <div class="field"><label>Access until</label><input id="au_end" type="datetime-local"></div>
-    </div>
-    <div class="field"><label>Tenant of room <small class="hint">(picks that room's machine below — entrances + their room, fingerprint works on both)</small></label>
-      <select id="au_room">
-        <option value="">— not a room tenant —</option>
-        ${devs.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
+
+    <div class="form-section">
+      <div class="form-section-head">Access settings</div>
+      <div class="two-col">
+        <div class="field">
+          <label for="au_role">Access level</label>
+          <select id="au_role"><option value="user">User (door access only)</option>${dashRole === 'admin' ? '<option value="admin">Admin (can enter the machine menu)</option>' : ''}</select>
+        </div>
+        <div class="field">
+          <label for="au_room">Tenant of room</label>
+          <select id="au_room">
+            <option value="">— not a room tenant —</option>
+            ${devs.filter((d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance'))
       .map((d) => `<option value="${d.id}">Room ${esc(d.code)}${d.name && d.name !== 'Room ' + d.code ? ' — ' + esc(d.name) : ''}</option>`).join('')}
-      </select>
+          </select>
+          <div class="field-help">Auto-selects their room plus all entrances below.</div>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label for="au_begin">Access from</label>
+          <input id="au_begin" type="datetime-local">
+        </div>
+        <div class="field">
+          <label for="au_end">Access until</label>
+          <input id="au_end" type="datetime-local">
+          <div class="field-help">Leave both empty for access with no time limit.</div>
+        </div>
+      </div>
     </div>
-    <div class="field"><label>Create on machines <small class="hint">(pick one or more)</small></label>
+
+    <div class="form-section">
+      <div class="form-section-head">Machines</div>
       ${groupSelectHtml(devs)}
-      <input id="au_filter" placeholder="Search machines… e.g. 315" autocomplete="off" style="margin:8px 0">
-      <div class="device-checklist">${checks}</div>
+      <div class="input-wrap search">
+        <svg class="input-icon left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="au_filter" placeholder="Search machines… e.g. 315" autocomplete="off">
+      </div>
+      <div class="device-checklist compact">${checks}</div>
+      <div class="field" style="margin-top:16px">
+        <label for="au_fpdev">Fingerprint machine</label>
+        <select id="au_fpdev"></select>
+        <div class="field-help">That machine prompts for the finger right after creating — one scan enrolls it on every selected machine. Optional when an RFID card number is entered.</div>
+      </div>
     </div>
-    <div class="field"><label>Fingerprint machine <small class="hint">(after creating, this machine prompts for the finger — optional when an RFID card # is entered)</small></label>
-      <select id="au_fpdev"></select>
-    </div>
-    <p class="hint">The same employee # is used on every selected machine. You can also tag a card later by tapping it (Tag card), or capture fingerprints any time.</p>
-    <div class="modal-actions">
-      <button class="btn" id="au_cancel">Cancel</button>
-      <button class="btn primary" id="au_save">Add user</button>
+
+    <div class="modal-actions sticky">
+      <button class="btn ghost" id="au_cancel">Cancel</button>
+      <button class="btn primary" id="au_save">Create user</button>
     </div>`);
   wireGroupSelect(devs, 'au-dev');
   limitRoomSelection('au-dev', devs);
@@ -4230,7 +4274,10 @@ function wireChecklistFilter(inputId) {
   if (!inp) return;
   inp.addEventListener('input', () => {
     const q = inp.value.toLowerCase().trim();
-    inp.closest('.field').querySelectorAll('.device-checklist label').forEach((l) => {
+    // The input may sit in a .field or (redesigned modals) a section wrapper —
+    // filter the nearest checklist that follows it.
+    const scope = inp.closest('.field') || inp.closest('.form-section') || inp.closest('.modal') || document;
+    scope.querySelectorAll('.device-checklist label').forEach((l) => {
       l.style.display = !q || l.textContent.toLowerCase().includes(q) ? '' : 'none';
     });
   });

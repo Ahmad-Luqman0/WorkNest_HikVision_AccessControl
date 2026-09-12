@@ -1200,16 +1200,10 @@ td:last-child {
   gap: 18px;
 }
 
-/* When one label wraps to two lines (e.g. "RFID card # (optional…)"), keep the
-   neighbouring field's input on the same baseline: labels absorb the height
-   difference so the inputs always bottom-align. */
-.two-col .field {
-  display: flex;
-  flex-direction: column;
-}
-.two-col .field label {
-  flex: 1;
-}
+/* Labels are concise one-liners (hints live in .field-help below the input),
+   so rows align naturally; align-items start keeps varying helper heights
+   from stretching the neighbour. */
+.two-col { align-items: start; }
 
 .modal-actions {
   display: flex;
@@ -4368,3 +4362,151 @@ tr.highlight-jump {
 
 
 
+
+/* ===== Redesigned modal forms (sections · helpers · compact machine list) ===== */
+.modal-sub {
+  margin: 2px 0 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.form-section {
+  padding: 18px 0 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+}
+.form-section.first { border-top: none; margin-top: 4px; }
+
+.form-section-head {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.form-section-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+
+.field-help {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 6px;
+  opacity: 0.85;
+}
+
+/* Inputs that live inside a wrapper (icon overlays) keep the field styling */
+.input-wrap { position: relative; }
+.input-wrap > input {
+  width: 100%;
+  padding: 11.5px 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-input);
+  color: var(--text-main);
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.input-wrap > input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring), 0 4px 16px var(--accent-glow);
+}
+.input-wrap .input-icon {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  pointer-events: none;
+  opacity: 0.7;
+}
+.input-wrap .input-icon.left { right: auto; left: 13px; }
+.input-wrap.search { margin: 10px 0; }
+.input-wrap.search > input { padding-left: 38px; }
+
+/* Read-only / locked input (auto-generated Employee ID) */
+input.locked {
+  background: var(--surface-card) !important;
+  color: var(--text-muted) !important;
+  border-style: dashed !important;
+  cursor: default;
+  padding-right: 38px !important;
+  letter-spacing: 0.03em;
+  font-weight: 700;
+}
+input.locked:focus { box-shadow: none !important; border-color: var(--border-strong) !important; }
+
+/* Compact machine checklist: flat rows, hairline separators, mono host:port */
+.device-checklist.compact {
+  gap: 0;
+  padding: 4px;
+  max-height: 240px;
+}
+.device-checklist.compact .dev-check-item.slim {
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  transform: none;
+}
+.device-checklist.compact .dev-check-item.slim:hover {
+  background: var(--surface-card-hover);
+  transform: none;
+}
+.device-checklist.compact .dev-check-item.slim + .dev-check-item.slim {
+  border-top: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.dev-host.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  opacity: 0.75;
+  letter-spacing: 0;
+}
+.device-checklist.compact::-webkit-scrollbar { width: 8px; }
+.device-checklist.compact::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.device-checklist.compact::-webkit-scrollbar-track { background: transparent; }
+
+/* Sticky footer action bar inside the scrolling modal */
+.modal-actions.sticky {
+  position: sticky;
+  bottom: -32px;             /* cancel the modal's bottom padding */
+  margin: 28px -32px -32px;  /* bleed to the modal edges */
+  padding: 16px 32px;
+  background: rgba(18, 25, 42, 0.97);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  z-index: 5;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.btn.ghost:hover { color: var(--text-main); background: var(--surface-card-hover); }
+
+[data-theme="light"] .modal-actions.sticky { background: rgba(255, 255, 255, 0.97); }
+[data-theme="light"] input.locked { background: #f3f4f6 !important; color: #6b7280 !important; }
+[data-theme="light"] .input-wrap > input { background: #ffffff; color: #111827; }
