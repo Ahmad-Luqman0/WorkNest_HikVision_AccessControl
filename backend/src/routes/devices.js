@@ -261,6 +261,15 @@ devicesRouter.post('/:id/time-sync', async (req, res) => {
 devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
+  // CNICs are sensitive — only dashboard admins get them at all.
+  let cnics;
+  if ((req.auth?.role || 'user') === 'admin') {
+    try {
+      cnics = {};
+      for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
+        cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
+    } catch { cnics = undefined; }
+  }
   try {
     if (!dev.online) throw new Error('Device is offline');
     const users = hideAdmins(req, await getRoster(dev));
@@ -279,6 +288,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
       ok: true,
       total: users.length,
       users: users.map((u) => ({ ...u, cards: cardsBy.get(String(u.employeeNo)) || [] })),
+      ...(cnics ? { cnics } : {}),
     });
   } catch (e) {
     // Fast database fallback so users view loads instantly even if device is offline/unreachable

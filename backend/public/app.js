@@ -1906,13 +1906,17 @@ async function loadUsersTable(devs) {
   const holder = $('#u_table');
   if (!holder) return;
   const all = _usersDevId === 'all';
-  holder.innerHTML = skeletonTable(['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']);
+  const showCnic = dashRole === 'admin';
+  holder.innerHTML = skeletonTable(showCnic
+    ? ['Emp #', 'Name', 'CNIC', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']
+    : ['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']);
 
   // entries: one row per person — u = device record, on = machines they exist on
   let entries = [];
   const unreachable = [];
   if (all) {
     const rr = await api.get('/roster'); // one request — server queries all machines in parallel
+    var _cnics = rr.cnics || {};
     const results = devs.map((d) => {
       const row = rr.ok ? (rr.rosters || []).find((x) => x.device_id === d.id) : null;
       return { d, r: row?.ok ? { ok: true, users: row.users } : { ok: false, error: row?.error || rr.error } };
@@ -1935,6 +1939,7 @@ async function loadUsersTable(devs) {
     const srcDev = devs.find((d) => d.id == _usersDevId);
     const r = await api.get(`/devices/${_usersDevId}/users`);
     if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't reach ${esc(srcDev.name)}: ${esc(r.error || 'error')}</div>`; return; }
+    var _cnics = r.cnics || {};
     entries = r.users
       .map((u) => ({ u, on: [srcDev] }))
       .sort((a, b) =>
@@ -1972,6 +1977,7 @@ async function loadUsersTable(devs) {
     const tenantRooms = on.filter(isRoomDev);
     const roomList = tenantRooms.map((d) => 'room ' + d.code).join(', ');
     const cardStr = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
+    const cnic = (typeof _cnics !== 'undefined' && _cnics[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`]) || '';
 
     let roomCell;
     if (!tenantRooms.length) roomCell = '<small class="hint">—</small>';
@@ -2010,6 +2016,7 @@ async function loadUsersTable(devs) {
             </div>
           </div>
         </td>
+        ${showCnic ? `<td class="nowrap">${cnic ? `<small class="hint">${esc(cnic)}</small>` : '<small class="hint">—</small>'}</td>` : ''}
         <td class="nowrap">${roomCell}</td>
         <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
         ${machineCell}
@@ -2042,6 +2049,11 @@ async function loadUsersTable(devs) {
         </div>
 
         <div class="user-card-body">
+          ${showCnic && cnic ? `
+          <div class="user-card-meta-row">
+            <span class="user-card-meta-label">CNIC:</span>
+            <span class="user-card-meta-val"><small class="hint">${esc(cnic)}</small></span>
+          </div>` : ''}
           <div class="user-card-meta-row">
             <span class="user-card-meta-label">Access / Room:</span>
             <span class="user-card-meta-val">${roomCell}</span>
@@ -2119,6 +2131,7 @@ async function loadUsersTable(devs) {
             <th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th>
             <th>Emp #</th>
             <th>Name</th>
+            ${showCnic ? '<th>CNIC</th>' : ''}
             <th>Room</th>
             <th>Role</th>
             ${all ? '<th>Machines</th>' : ''}

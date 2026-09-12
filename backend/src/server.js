@@ -456,7 +456,16 @@ app.get('/api/roster', async (req, res) => {
       return { device_id: dev.id, ok: false, error: String(e.message || e) };
     }
   }));
-  res.json({ ok: true, rosters });
+  // CNICs are sensitive — only dashboard admins get them at all.
+  let cnics;
+  if (isAdmin) {
+    try {
+      cnics = {};
+      for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
+        cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
+    } catch { cnics = undefined; }
+  }
+  res.json({ ok: true, rosters, ...(cnics ? { cnics } : {}) });
 });
 
 // Fix one person's credential gaps NOW: copy the union of their cards,
