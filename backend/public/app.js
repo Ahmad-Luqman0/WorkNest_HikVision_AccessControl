@@ -1002,7 +1002,7 @@ async function dashboard() {
       <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
       <div class="list-main">
         <b>${esc(d.name)}</b>
-        <small class="hint">${copyableBadge(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
+        ${d.host ? `<small class="hint">${copyableBadge(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>` : ''}
       </div>
       <span class="badge ${d.online ? 'online' : 'offline'}">${d.online ? 'Online' : 'Offline'}</span>
       <button class="btn sm" data-dash-unlock="${d.id}">Unlock</button>
@@ -1181,7 +1181,7 @@ function quickUnlockModal(devs) {
         <span class="status-dot ${d.online ? 'on' : 'off'}"></span>
         <div style="min-width:0;">
           <b style="font-size:14px; color:var(--text-main); display:block; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${esc(d.name)}</b>
-          <small class="hint" style="font-family:ui-monospace, monospace; font-size:11px;">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>
+          ${d.host ? `<small class="hint" style="font-family:ui-monospace, monospace; font-size:11px;">${esc(d.host)}${d.model ? ' · ' + esc(d.model) : ''}</small>` : ''}
         </div>
       </div>
       <button class="btn sm ${d.online ? 'primary' : ''}" data-modal-unlock="${d.id}" data-devname="${esc(d.name)}" ${d.online ? '' : 'disabled'} title="${d.online ? 'Unlock this door' : 'Device is offline'}">
@@ -1443,7 +1443,7 @@ async function devices() {
 
       if (_deviceSearch) {
         const q = _deviceSearch.toLowerCase();
-        const s = `${d.name} ${d.host} ${d.port} ${d.model || ''} ${d.serial || ''} ${d.code || ''} ${d.location || ''} ${d.grp || ''}`.toLowerCase();
+        const s = `${d.name} ${d.host || ''} ${d.port || ''} ${d.model || ''} ${d.serial || ''} ${d.code || ''} ${d.location || ''} ${d.grp || ''}`.toLowerCase();
         if (!s.includes(q)) return false;
       }
       return true;
@@ -1535,14 +1535,14 @@ async function devices() {
             </div>
           </div>
         </td>
-        <td class="nowrap" style="font-family:monospace;font-size:12.5px;">
+        ${dashRole === 'admin' ? `<td class="nowrap" style="font-family:monospace;font-size:12.5px;">
           ${esc(d.host)}:${d.port}
           ${d.use_https ? ' <span class="badge" style="font-size:10px;padding:1px 5px;">https</span>' : ''}
         </td>
         <td>
           <b>${esc(d.model || '—')}</b>
           ${d.serial ? `<br><small class="hint" style="font-family:monospace;font-size:11px;">${esc(d.serial)}</small>` : ''}
-        </td>
+        </td>` : ''}
         <td>
           <span class="badge ${d.online ? 'online' : 'offline'}" title="${d.online ? 'Reachable at the last check' : 'Last seen: ' + (d.last_seen ? esc(String(d.last_seen).slice(0, 16).replace('T', ' ')) : 'never')}">${d.online ? 'Online' : 'Offline'}</span>
         </td>
@@ -1554,7 +1554,7 @@ async function devices() {
       </tr>`).join('');
 
     tableWrapper.innerHTML = `<table><thead><tr>
-        <th>Name</th><th>Address</th><th>Model</th><th>Status</th><th style="width:230px;"></th>
+        <th>Name</th>${dashRole === 'admin' ? '<th>Address</th><th>Model</th>' : ''}<th>Status</th><th style="width:230px;"></th>
       </tr></thead><tbody>${rows}</tbody></table>`;
 
     // Wire up row buttons
@@ -3295,7 +3295,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
         <span class="dev-name">${esc(displayName)}</span>
         ${d.location ? `<span class="dev-loc">${esc(d.location)}</span>` : ''}
       </div>
-      <span class="dev-host mono">${esc(d.host)}:${esc(String(d.port || ''))}</span>
+      ${d.host ? `<span class="dev-host mono">${esc(d.host)}:${esc(String(d.port || ''))}</span>` : ''}
     </label>`;
   }).join('');
   openModal(`
@@ -5528,13 +5528,13 @@ function renderCommandPalette(query) {
   const devItems = [];
   if (_cmdCachedDevs && _cmdCachedDevs.length && q) {
     for (const dev of _cmdCachedDevs) {
-      const devSearch = `${dev.name} ${dev.location || ''} ${dev.code || ''} ${dev.host} ${dev.port} ${dev.model || ''} ${dev.serial || ''} ${dev.grp || ''}`.toLowerCase();
+      const devSearch = `${dev.name} ${dev.location || ''} ${dev.code || ''} ${dev.host || ''} ${dev.port || ''} ${dev.model || ''} ${dev.serial || ''} ${dev.grp || ''}`.toLowerCase();
       if (devSearch.includes(q)) {
         devItems.push({
           id: `dev-${dev.id}`,
           group: 'Terminals & Machines',
           title: dev.name,
-          subtitle: `${dev.host}:${dev.port} · ${dev.model || 'Hikvision Terminal'} · ${dev.code ? 'Room ' + dev.code : (dev.grp || 'Access Door')}`,
+          subtitle: `${dev.host ? dev.host + ':' + dev.port + ' · ' : ''}${dev.model || 'Hikvision Terminal'} · ${dev.code ? 'Room ' + dev.code : (dev.grp || 'Access Door')}`,
           icon: ICONS.machine,
           badge: dev.online ? 'Online' : 'Offline',
           badgeCls: dev.online ? 'synced' : 'blocked',

@@ -77,11 +77,15 @@ devicesRouter.get('/', async (req, res) => {
   const t = await pathBlockedAt();
   const blocked = !!(t && Date.now() - t < 600000);
   const rows = await getAllDevices();
-  // never leak passwords to the UI; if site is currently unreachable from this deployment, online is 0
-  res.json(rows.map(({ password, online, ...d }) => ({
-    ...d,
-    online: blocked ? 0 : (online ? 1 : 0),
-  })));
+  const isAdmin = (req.auth?.role || 'user') === 'admin';
+  // never leak passwords to the UI; if site is currently unreachable from this deployment, online is 0.
+  // User-level dashboard accounts also never receive connection details
+  // (host, port, model, serial, username) — those are admin-only.
+  res.json(rows.map(({ password, username, online, ...d }) => {
+    const out = { ...d, online: blocked ? 0 : (online ? 1 : 0) };
+    if (!isAdmin) { delete out.host; delete out.port; delete out.use_https; delete out.model; delete out.serial; }
+    return out;
+  }));
 });
 
 // Add a machine from the dashboard — admin accounts only.
