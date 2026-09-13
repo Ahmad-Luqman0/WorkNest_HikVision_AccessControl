@@ -3435,9 +3435,9 @@ function addUserModal(srcDev, devs, checkAll = false) {
   });
   $('#au_save').addEventListener('click', async () => {
     const name = $('#au_name').value.trim();
-    if (!name) { toast('Name required', 'err'); return; }
+    if (!name) { toast('Name required', 'err'); $('#au_name').focus(); return; }
     const cnic = $('#au_cnic').value.trim();
-    if (!/^\d{13}$/.test(cnic)) { toast('CNIC is required — exactly 13 digits, numbers only', 'err'); return; }
+    if (!/^\d{13}$/.test(cnic)) { toast('CNIC is required — exactly 13 digits, numbers only', 'err'); $('#au_cnic').focus(); return; }
     const deviceIds = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
     if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
     const body = {
@@ -3445,21 +3445,34 @@ function addUserModal(srcDev, devs, checkAll = false) {
       name,
       role: $('#au_role').value,
       card_no: $('#au_card').value.trim() || undefined,
-      cnic: cnic || undefined,
+      cnic,
       valid_begin: fromLocalInput($('#au_begin').value),
       valid_end: fromLocalInput($('#au_end').value),
     };
     const fpDevId = Number($('#au_fpdev').value) || null;
-    closeModal();
     // Machines in batches with a live progress bar. The first batch assigns
-    // the employee #; later batches reuse it (sequential on purpose).
+    // the employee # — and runs WHILE THE FORM IS STILL OPEN, so a server
+    // rejection (validation, duplicate #, role limit) keeps the form and its
+    // entered values on screen instead of closing into a "Failed" toast.
     const chunks = [];
     for (let i = 0; i < deviceIds.length; i += 8) chunks.push(deviceIds.slice(i, i + 8));
+    const saveBtn = $('#au_save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Creating…';
+    const first = await api.post('/devices/users', { ...body, only_ids: chunks[0] }).catch((e) => ({ error: String(e.message || e) }));
+    if (!first?.results) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Create user';
+      toast(`Failed: ${first?.error || 'error'}`, 'err');
+      return; // form stays open with everything the user typed
+    }
+    closeModal();
     const bar = progressBar(deviceIds.length, 'Creating user —');
-    let employeeNo = null;
+    bar.tick(chunks[0].length);
+    let employeeNo = first.employeeNo || null;
     let firstErr = null;
-    const results = [];
-    for (const chunk of chunks) {
+    const results = [...first.results];
+    for (const chunk of chunks.slice(1)) {
       const r = await api.post('/devices/users', {
         ...body,
         only_ids: chunk,
