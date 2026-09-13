@@ -369,8 +369,8 @@ devicesRouter.post('/users', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
   if (!ids.length) return res.status(400).json({ error: 'pick at least one machine' });
   const cnic = String(req.body?.cnic || '').trim();
-  if (cnic && !/^\d{13}$/.test(cnic)) {
-    return res.status(400).json({ error: 'CNIC must be exactly 13 digits — numbers only, no dashes.' });
+  if (!/^\d{13}$/.test(cnic)) {
+    return res.status(400).json({ error: 'CNIC is required — exactly 13 digits, numbers only, no dashes.' });
   }
   // only_ids: create on just this batch (the UI batches machines to show a
   // progress bar); device_ids stays the FULL selection for the role check,

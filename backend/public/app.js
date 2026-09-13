@@ -3306,7 +3306,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       <div class="form-section-head">Basic information</div>
       <div class="two-col">
         <div class="field">
-          <label for="au_name">Full name</label>
+          <label for="au_name">Full name <span style="color:#f87171">*</span></label>
           <input id="au_name" placeholder="e.g. Ali Raza">
         </div>
         <div class="field">
@@ -3320,9 +3320,9 @@ function addUserModal(srcDev, devs, checkAll = false) {
       </div>
       <div class="two-col">
         <div class="field">
-          <label for="au_cnic">CNIC</label>
+          <label for="au_cnic">CNIC <span style="color:#f87171">*</span></label>
           <input id="au_cnic" inputmode="numeric" maxlength="13" placeholder="3520212345671" autocomplete="off">
-          <div class="field-help">13 digits, numbers only — dashes are stripped as you type.</div>
+          <div class="field-help">Required — 13 digits, numbers only; dashes are stripped as you type.</div>
         </div>
         <div class="field">
           <label for="au_card">RFID card number</label>
@@ -3437,7 +3437,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
     const name = $('#au_name').value.trim();
     if (!name) { toast('Name required', 'err'); return; }
     const cnic = $('#au_cnic').value.trim();
-    if (cnic && !/^\d{13}$/.test(cnic)) { toast('CNIC must be exactly 13 digits (numbers only, no dashes)', 'err'); return; }
+    if (!/^\d{13}$/.test(cnic)) { toast('CNIC is required — exactly 13 digits, numbers only', 'err'); return; }
     const deviceIds = [...document.querySelectorAll('.au-dev:checked')].map((c) => Number(c.value));
     if (!deviceIds.length) { toast('Pick at least one machine', 'err'); return; }
     const body = {
