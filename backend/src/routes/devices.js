@@ -204,20 +204,21 @@ devicesRouter.post('/time-sync-all', async (req, res) => {
     return res.json({ ok: true, total: 0, synced: 0, failed: 0, results: [] });
   }
   const now = new Date();
-  const results = [];
-  for (const dev of onlineDevs) {
+  // Parallel, not sequential: ~46 machines at 1-2s each would blow past the
+  // 60s serverless cap and the whole request died as "Sync failed". The
+  // ISAPI limiter paces concurrency, so this finishes in seconds.
+  const results = await Promise.all(onlineDevs.map(async (dev) => {
     try {
       const r = await isapi.setDeviceTime(dev, now);
       if (r?.ok) {
         logSync(null, dev.id, 'time-sync', true, { syncedAt: now.toISOString() });
-        results.push({ id: dev.id, name: dev.name, ok: true });
-      } else {
-        results.push({ id: dev.id, name: dev.name, ok: false, error: r?.statusString || 'Failed' });
+        return { id: dev.id, name: dev.name, ok: true };
       }
+      return { id: dev.id, name: dev.name, ok: false, error: r?.statusString || 'Failed' };
     } catch (err) {
-      results.push({ id: dev.id, name: dev.name, ok: false, error: String(err.message || err) });
+      return { id: dev.id, name: dev.name, ok: false, error: String(err.message || err) };
     }
-  }
+  }));
   const okCount = results.filter((x) => x.ok).length;
   const failCount = results.length - okCount;
   res.json({
