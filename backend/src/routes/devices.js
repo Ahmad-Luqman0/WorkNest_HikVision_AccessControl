@@ -156,19 +156,20 @@ devicesRouter.post('/test-all', async (req, res) => {
   if (!devs.length) {
     return res.json({ ok: true, total: 0, onlineCount: 0, offlineCount: 0, results: [] });
   }
-  const results = [];
-  for (const dev of devs) {
+  // Parallel (the ISAPI limiter paces it): a sequential walk over the whole
+  // fleet exceeds the 60s serverless cap when many machines are offline.
+  const results = await Promise.all(devs.map(async (dev) => {
     try {
       const info = await isapi.getDeviceInfo(dev, { timeout: 3000, attempts: 1, priority: true });
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1, model: info.model || null, serial: info.serialNumber || null });
       logSync(null, dev.id, 'test', true, info);
-      results.push({ id: dev.id, name: dev.name, ok: true, info });
+      return { id: dev.id, name: dev.name, ok: true, info };
     } catch (e) {
       await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
       logSync(null, dev.id, 'test', false, String(e.message || e));
-      results.push({ id: dev.id, name: dev.name, ok: false, error: String(e.message || e) });
+      return { id: dev.id, name: dev.name, ok: false, error: String(e.message || e) };
     }
-  }
+  }));
   const onlineCount = results.filter((x) => x.ok).length;
   const offlineCount = results.length - onlineCount;
   res.json({
