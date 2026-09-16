@@ -189,7 +189,17 @@ devicesRouter.post('/:id/test', async (req, res) => {
     const info = await isapi.getDeviceInfo(dev, { timeout: 3000, attempts: 1, priority: true });
     await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 1, model: info.model || null, serial: info.serialNumber || null });
     logSync(null, dev.id, 'test', true, info);
-    res.json({ ok: true, info });
+    // Also read the machine's own clock so the dashboard can show what time
+    // the machine currently displays, and how far it drifts from the server.
+    let machineTime = null, driftSeconds = null;
+    try {
+      const t = await isapi.getDeviceTime(dev);
+      if (t && !Number.isNaN(t.getTime())) {
+        machineTime = t;
+        driftSeconds = Math.round((t.getTime() - Date.now()) / 1000);
+      }
+    } catch { /* clock read is best-effort */ }
+    res.json({ ok: true, info, machineTime, driftSeconds });
   } catch (e) {
     await sp('WN_HIK_Device_SetOnline', { device_id: dev.id, online: 0 });
     logSync(null, dev.id, 'test', false, String(e.message || e));

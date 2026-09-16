@@ -1578,7 +1578,14 @@ async function devices() {
       toast('Testing connection…');
       try {
         const r = await api.post(`/devices/${b.dataset.test}/test`);
-        toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
+        let clockStr = '';
+        if (r?.ok && r.machineTime) {
+          const mt = new Date(r.machineTime);
+          const drift = Number(r.driftSeconds) || 0;
+          const driftStr = Math.abs(drift) <= 2 ? 'in sync' : `${Math.abs(drift)}s ${drift > 0 ? 'ahead' : 'behind'}`;
+          clockStr = ` · machine clock ${mt.toLocaleTimeString()} (${driftStr})`;
+        }
+        toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}${clockStr}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
       } catch (err) {
         toast(`Failed: ${err.message || 'connection error'}`, 'err');
       } finally {
