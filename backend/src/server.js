@@ -234,43 +234,37 @@ app.get('/api/logs', async (req, res) => {
 // door open/close, denied attempts) with fast DB fallback. Newest first.
 app.get('/api/events', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 60, 200);
-  const devices = await getAllDevices();
-  const events = [];
-  const unreachable = [];
-  await Promise.all(devices.map(async (dev) => {
-    if (!dev.online) return;
-    try {
-      const head = await isapi.searchEvents(dev, 0, 1, { timeout: 2000 });
-      if (!head.total) return;
-      // Firmware caps pages at 30 — walk the tail so the NEWEST events are
-      // included (a single big request silently returned an older window).
-      let pos = Math.max(0, head.total - limit);
-      while (pos < head.total) {
-        const page = await isapi.searchEvents(dev, pos, 30, { timeout: 2000 });
-        if (!page.list.length) break;
-        for (const e of page.list) events.push({ device: dev.name, device_id: dev.id, ...e });
-        pos += page.list.length;
-      }
-    } catch {
-      unreachable.push(dev.name);
+  // Served from the WN_HIK_Events archive. Reading the whole fleet live on
+  // every page view took 1-2 minutes through the connection limiter and died
+  // at the serverless cap — the Activity Log showed nothing. The archive is
+  // kept fresh by the 5-minute jobs, and a throttled background refresh here
+  // pulls the newest tail when someone is actually looking at the page.
+  try {
+    const lastA = await sp('WN_HIK_Settings_Get', { key: 'events_archived_at' });
+    if (!(Number(lastA[0]?.value) > Date.now() - 120000)) {
+      await sp('WN_HIK_Settings_Set', { key: 'events_archived_at', value: String(Date.now()) });
+      archiveEvents().catch(() => {}); // background — this page load returns now
     }
-  }));
-
-  if (events.length === 0) {
-    try {
-      const dbEvents = await getRows(
+  } catch { /* refresh is best-effort */ }
+  try {
+    let dbEvents = await getRows(
+      `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, minor, serial_no AS serialNo, event_time AS time
+       FROM dbo.WN_HIK_Events WITH (NOLOCK)
+       ORDER BY id DESC`
+    );
+    if (!dbEvents?.length) {
+      // first run ever — fill the archive synchronously once
+      await archiveEvents().catch(() => {});
+      dbEvents = await getRows(
         `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, minor, serial_no AS serialNo, event_time AS time
          FROM dbo.WN_HIK_Events WITH (NOLOCK)
          ORDER BY id DESC`
       );
-      if (dbEvents && dbEvents.length > 0) {
-        return res.json({ ok: true, events: dbEvents, unreachable, fromDb: true });
-      }
-    } catch {}
+    }
+    res.json({ ok: true, events: dbEvents || [], unreachable: [], fromDb: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
   }
-
-  events.sort((a, b) => String(b.time).localeCompare(String(a.time)));
-  res.json({ ok: true, events: events.slice(0, limit), unreachable });
 });
 
 // One-click day pass: a visitor valid until tonight (or a chosen time), pushed
