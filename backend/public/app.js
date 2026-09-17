@@ -3898,7 +3898,7 @@ async function loadLogTable(silent = false) {
 
     // Machine entries — read live from each machine's own event memory.
     if (!silent && !_logEvents) holder.innerHTML = skeletonTable(['Time', 'Person', 'Machine', 'Method', 'Event'], 8);
-    const r = await api.get('/events?limit=80');
+    const r = await api.get('/events?limit=1000');
     if (!$('#log_table') || _logMode !== 'entries' || current !== 'logs') return;
     if (!r.ok) {
       if (!_logEvents && !r.__auth) $('#log_table').innerHTML = `<div class="empty">Couldn't read events: ${esc(r.error || 'error')}</div>`;

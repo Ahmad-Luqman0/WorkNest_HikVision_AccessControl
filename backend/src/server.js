@@ -233,7 +233,10 @@ app.get('/api/logs', async (req, res) => {
 // Live entry log pulled from every machine's own event memory (who entered,
 // door open/close, denied attempts) with fast DB fallback. Newest first.
 app.get('/api/events', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 60, 200);
+  // The archive query is instant, so a big window is fine — the old live
+  // reader returned up to 80 events PER MACHINE, and matching that depth
+  // matters once the client-side machine/method filters carve it up.
+  const limit = Math.min(Number(req.query.limit) || 300, 2000);
   // Served from the WN_HIK_Events archive. Reading the whole fleet live on
   // every page view took 1-2 minutes through the connection limiter and died
   // at the serverless cap — the Activity Log showed nothing. The archive is
