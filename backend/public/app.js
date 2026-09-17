@@ -3818,6 +3818,10 @@ function entryMethod(e) {
   if (e.minor === 38 || e.minor === 39) return 'fingerprint';
   if (e.minor === 75 || e.minor === 76) return 'face';
   if (e.cardNo) return 'card';
+  // Door-state events come from the machine's own door sensor / relay —
+  // no person or credential is involved (opened, closed, open timeout).
+  if (e.minor === 21 || e.minor === 22 || e.minor === 23) return 'door';
+  if (e.minor === 27) return 'remote';
   return 'other';
 }
 
@@ -3949,7 +3953,7 @@ function renderEntries() {
     })}`;
     return;
   }
-  const METHOD_LABEL = { fingerprint: 'Fingerprint', card: 'Card', face: 'Face', other: '—' };
+  const METHOD_LABEL = { fingerprint: 'Fingerprint', card: 'Card', face: 'Face', door: 'Door sensor', remote: 'Remote unlock', other: '—' };
   const rows = events.map((e) => {
     const who = e.name || (e.employeeNoString ? `User ${e.employeeNoString}` : '—');
     const method = entryMethod(e);
@@ -3966,7 +3970,7 @@ function renderEntries() {
         </div>
       </td>
       <td>${esc(e.device)}</td>
-      <td>${esc(METHOD_LABEL[method])}${cred ? ` <small class="hint">${esc(cred)}</small>` : ''}</td>
+      <td>${method === 'door' || method === 'remote' ? `<small class="hint">${esc(METHOD_LABEL[method])}</small>` : esc(METHOD_LABEL[method])}${cred ? ` <small class="hint">${esc(cred)}</small>` : ''}</td>
       <td><span class="badge ${denied ? 'error' : 'synced'}">${esc(eventLabel(e))}</span></td>
     </tr>`;
   }).join('');
