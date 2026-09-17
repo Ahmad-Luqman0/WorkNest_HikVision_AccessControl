@@ -1846,6 +1846,7 @@ function deviceModal(d = null, all = []) {
 
 // ---- Users (enrolled ON the machines) ----
 let _usersDevId = 'all';
+let _userSortMode = 'group'; // 'group' (admins → full access → rooms) | 'emp' | 'emp-desc'
 let _userViewMode = localStorage.getItem('wn_user_view_mode') || 'table';
 let _userSearchQuery = '';
 let _userActiveFilter = 'all';
@@ -1980,11 +1981,14 @@ async function loadUsersTable(devs) {
       const nums = e.on.filter(isRoomDevSort).map((d) => Number(d.code)).filter(Number.isFinite);
       return nums.length ? Math.min(...nums) : Infinity;
     };
+    const empNo = (e) => Number(e.u.employeeNo) || 0;
     entries = [...map.values()].sort((a, b) =>
-      (rankOf(a) - rankOf(b)) ||
-      (roomOf(a) - roomOf(b)) ||
-      ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
-      String(a.u.name || '').localeCompare(String(b.u.name || '')));
+      _userSortMode === 'emp' ? (empNo(a) - empNo(b)) :
+      _userSortMode === 'emp-desc' ? (empNo(b) - empNo(a)) :
+      ((rankOf(a) - rankOf(b)) ||
+       (roomOf(a) - roomOf(b)) ||
+       (empNo(a) - empNo(b)) ||
+       String(a.u.name || '').localeCompare(String(b.u.name || ''))));
   } else {
     const srcDev = devs.find((d) => d.id == _usersDevId);
     const r = await api.get(`/devices/${_usersDevId}/users`);
@@ -1993,8 +1997,10 @@ async function loadUsersTable(devs) {
     entries = r.users
       .map((u) => ({ u, on: [srcDev] }))
       .sort((a, b) =>
-        ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
-        ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)));
+        _userSortMode === 'emp' ? ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) :
+        _userSortMode === 'emp-desc' ? ((Number(b.u.employeeNo) || 0) - (Number(a.u.employeeNo) || 0)) :
+        (((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
+         ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0))));
   }
 
   // Populate global cache for Command Palette
@@ -2179,7 +2185,7 @@ async function loadUsersTable(devs) {
         <thead>
           <tr>
             <th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th>
-            <th>Emp #</th>
+            <th id="u_sortEmp" style="cursor:pointer;user-select:none" title="Click to sort by employee # — click again to reverse, once more for the grouped order">Emp #${_userSortMode === 'emp' ? ' ↑' : _userSortMode === 'emp-desc' ? ' ↓' : ''}</th>
             <th>Name</th>
             ${showCnic ? '<th>CNIC</th>' : ''}
             <th>Room</th>
@@ -2200,6 +2206,12 @@ async function loadUsersTable(devs) {
     </div>
     ${dockHtml}
   `;
+
+  // Emp # header cycles: grouped → emp asc → emp desc → grouped
+  $('#u_sortEmp')?.addEventListener('click', () => {
+    _userSortMode = _userSortMode === 'group' ? 'emp' : _userSortMode === 'emp' ? 'emp-desc' : 'group';
+    loadUsersTable(devs);
+  });
 
   const _selectedUserIndices = new Set();
   const dock = $('#floatingActionDock');
