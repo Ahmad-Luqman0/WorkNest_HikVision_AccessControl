@@ -746,11 +746,25 @@ devicesRouter.post('/:id/users/:employeeNo/update', async (req, res) => {
   }
   for (const dev of targets) invalidateRoster(dev.id);
   const okCount = results.filter((x) => x.ok).length;
+  if (okCount > 0 && newName && !renumber) {
+    // A machine that was offline (or missing from the caller's list) when the
+    // rename happened must not keep the OLD name — that splits the person in
+    // two and makes shared credentials look like a conflict. Queue the rename
+    // for every other machine; replay applies it only where the person exists.
+    const targetIds = new Set(targets.map((d) => d.id));
+    const all = await getAllDevices();
+    await Promise.all(all.filter((d) => !targetIds.has(d.id)).map((d) =>
+      queueOp(d.id, 'rename', employeeNo, { name: newName }).catch(() => {})));
+    // DB records are keyed by employee # + name — follow the rename.
+    for (const table of ['WN_HIK_FpVault', 'WN_HIK_FaceVault', 'WN_HIK_Users']) {
+      await run(`UPDATE dbo.${table} SET name=? WHERE employee_no=?`, [newName, employeeNo]).catch(() => {});
+    }
+  }
   if (okCount > 0) {
     logAudit(req.auth?.username || 'admin', 'USER_PROFILE_UPDATE', newName || `User ${employeeNo}`, getClientIp(req), {
       employeeNo,
       newName,
-      newEmployeeNo: newEmployeeNo || employeeNo,
+      newEmployeeNo: newNo || employeeNo,
     });
   }
   res.status(okCount ? 200 : 502).json({ ok: okCount > 0, results });
