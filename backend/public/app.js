@@ -2024,7 +2024,7 @@ async function loadUsersTable(devs) {
     if (u.numOfCard) creds.push(`${u.numOfCard} card`);
     if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
     if (u.numOfFace) creds.push(`${u.numOfFace} face`);
-    const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ') : '—';
+    const end = u.Valid?.endTime ? u.Valid.endTime.replace('T', ' ').slice(0, 16) : '—';
     const blocked = u.Valid?.enable === false;
     const expired = isExpired(u);
     const admin = !!u.localUIRight;
