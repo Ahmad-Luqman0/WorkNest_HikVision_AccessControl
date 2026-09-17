@@ -12,7 +12,7 @@ import { extRouter, ensureApiKey } from './routes/ext.js';
 import { authRouter, requireAuth } from './auth.js';
 import { syncAllPending, syncEmployee } from './sync.js';
 import { getRoster, getCardTable, invalidateRoster } from './machineCache.js';
-import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents, sweepFaceVault, syncUsersTable } from './scheduler.js';
+import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents, sweepFaceVault, syncUsersTable, closeCredentialGaps } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
 
@@ -70,6 +70,7 @@ app.get('/api/cron/online-check', async (req, res) => {
       try { await sweepFaceVault(); } catch { /* next run */ }
     }
     try { await syncUsersTable(); } catch { /* next run */ }
+    try { await closeCredentialGaps(30); } catch { /* next run */ } // vault -> machines, bounded
     res.json({ ok: true, ...check });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
@@ -213,6 +214,7 @@ app.post('/api/online-check', async (req, res) => {
           await sweepFaceVault().catch(() => {});
         }
         await syncUsersTable().catch(() => {}); // snapshot-based — safe anywhere
+        if (!cloudPassive) await closeCredentialGaps().catch(() => {}); // vault -> machines, bounded
       }
     } catch { /* next visit picks it up */ }
     res.json({ ok: true, ...check, replayed });
