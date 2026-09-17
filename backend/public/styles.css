@@ -4578,3 +4578,26 @@ input.locked:focus { box-shadow: none !important; border-color: var(--border-str
   background-clip: content-box;
 }
 .table-wrapper::-webkit-scrollbar-track { background: transparent; }
+
+/* Pin the Actions column: always visible while the table scrolls under it */
+td.row-actions {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--surface-card);
+  box-shadow: -10px 0 14px -10px rgba(0, 0, 0, 0.45);
+}
+tbody tr:hover td.row-actions { background: var(--surface-card-hover); }
+.table-wrapper th:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: rgba(10, 16, 28, 0.95);
+  box-shadow: -10px 0 14px -10px rgba(0, 0, 0, 0.45);
+}
+[data-theme="light"] td.row-actions { background: #ffffff; }
+[data-theme="light"] tbody tr:hover td.row-actions { background: #f8fafc; }
+[data-theme="light"] .table-wrapper th:last-child { background: #f1f5f9; }
+[data-theme="light"] td.row-actions, [data-theme="light"] .table-wrapper th:last-child {
+  box-shadow: -10px 0 14px -10px rgba(0, 0, 0, 0.12);
+}
