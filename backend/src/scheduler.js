@@ -283,6 +283,70 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   return { copied };
 }
 
+// Cloud-safe slice of credential auto-sync: push VAULTED face/fingerprint
+// templates to machines where the person has none. Works entirely from
+// roster snapshots + the vaults (no fleet-wide reads) and is bounded per
+// pass so it fits inside a serverless request. The full credential sync
+// still runs on the local server when available.
+export async function closeCredentialGaps(maxWrites = 10) {
+  const devs = await getAllDevices();
+  const meta = new Map(devs.map((d) => [d.id, d]));
+  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  const groups = new Map();
+  for (const snap of snaps) {
+    const dev = meta.get(snap.device_id);
+    if (!dev || !dev.online) continue;
+    let users; try { users = JSON.parse(snap.roster); } catch { continue; }
+    for (const u of users) {
+      const key = `${u.employeeNo}||${String(u.name || '').trim()}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ dev, u });
+    }
+  }
+  let written = 0;
+  for (const [key, members] of groups) {
+    if (written >= maxWrites) break;
+    const [emp, name] = key.split('||');
+    // faces
+    if (members.some((m) => Number(m.u.numOfFace) > 0)) {
+      const missing = members.filter((m) => !Number(m.u.numOfFace));
+      if (missing.length) {
+        const vaulted = await getFaceTemplate(emp, name).catch(() => null);
+        if (vaulted) {
+          for (const m of missing) {
+            if (written >= maxWrites) break;
+            try {
+              const r = await isapi.addFaceByModel(m.dev, emp, vaulted);
+              const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+              logSync(null, m.dev.id, 'sync-face', ok, { employeeNo: emp });
+              if (r.ok) { written++; invalidateRoster(m.dev.id); }
+            } catch { /* unreachable — next pass */ }
+          }
+        }
+      }
+    }
+    // fingerprints
+    if (members.some((m) => Number(m.u.numOfFP) > 0)) {
+      const missing = members.filter((m) => !Number(m.u.numOfFP));
+      if (missing.length) {
+        const prints = await getFpTemplates(emp, name).catch(() => []);
+        for (const m of missing) {
+          if (written >= maxWrites) break;
+          for (const v of prints) {
+            try {
+              const r = await isapi.addFingerprint(m.dev, emp, v.template, Number(v.finger_no) || 1);
+              const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
+              logSync(null, m.dev.id, 'sync-fingerprint', ok, { employeeNo: emp, fingerPrintID: Number(v.finger_no) || 1 });
+              if (r.ok) { written++; invalidateRoster(m.dev.id); }
+            } catch { /* unreachable — next pass */ }
+          }
+        }
+      }
+    }
+  }
+  return { written };
+}
+
 // Back-fill the face vault: for every person with an enrolled face (per the
 // roster snapshots) whose template isn't vaulted yet, export it from one of
 // their machines. After one full sweep every face survives a dead machine.
