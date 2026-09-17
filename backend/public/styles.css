@@ -877,7 +877,10 @@ h1, h2, h3, h4, .brand .title {
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  /* auto, not hidden: a table wider than the container must scroll —
+     hidden silently amputated the last column (the Actions menu) */
+  overflow-x: auto;
+  overflow-y: hidden;
   box-shadow: var(--shadow-sm);
   margin-top: 20px;
   transition: border-color 0.2s ease;
@@ -4564,3 +4567,14 @@ input.locked:focus { box-shadow: none !important; border-color: var(--border-str
 [data-theme="light"] .modal-actions { background: rgba(255, 255, 255, 0.97); }
 /* Destructive actions sit far left, away from the primary */
 .modal-actions .btn.danger { margin-right: auto; }
+
+
+/* Slim scrollbar for wide tables */
+.table-wrapper::-webkit-scrollbar { height: 8px; }
+.table-wrapper::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.table-wrapper::-webkit-scrollbar-track { background: transparent; }
