@@ -220,7 +220,7 @@ devicesRouter.post('/time-sync-all', async (req, res) => {
   // ISAPI limiter paces concurrency, so this finishes in seconds.
   const results = await Promise.all(onlineDevs.map(async (dev) => {
     try {
-      const r = await isapi.setDeviceTime(dev, now);
+      const r = await isapi.setDeviceTime(dev);
       if (r?.ok) {
         logSync(null, dev.id, 'time-sync', true, { syncedAt: now.toISOString() });
         return { id: dev.id, name: dev.name, ok: true };

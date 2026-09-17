@@ -57,7 +57,9 @@ async function req(device, method, path, { json, xml, headers, timeout, attempts
     body = JSON.stringify(json);
     h['Content-Type'] = 'application/json';
   } else if (xml !== undefined) {
-    body = xml;
+    // A function is evaluated AFTER the concurrency slot is acquired — so a
+    // time-setting body carries the moment of SENDING, not of queueing.
+    body = typeof xml === 'function' ? null : xml;
     h['Content-Type'] = 'application/xml';
   }
 
@@ -68,6 +70,7 @@ async function req(device, method, path, { json, xml, headers, timeout, attempts
   // responds by blackholing the source (which froze the cloud deployment).
   const host = device.host || 'default';
   await acquireSlot(host, priority);
+  if (typeof xml === 'function') body = xml();
 
   try {
     let lastErr = null;
@@ -177,17 +180,28 @@ export async function getDeviceTime(device, { timeout = 2500 } = {}) {
 
 // Write the server's current time + timezone to the device. Prevents the
 // "expired" false-positives caused by drifted terminal clocks.
-export async function setDeviceTime(device, date = new Date()) {
+// The fleet lives in Pakistan (UTC+5, no DST). The zone is PINNED instead of
+// taken from the server's own clock: the hosted deployment runs in UTC, and
+// using ITS wall time would set every machine five hours off. Override with
+// DEVICE_TZ_OFFSET_MIN (minutes east of UTC) if the fleet ever moves.
+const DEVICE_TZ_OFFSET_MIN = Number(process.env.DEVICE_TZ_OFFSET_MIN ?? 300);
+export async function setDeviceTime(device) {
   const p = (n) => String(n).padStart(2, '0');
-  const offMin = -date.getTimezoneOffset(); // minutes east of UTC, e.g. +300 for UTC+5
+  const offMin = DEVICE_TZ_OFFSET_MIN;
   const abs = Math.abs(offMin);
   const oh = p(Math.floor(abs / 60));
   const om = p(abs % 60);
   const sign = offMin >= 0 ? '+' : '-';
-  const local = `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}${sign}${oh}:${om}`;
   // Hikvision's timeZone string is inverted: CST-5:00:00 means UTC+5.
   const tz = `CST${offMin >= 0 ? '-' : '+'}${Math.floor(abs / 60)}:${om}:00`;
-  const xml = `<Time><timeMode>manual</timeMode><localTime>${local}</localTime><timeZone>${tz}</timeZone></Time>`;
+  // Built lazily so each machine receives the time of its own send moment —
+  // one shared timestamp written across a queued fleet leaves each machine
+  // behind by its queue wait (that was the -17s…-52s ladder on the fleet).
+  const xml = () => {
+    const t = new Date(Date.now() + offMin * 60000);
+    const local = `${t.getUTCFullYear()}-${p(t.getUTCMonth() + 1)}-${p(t.getUTCDate())}T${p(t.getUTCHours())}:${p(t.getUTCMinutes())}:${p(t.getUTCSeconds())}${sign}${oh}:${om}`;
+    return `<Time><timeMode>manual</timeMode><localTime>${local}</localTime><timeZone>${tz}</timeZone></Time>`;
+  };
   const res = await req(device, 'PUT', '/ISAPI/System/time', { xml });
   return interpret(res, 'setDeviceTime');
 }
