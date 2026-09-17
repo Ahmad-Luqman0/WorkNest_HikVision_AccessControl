@@ -1971,9 +1971,18 @@ async function loadUsersTable(devs) {
         map.get(key).on.push(d);
       }
     }
+    // Order: admins first, then people with access to every machine, then
+    // room tenants by room number (smallest first), everyone else last.
+    const isRoomDevSort = (d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+    const totalDevCount = devs.length;
+    const rankOf = (e) => e.u.localUIRight ? 0 : (totalDevCount > 1 && e.on.length >= totalDevCount) ? 1 : 2;
+    const roomOf = (e) => {
+      const nums = e.on.filter(isRoomDevSort).map((d) => Number(d.code)).filter(Number.isFinite);
+      return nums.length ? Math.min(...nums) : Infinity;
+    };
     entries = [...map.values()].sort((a, b) =>
-      ((b.u.localUIRight ? 1 : 0) - (a.u.localUIRight ? 1 : 0)) ||
-      (b.on.length - a.on.length) ||
+      (rankOf(a) - rankOf(b)) ||
+      (roomOf(a) - roomOf(b)) ||
       ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)) ||
       String(a.u.name || '').localeCompare(String(b.u.name || '')));
   } else {
