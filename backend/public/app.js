@@ -40,14 +40,14 @@ function showLogin() {
           <p class="hint" style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Centralized Control</p>
         </div>
       </div>
-      <div class="field"><label>Username</label><input id="lg_user" autocomplete="username" value="admin"></div>
+      <div class="field"><label>Username</label><input id="lg_user" autocomplete="username"></div>
       <div class="field"><label>Password</label><input id="lg_pass" type="password" autocomplete="current-password"></div>
       <div id="lg_err" class="hint" style="color:var(--red);min-height:18px"></div>
       <button class="btn primary" type="submit" style="width:100%">Sign in</button>
     </form>
   </div>`);
   document.body.appendChild(overlay);
-  $('#lg_pass').focus();
+  $('#lg_user').focus();
   $('#loginForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const r = await (await fetch('/api/auth/login', {
