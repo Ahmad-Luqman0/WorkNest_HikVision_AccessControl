@@ -227,10 +227,14 @@ function initCardSpotlights() {
 const EVENT_LABELS = {
   1: 'Entry authorized',
   2: 'Card + password',
-  21: 'Door opened',
+  21: 'Exit button pressed',
   22: 'Door closed',
   23: 'Door open timeout',
+  24: 'Door opened',
+  25: 'Lock released',
+  26: 'Door normal open stop',
   27: 'Remote unlock',
+  31: 'Door unlocked',
   38: 'Fingerprint OK',
   39: 'Fingerprint denied',
   75: 'Face OK',
@@ -245,7 +249,7 @@ function entryMethod(e) {
   if (e.minor === 38 || e.minor === 39) return 'fingerprint';
   if (e.minor === 75 || e.minor === 76) return 'face';
   if (e.cardNo) return 'card';
-  if (e.minor === 21 || e.minor === 22 || e.minor === 23) return 'door';
+  if ((e.minor >= 21 && e.minor <= 26) || e.minor === 31) return 'door';
   if (e.minor === 27) return 'remote';
   return 'other';
 }
@@ -813,8 +817,8 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
     }
 
     tbody.innerHTML = filtered.map((ev) => {
-      const isDoorRelay = ev.minor === 21 || ev.minor === 22 || ev.minor === 23;
-      const isRemoteUnlock = ev.minor === 27;
+      const isDoorRelay = (ev.minor >= 21 && ev.minor <= 26) || ev.minor === 31;
+      const isRemoteUnlock = ev.minor === 27 || ev.minor === 28;
       const isDenied = EVENT_DENIED.has(ev.minor);
       const timeStr = ev.time ? String(ev.time).slice(11, 19) : '—';
       const empNo = ev.employeeNoString ? `#${ev.employeeNoString}` : '—';
@@ -826,7 +830,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
       if (isDoorRelay) {
         displayName = 'Exit Button / Door Sensor';
-        subDetail = ev.minor === 21 ? 'Physical push-to-exit' : (ev.minor === 22 ? 'Door contact closed' : 'Door held open');
+        subDetail = ev.minor === 21 ? 'Physical push-to-exit' : (ev.minor === 22 ? 'Door contact closed' : (ev.minor === 24 ? 'Door contact opened' : (ev.minor === 23 ? 'Door open timeout' : 'Door sensor trigger')));
         avatarHtml = `<span class="avatar-badge sm" style="background:rgba(255,255,255,0.06);color:var(--text-muted);border-color:var(--border);" title="Hardware Door Sensor">HW</span>`;
       } else if (isRemoteUnlock) {
         displayName = 'Remote Door Release';
@@ -837,7 +841,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
         subDetail = ev.cardNo ? `Unassigned Card #${ev.cardNo}` : 'Unknown fingerprint / face';
         avatarHtml = `<span class="avatar-badge sm" style="background:rgba(239,68,68,0.15);color:#f87171;border-color:rgba(239,68,68,0.3);" title="Unregistered attempt">✕</span>`;
       } else {
-        displayName = ev.name || (ev.employeeNoString ? `Employee #${ev.employeeNoString}` : (ev.cardNo ? `Cardholder (${ev.cardNo})` : 'Registered Member'));
+        displayName = ev.name || (ev.employeeNoString ? `Employee #${ev.employeeNoString}` : (ev.cardNo ? `Cardholder (${ev.cardNo})` : 'Access Scan'));
         if (ev.cardNo) subDetail = `Card: ${esc(ev.cardNo)}`;
         avatarHtml = renderAvatar(ev.name || displayName, 'sm');
       }
@@ -850,7 +854,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
       } else if (ev.cardNo) {
         methodBadge = `<span class="badge" style="background:rgba(234,179,8,0.12);color:#facc15;border:1px solid rgba(234,179,8,0.3);font-size:11px;font-weight:600;">Card</span>`;
       } else if (isDoorRelay) {
-        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Exit Button</span>`;
+        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Door Sensor</span>`;
       } else if (isRemoteUnlock) {
         methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Remote</span>`;
       } else {
@@ -1643,7 +1647,12 @@ async function dashboard() {
 
   let latestSwipe = null;
   if (s && s.lastEvent && s.lastEvent.name) {
-    latestSwipe = s.lastEvent;
+    const isDeniedMinor = s.lastEvent.minor !== undefined ? EVENT_DENIED.has(Number(s.lastEvent.minor)) : false;
+    const okFlag = s.lastEvent.ok !== undefined ? Boolean(s.lastEvent.ok) : !isDeniedMinor;
+    latestSwipe = {
+      ...s.lastEvent,
+      ok: okFlag,
+    };
   } else if (logsList && logsList.length) {
     const accessEvent = logsList.find((l) =>
       Boolean(l.employee_name) ||

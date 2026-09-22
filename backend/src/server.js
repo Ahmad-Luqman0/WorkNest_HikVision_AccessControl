@@ -797,7 +797,7 @@ app.get('/api/stats', async (req, res) => {
       getRow("SELECT COUNT(DISTINCT employee_no) AS n FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time >= CAST(GETDATE() AS DATE) AND employee_no IS NOT NULL").catch(async () => {
         return getRow("SELECT COUNT(DISTINCT employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST(ts AS DATE) = ? AND employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
       }),
-      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
+      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no, minor FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
     ]);
 
     const todayScans = todayRow?.n || 0;
@@ -810,12 +810,15 @@ app.get('/api/stats', async (req, res) => {
     }
 
     const uniqueToday = Number(uniqueTodayRow?.n) || 0;
+    const DENIED_MINORS = new Set([23, 39, 76, 112]);
     const lastEvent = lastEventRow ? {
       employeeNo: lastEventRow.employee_no || '',
       name: lastEventRow.name || '',
       deviceName: lastEventRow.device_name || '',
       time: lastEventRow.event_time ? new Date(lastEventRow.event_time).toISOString() : null,
       cardNo: lastEventRow.card_no || '',
+      minor: lastEventRow.minor,
+      ok: !DENIED_MINORS.has(Number(lastEventRow.minor)),
     } : null;
 
     res.json({
