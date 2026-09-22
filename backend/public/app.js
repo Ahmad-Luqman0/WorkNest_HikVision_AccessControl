@@ -744,13 +744,15 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:12px 0 10px;">
       <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:260px;">
-        <input type="text" id="hrFilterSearch" placeholder="Search person, ID, terminal, card…" style="padding:6px 12px;font-size:12.5px;border-radius:20px;flex:1;max-width:320px;">
+        <input type="text" id="hrFilterSearch" placeholder="Search member, ID, terminal, card…" style="padding:6px 12px;font-size:12.5px;border-radius:20px;flex:1;max-width:300px;">
         <div style="display:flex;gap:5px;flex-wrap:wrap;" id="hrFilterPills">
           <button class="hr-pill-btn active" data-filter="all">All (${rawEvents.length})</button>
-          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">Face (${methodCounts.face})</button>` : ''}
+          <button class="hr-pill-btn" data-filter="members">Member Scans (${rawEvents.filter(e => e.minor === 75 || e.minor === 76 || e.minor === 38 || e.minor === 39 || e.cardNo).length})</button>
           ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">Fingerprint (${methodCounts.fp})</button>` : ''}
+          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">Face (${methodCounts.face})</button>` : ''}
           ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">Card (${methodCounts.card})</button>` : ''}
           ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">Denied (${methodCounts.denied})</button>` : ''}
+          ${rawEvents.some(e => e.minor === 21 || e.minor === 22 || e.minor === 23) ? `<button class="hr-pill-btn" data-filter="relay">Exit Buttons / Sensors</button>` : ''}
         </div>
       </div>
       <button class="btn sm" id="hrExportCsvBtn" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
@@ -763,11 +765,11 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
         <thead>
           <tr style="position:sticky;top:0;background:var(--bg-panel);z-index:2;box-shadow:0 1px 0 var(--border);">
             <th style="padding:9px 12px;width:90px;">Time</th>
-            <th style="padding:9px 12px;">Person</th>
+            <th style="padding:9px 12px;">Person / Source</th>
             <th style="padding:9px 12px;width:100px;">Employee #</th>
             <th style="padding:9px 12px;">Terminal</th>
             <th style="padding:9px 12px;width:120px;">Method</th>
-            <th style="padding:9px 12px;width:110px;text-align:right;">Status</th>
+            <th style="padding:9px 12px;width:125px;text-align:right;">Status</th>
           </tr>
         </thead>
         <tbody id="hrScanTbody"></tbody>
@@ -784,6 +786,11 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
     const filtered = rawEvents.filter((ev) => {
       const isDenied = EVENT_DENIED.has(ev.minor);
+      const isDoorRelay = ev.minor === 21 || ev.minor === 22 || ev.minor === 23;
+      const isMemberScan = ev.minor === 75 || ev.minor === 76 || ev.minor === 38 || ev.minor === 39 || Boolean(ev.cardNo);
+
+      if (activeFilter === 'members' && !isMemberScan) return false;
+      if (activeFilter === 'relay' && !isDoorRelay) return false;
       if (activeFilter === 'denied' && !isDenied) return false;
       if (activeFilter === 'face' && ev.minor !== 75 && ev.minor !== 76) return false;
       if (activeFilter === 'fp' && ev.minor !== 38 && ev.minor !== 39) return false;
@@ -806,11 +813,34 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
     }
 
     tbody.innerHTML = filtered.map((ev) => {
+      const isDoorRelay = ev.minor === 21 || ev.minor === 22 || ev.minor === 23;
+      const isRemoteUnlock = ev.minor === 27;
       const isDenied = EVENT_DENIED.has(ev.minor);
       const timeStr = ev.time ? String(ev.time).slice(11, 19) : '—';
-      const name = ev.name || (ev.employeeNoString ? `Employee #${ev.employeeNoString}` : (ev.cardNo ? `Cardholder (${ev.cardNo})` : 'Guest / Unknown'));
       const empNo = ev.employeeNoString ? `#${ev.employeeNoString}` : '—';
       const devName = ev.device || 'Access Terminal';
+
+      let displayName = '';
+      let subDetail = '';
+      let avatarHtml = '';
+
+      if (isDoorRelay) {
+        displayName = 'Exit Button / Door Sensor';
+        subDetail = ev.minor === 21 ? 'Physical push-to-exit' : (ev.minor === 22 ? 'Door contact closed' : 'Door held open');
+        avatarHtml = `<span class="avatar-badge sm" style="background:rgba(255,255,255,0.06);color:var(--text-muted);border-color:var(--border);" title="Hardware Door Sensor">HW</span>`;
+      } else if (isRemoteUnlock) {
+        displayName = 'Remote Door Release';
+        subDetail = 'Triggered from console';
+        avatarHtml = `<span class="avatar-badge sm" style="background:rgba(99,102,241,0.15);color:#818cf8;border-color:rgba(99,102,241,0.3);" title="Remote Unlock">RC</span>`;
+      } else if (isDenied && !ev.name && !ev.employeeNoString) {
+        displayName = 'Unregistered Person';
+        subDetail = ev.cardNo ? `Unassigned Card #${ev.cardNo}` : 'Unknown fingerprint / face';
+        avatarHtml = `<span class="avatar-badge sm" style="background:rgba(239,68,68,0.15);color:#f87171;border-color:rgba(239,68,68,0.3);" title="Unregistered attempt">✕</span>`;
+      } else {
+        displayName = ev.name || (ev.employeeNoString ? `Employee #${ev.employeeNoString}` : (ev.cardNo ? `Cardholder (${ev.cardNo})` : 'Registered Member'));
+        if (ev.cardNo) subDetail = `Card: ${esc(ev.cardNo)}`;
+        avatarHtml = renderAvatar(ev.name || displayName, 'sm');
+      }
 
       let methodBadge = '';
       if (ev.minor === 75 || ev.minor === 76) {
@@ -819,23 +849,34 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
         methodBadge = `<span class="badge" style="background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);font-size:11px;font-weight:600;">Fingerprint</span>`;
       } else if (ev.cardNo) {
         methodBadge = `<span class="badge" style="background:rgba(234,179,8,0.12);color:#facc15;border:1px solid rgba(234,179,8,0.3);font-size:11px;font-weight:600;">Card</span>`;
+      } else if (isDoorRelay) {
+        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Exit Button</span>`;
+      } else if (isRemoteUnlock) {
+        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Remote</span>`;
       } else {
-        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Door Relay</span>`;
+        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Terminal</span>`;
       }
 
-      const statusBadge = isDenied
-        ? `<span class="badge danger" style="font-size:11px;padding:2px 7px;">Denied</span>`
-        : `<span class="badge ok" style="font-size:11px;padding:2px 7px;">Authorized</span>`;
+      let statusBadge = '';
+      if (isDoorRelay) {
+        statusBadge = ev.minor === 23
+          ? `<span class="badge danger" style="font-size:11px;padding:2px 7px;">Open Timeout</span>`
+          : `<span class="badge muted" style="font-size:11px;padding:2px 7px;">Door Opened</span>`;
+      } else if (isDenied) {
+        statusBadge = `<span class="badge danger" style="font-size:11px;padding:2px 7px;" title="Door remained locked — access denied">Denied (Locked)</span>`;
+      } else {
+        statusBadge = `<span class="badge ok" style="font-size:11px;padding:2px 7px;">Authorized</span>`;
+      }
 
       return `
         <tr>
           <td style="font-family:monospace;font-size:12px;color:var(--text-muted);">${esc(timeStr)}</td>
           <td>
             <div style="display:flex;align-items:center;gap:8px;">
-              ${renderAvatar(ev.name || 'Member', 'sm')}
+              ${avatarHtml}
               <div>
-                <b style="color:var(--text-main);display:block;line-height:1.2;">${esc(name)}</b>
-                ${ev.cardNo ? `<span style="font-size:10.5px;color:var(--text-faint);">Card: ${esc(ev.cardNo)}</span>` : ''}
+                <b style="color:var(--text-main);display:block;line-height:1.2;">${esc(displayName)}</b>
+                ${subDetail ? `<span style="font-size:10.5px;color:var(--text-muted);">${esc(subDetail)}</span>` : ''}
               </div>
             </div>
           </td>
