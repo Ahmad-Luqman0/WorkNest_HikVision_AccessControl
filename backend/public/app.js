@@ -32,8 +32,8 @@ function showLogin() {
   const overlay = el(`<div id="loginOverlay" class="login-overlay">
     <form class="login-card" id="loginForm">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
-        <div class="logo-icon" style="width:44px;height:44px;background:#101c3d;padding:0;overflow:hidden">
-          <img src="/logo-mark.png" alt="WorkNest" style="width:100%;height:100%;display:block" />
+        <div class="logo-icon" style="width:44px;height:44px;background:#0a182b;padding:0;overflow:hidden">
+          <img src="/logo-mark.png?v=2" alt="WorkNest" style="width:100%;height:100%;display:block;object-fit:cover" />
         </div>
         <div>
           <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:-0.03em;">WorkNest Access</h2>
