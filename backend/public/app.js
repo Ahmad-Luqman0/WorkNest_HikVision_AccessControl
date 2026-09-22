@@ -131,6 +131,7 @@ async function changePasswordModal() {
 const $ = (s) => document.querySelector(s);
 const content = $('#content');
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = (n) => String(n).padStart(2, '0');
 
 // ---- 12-Hour Time Helpers (Enterprise Standard) ----
@@ -1774,11 +1775,21 @@ async function dashboard() {
     if (current === 'dashboard' && $('#modalBackdrop').hidden) dashboard();
   }, 30000);
 
-  const [s, devs, logsList, expiring, bookingsSummary, analyticsData] = await Promise.all([
-    api.get('/stats'), api.get('/devices'), api.get('/logs'), api.get('/expiring'),
-    api.get('/bookings-feed?summary=1'), api.get('/analytics').catch(() => null),
+  const [sRaw, devsRaw, logsListRaw, expiringRaw, bookingsSummaryRaw, analyticsDataRaw] = await Promise.all([
+    api.get('/stats').catch(() => ({})),
+    api.get('/devices').catch(() => []),
+    api.get('/logs').catch(() => []),
+    api.get('/expiring').catch(() => []),
+    api.get('/bookings-feed?summary=1').catch(() => ({})),
+    api.get('/analytics').catch(() => null),
   ]);
-  if (Array.isArray(devs)) _cmdCachedDevs = devs;
+  const devs = Array.isArray(devsRaw) ? devsRaw : [];
+  const s = (sRaw && typeof sRaw === 'object' && !sRaw.error) ? sRaw : {};
+  const logsList = Array.isArray(logsListRaw) ? logsListRaw : [];
+  const expiring = Array.isArray(expiringRaw) ? expiringRaw : [];
+  const bookingsSummary = (bookingsSummaryRaw && typeof bookingsSummaryRaw === 'object' && !bookingsSummaryRaw.error) ? bookingsSummaryRaw : {};
+  const analyticsData = (analyticsDataRaw && typeof analyticsDataRaw === 'object' && !analyticsDataRaw.error) ? analyticsDataRaw : null;
+  if (devs.length) _cmdCachedDevs = devs;
   if (current !== 'dashboard') return; // view changed while loading
 
   // Background non-blocking consistency and online checks

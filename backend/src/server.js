@@ -20,6 +20,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const p2 = (n) => String(n).padStart(2, '0');
 
+function fmt12HourRange(h) {
+  const h1 = ((Number(h) % 24) + 24) % 24;
+  const h2 = (h1 + 1) % 24;
+  const ampm1 = h1 >= 12 ? 'PM' : 'AM';
+  const ampm2 = h2 >= 12 ? 'PM' : 'AM';
+  const disp1 = h1 % 12 || 12;
+  const disp2 = h2 % 12 || 12;
+  return `${disp1}:00 ${ampm1} - ${disp2}:00 ${ampm2}`;
+}
+
 app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(cors());
@@ -993,15 +1003,6 @@ app.get('/api/analytics', async (req, res) => {
     hourlyDistribution.forEach((cnt, hr) => {
       if (cnt > maxPeak) { maxPeak = cnt; peakHour = hr; }
     });
-    const fmt12HourRange = (h) => {
-      const h1 = ((h % 24) + 24) % 24;
-      const h2 = (h1 + 1) % 24;
-      const ampm1 = h1 >= 12 ? 'PM' : 'AM';
-      const ampm2 = h2 >= 12 ? 'PM' : 'AM';
-      const disp1 = h1 % 12 || 12;
-      const disp2 = h2 % 12 || 12;
-      return `${disp1}:00 ${ampm1} - ${disp2}:00 ${ampm2}`;
-    };
     const peakHourLabel = fmt12HourRange(peakHour);
 
     // 4. Estimated Live Headcount
