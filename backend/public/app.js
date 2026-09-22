@@ -4795,124 +4795,220 @@ async function cards() {
   $('#viewActions').innerHTML = '<button class="btn primary" id="addCard">+ Add card</button>';
   $('#addCard').addEventListener('click', () => cardModal(null, devs));
   content.innerHTML = '';
-  if (!list.length) { content.appendChild(el('<div class="empty">No cards yet. Click <b>+ Add card</b> to register a card, then <b>Edit</b> it to set access and machines.</div>')); return; }
+  if (!list.length) {
+    content.appendChild(el('<div class="empty">No cards yet. Click <b>+ Add card</b> to register a card, then <b>Edit</b> it to set access and machines.</div>'));
+    return;
+  }
 
-  const rows = list.map((c) => {
-    const active = c.grants.filter((g) => g.sync_state !== 'removing');
-    const nDev = active.length;
-    const nBad = active.filter((g) => g.sync_state !== 'synced').length;
-    // Assigned to: live holders of this card number (real users on the machines)
-    const byEmp = new Map();
-    for (const h of c.assigned || []) {
-      if (!byEmp.has(h.employeeNo)) byEmp.set(h.employeeNo, { name: h.name, devs: [] });
-      byEmp.get(h.employeeNo).devs.push(h.device);
+  // Cards Toolbar: Real-time Search + Assignment Filter + Counter
+  const toolbar = el(`
+    <div class="table-toolbar" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="search-input-wrap" style="position:relative;flex:1;min-width:240px;max-width:380px;">
+        <svg style="position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:0.5;pointer-events:none;" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="cardSearchInput" class="input" placeholder="Search card #, member name, ID, or label…" autocomplete="off" spellcheck="false" style="padding-left:32px;width:100%;height:36px;font-size:13px;" />
+      </div>
+      <select id="cardFilterStatus" class="select" style="height:36px;font-size:13px;">
+        <option value="all">All cards</option>
+        <option value="assigned">Assigned to members</option>
+        <option value="unassigned">Unassigned / Standalone</option>
+        <option value="active">Active (valid)</option>
+        <option value="expired">Expired</option>
+      </select>
+      <button class="btn sm" id="cardRefreshBtn" title="Refresh card fleet" style="height:36px;padding:0 12px;">Refresh</button>
+      <span class="hint" id="cardCountBadge" style="margin-left:auto;font-size:12px;font-weight:500;"></span>
+    </div>
+  `);
+  content.appendChild(toolbar);
+
+  const tableContainer = el('<div id="cardTableWrapper"></div>');
+  content.appendChild(tableContainer);
+
+  const isEntrD = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+  const entrAllCount = devs.filter(isEntrD).length;
+  const summarize = (names) => {
+    const ds = names.map((n) => devs.find((d) => d.name === n)).filter(Boolean);
+    if (!ds.length) return '<small class="hint">—</small>';
+    if (devs.length > 1 && ds.length >= devs.length) return `<span class="badge" title="${esc(names.join(', '))}">All machines (${ds.length})</span>`;
+    const entrHave = ds.filter(isEntrD);
+    const rooms = ds.filter((d) => d.code && !isEntrD(d));
+    const parts = [];
+    if (entrHave.length) parts.push(`<span class="badge">Entrances (${entrHave.length}${entrHave.length === entrAllCount ? '' : ' of ' + entrAllCount})</span>`);
+    if (rooms.length) parts.push(`<span class="badge admin">room ${esc(rooms[0].code)}</span>`);
+    const rest = ds.length - entrHave.length - (rooms.length ? 1 : 0);
+    if (rest > 0) parts.push(`<span class="badge" title="${esc(names.join(', '))}">+${rest} more</span>`);
+    return parts.join(' ');
+  };
+
+  function renderCardTable(items) {
+    const countBadge = $('#cardCountBadge');
+    if (countBadge) {
+      countBadge.textContent = items.length === list.length
+        ? `${list.length} card${list.length === 1 ? '' : 's'}`
+        : `Showing ${items.length} of ${list.length} cards`;
     }
-    // Holder names only — the machine list collapses into the Access column.
-    const assignedHtml = byEmp.size
-      ? [...byEmp.entries()].map(([no, x]) =>
-        `<b>${esc(x.name || 'User')}</b> <small class="hint">#${esc(no)}</small>`
-      ).join('<br>')
-      : nDev
-        ? `standalone ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
-        : '<span class="muted">not assigned</span>';
-    // Access summary per holder: Entrances chip + room badges, one line.
-    const isEntrD = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
-    const entrAllCount = devs.filter(isEntrD).length;
-    const summarize = (names) => {
-      const ds = names.map((n) => devs.find((d) => d.name === n)).filter(Boolean);
-      if (!ds.length) return '<small class="hint">—</small>';
-      if (devs.length > 1 && ds.length >= devs.length) return `<span class="badge" title="${esc(names.join(', '))}">All machines (${ds.length})</span>`;
-      const entrHave = ds.filter(isEntrD);
-      const rooms = ds.filter((d) => d.code && !isEntrD(d));
-      const parts = [];
-      if (entrHave.length) parts.push(`<span class="badge">Entrances (${entrHave.length}${entrHave.length === entrAllCount ? '' : ' of ' + entrAllCount})</span>`);
-      if (rooms.length) parts.push(`<span class="badge admin">room ${esc(rooms[0].code)}</span>`);
-      const rest = ds.length - entrHave.length - (rooms.length ? 1 : 0);
-      if (rest > 0) parts.push(`<span class="badge" title="${esc(names.join(', '))}">+${rest} more</span>`);
-      return parts.join(' ');
-    };
-    const accessHtml = byEmp.size
-      ? [...byEmp.values()].map((x) => summarize(x.devs)).join('<br>')
-      : nDev
-        ? summarize(c.grants.filter((g) => g.sync_state !== 'removing').map((g) => g.device_name))
-        : '<small class="hint">—</small>';
-    const customLabel = c.name && c.name !== `Card ${c.card_no}` ? ` <small class="hint">${esc(c.name)}</small>` : '';
-    return `<tr>
-      <td class="nowrap"><b>${esc(c.card_no || '—')}</b>${customLabel}</td>
-      <td class="nowrap">${c.valid_end ? esc(c.valid_end.replace('T', ' ')) : '<span class="muted">no expiry</span>'}</td>
-      <td class="nowrap">${assignedHtml}</td>
-      <td class="nowrap">${accessHtml}</td>
-      <td class="row-actions">
-        <button class="btn sm" data-cmenu="${c.id}">Actions ▾</button>
-        <span hidden>
-          <button data-assign="${c.id}"></button>
-          <button data-unassign="${c.id}"></button>
-          <button data-sync="${c.id}"></button>
-          <button data-edit="${c.id}"></button>
-          <button data-del="${c.id}"></button>
-        </span>
-      </td>
-    </tr>`;
-  }).join('');
-  content.appendChild(el(`<div class="table-wrapper"><table><thead><tr>
-      <th>Card #</th><th>Access until</th><th>Assigned to</th><th>Access</th><th></th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`));
 
-  content.querySelectorAll('[data-cmenu]').forEach((b) => b.addEventListener('click', (ev) => {
-    ev.stopPropagation();
-    const row = b.closest('td');
-    const hit = (sel) => row.querySelector(sel)?.click();
-    showRowMenu(b, [
-      ['Assign to user', () => hit('[data-assign]')],
-      ['Unassign', () => hit('[data-unassign]')],
-      ['Sync', () => hit('[data-sync]')],
-      ['Edit', () => hit('[data-edit]')],
-      ['Remove', () => hit('[data-del]'), true],
-    ]);
-  }));
-  content.querySelectorAll('[data-assign]').forEach((b) => b.addEventListener('click', () =>
-    assignCardModal(list.find((c) => c.id == b.dataset.assign), devs)));
-  content.querySelectorAll('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
-    const c = list.find((x) => x.id == b.dataset.unassign);
-    if (!c || !c.card_no) { toast('This entry has no card number', 'err'); return; }
-    const ok = await confirmDialog({
-      title: 'Remove Card Access',
-      message: `Remove card ${c.card_no} from every machine?\n\nWhoever holds it loses card access — their user profile stays.`,
-      confirmText: 'Remove Card',
-      danger: true
-    });
-    if (!ok) return;
-    toast('Removing card from machines…');
-    const r = await api.post('/devices/card/delete', { card_no: c.card_no });
-    const fails = (r.results || []).filter((x) => !x.ok);
-    toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}`
-      : 'Card removed from all machines', fails.length ? 'err' : 'ok');
-  }));
-  content.querySelectorAll('[data-sync]').forEach((b) => b.addEventListener('click', async () => {
-    toast('Pushing to machines…');
-    const r = await api.post(`/cards/${b.dataset.sync}/sync`);
-    const bad = (r.results || []).filter((x) => x.state === 'error');
-    toast(bad.length ? `Errors on ${bad.length} machine(s)` : 'Synced', bad.length ? 'err' : 'ok');
-    cards();
-  }));
-  content.querySelectorAll('[data-edit]').forEach((b) =>
-    b.addEventListener('click', () => cardModal(list.find((c) => c.id == b.dataset.edit), devs)));
-  content.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-    const c = list.find((x) => x.id == b.dataset.del);
-    const ok = await confirmDialog({
-      title: 'Delete Card from Fleet',
-      message: `Delete card ${c?.card_no || ''}?\n\nIt is removed from every machine and detached from any user holding it — all access linked to this card stops working.`,
-      confirmText: 'Delete Card',
-      danger: true
-    });
-    if (!ok) return;
-    toast('Removing card everywhere…');
-    const r = await api.del(`/cards/${b.dataset.del}`);
-    const badDetach = (r.detached || []).filter((x) => !x.ok);
-    toast(r.ok ? (badDetach.length ? `Removed, but detach failed on ${badDetach.map((x) => x.device).join(', ')}` : 'Card removed — all linked access blocked')
-      : (r.error || 'Failed'), r.ok && !badDetach.length ? 'ok' : 'err');
-    cards();
-  }));
+    if (!items.length) {
+      const q = ($('#cardSearchInput')?.value || '').trim();
+      tableContainer.innerHTML = renderEmptyState({
+        icon: 'search',
+        title: 'No matching cards found',
+        message: q ? `No cards match "${esc(q)}".` : 'No cards match the selected filter.',
+        actionText: 'Clear search & filters',
+        onAction: () => {
+          const inp = $('#cardSearchInput'); if (inp) inp.value = '';
+          const sel = $('#cardFilterStatus'); if (sel) sel.value = 'all';
+          applyCardFilters();
+        },
+      });
+      return;
+    }
+
+    const now = Date.now();
+    const rows = items.map((c) => {
+      const active = (c.grants || []).filter((g) => g.sync_state !== 'removing');
+      const nDev = active.length;
+      const nBad = active.filter((g) => g.sync_state !== 'synced').length;
+      const byEmp = new Map();
+      for (const h of c.assigned || []) {
+        if (!byEmp.has(h.employeeNo)) byEmp.set(h.employeeNo, { name: h.name, devs: [] });
+        byEmp.get(h.employeeNo).devs.push(h.device);
+      }
+
+      const assignedHtml = byEmp.size
+        ? [...byEmp.entries()].map(([no, x]) =>
+          `<a class="link member-drawer-trigger" data-emp="${esc(no)}" data-name="${esc(x.name || 'User')}" style="cursor:pointer" title="View member profile"><b>${esc(x.name || 'User')}</b></a> <small class="hint">${copyableBadge(no)}</small>`
+        ).join('<br>')
+        : nDev
+          ? `standalone ${nBad ? `<span class="badge pending">${nBad} pending</span>` : '<span class="badge synced">synced</span>'}`
+          : '<span class="muted">not assigned</span>';
+
+      const accessHtml = byEmp.size
+        ? [...byEmp.values()].map((x) => summarize(x.devs)).join('<br>')
+        : nDev
+          ? summarize(c.grants.filter((g) => g.sync_state !== 'removing').map((g) => g.device_name))
+          : '<small class="hint">—</small>';
+
+      const isExpired = c.valid_end && new Date(String(c.valid_end).replace(' ', 'T')).getTime() < now;
+      const validityBadge = c.valid_end
+        ? `<span class="${isExpired ? 'badge error' : 'hint'}">${esc(c.valid_end.replace('T', ' ').slice(0, 16))}</span>`
+        : '<span class="muted">no expiry</span>';
+
+      const customLabel = c.name && c.name !== `Card ${c.card_no}` ? ` <small class="hint">${esc(c.name)}</small>` : '';
+      return `<tr>
+        <td class="nowrap"><b>${esc(c.card_no || '—')}</b>${customLabel}</td>
+        <td class="nowrap">${validityBadge}</td>
+        <td class="nowrap">${assignedHtml}</td>
+        <td class="nowrap">${accessHtml}</td>
+        <td class="row-actions">
+          <button class="btn sm" data-cmenu="${c.id}">Actions ▾</button>
+          <span hidden>
+            <button data-assign="${c.id}"></button>
+            <button data-unassign="${c.id}"></button>
+            <button data-sync="${c.id}"></button>
+            <button data-edit="${c.id}"></button>
+            <button data-del="${c.id}"></button>
+          </span>
+        </td>
+      </tr>`;
+    }).join('');
+
+    tableContainer.innerHTML = `<div class="table-wrapper"><table><thead><tr>
+      <th>Card #</th><th>Access until</th><th>Assigned to</th><th>Access</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+
+    tableContainer.querySelectorAll('[data-cmenu]').forEach((b) => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const row = b.closest('td');
+      const hit = (sel) => row.querySelector(sel)?.click();
+      showRowMenu(b, [
+        ['Assign to user', () => hit('[data-assign]')],
+        ['Unassign', () => hit('[data-unassign]')],
+        ['Sync', () => hit('[data-sync]')],
+        ['Edit', () => hit('[data-edit]')],
+        ['Remove', () => hit('[data-del]'), true],
+      ]);
+    }));
+    tableContainer.querySelectorAll('[data-assign]').forEach((b) => b.addEventListener('click', () =>
+      assignCardModal(list.find((c) => c.id == b.dataset.assign), devs)));
+    tableContainer.querySelectorAll('[data-unassign]').forEach((b) => b.addEventListener('click', async () => {
+      const c = list.find((x) => x.id == b.dataset.unassign);
+      if (!c || !c.card_no) { toast('This entry has no card number', 'err'); return; }
+      const ok = await confirmDialog({
+        title: 'Remove Card Access',
+        message: `Remove card ${c.card_no} from every machine?\n\nWhoever holds it loses card access — their user profile stays.`,
+        confirmText: 'Remove Card',
+        danger: true
+      });
+      if (!ok) return;
+      toast('Removing card from machines…');
+      const r = await api.post('/devices/card/delete', { card_no: c.card_no });
+      const fails = (r.results || []).filter((x) => !x.ok);
+      toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}`
+        : 'Card removed from all machines', fails.length ? 'err' : 'ok');
+    }));
+    tableContainer.querySelectorAll('[data-sync]').forEach((b) => b.addEventListener('click', async () => {
+      toast('Pushing to machines…');
+      const r = await api.post(`/cards/${b.dataset.sync}/sync`);
+      const bad = (r.results || []).filter((x) => x.state === 'error');
+      toast(bad.length ? `Errors on ${bad.length} machine(s)` : 'Synced', bad.length ? 'err' : 'ok');
+      cards();
+    }));
+    tableContainer.querySelectorAll('[data-edit]').forEach((b) =>
+      b.addEventListener('click', () => cardModal(list.find((c) => c.id == b.dataset.edit), devs)));
+    tableContainer.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+      const c = list.find((x) => x.id == b.dataset.del);
+      const ok = await confirmDialog({
+        title: 'Delete Card from Fleet',
+        message: `Delete card ${c?.card_no || ''}?\n\nIt is removed from every machine and detached from any user holding it — all access linked to this card stops working.`,
+        confirmText: 'Delete Card',
+        danger: true
+      });
+      if (!ok) return;
+      toast('Removing card everywhere…');
+      const r = await api.del(`/cards/${b.dataset.del}`);
+      const badDetach = (r.detached || []).filter((x) => !x.ok);
+      toast(r.ok ? (badDetach.length ? `Removed, but detach failed on ${badDetach.map((x) => x.device).join(', ')}` : 'Card removed — all linked access blocked')
+        : (r.error || 'Failed'), r.ok && !badDetach.length ? 'ok' : 'err');
+      cards();
+    }));
+  }
+
+  function applyCardFilters() {
+    const q = ($('#cardSearchInput')?.value || '').trim().toLowerCase();
+    const filterStatus = $('#cardFilterStatus')?.value || 'all';
+    const now = Date.now();
+
+    let res = list;
+    if (filterStatus === 'assigned') {
+      res = res.filter((c) => (c.assigned || []).length > 0);
+    } else if (filterStatus === 'unassigned') {
+      res = res.filter((c) => !(c.assigned || []).length);
+    } else if (filterStatus === 'active') {
+      res = res.filter((c) => !c.valid_end || new Date(String(c.valid_end).replace(' ', 'T')).getTime() >= now);
+    } else if (filterStatus === 'expired') {
+      res = res.filter((c) => c.valid_end && new Date(String(c.valid_end).replace(' ', 'T')).getTime() < now);
+    }
+
+    if (q) {
+      res = res.filter((c) => {
+        const cardNo = String(c.card_no || '').toLowerCase();
+        const label = String(c.name || '').toLowerCase();
+        const empNo = String(c.employee_no || '').toLowerCase();
+        const assignedTxt = (c.assigned || []).map((h) => `${h.name || ''} ${h.employeeNo || ''} ${h.device || ''}`).join(' ').toLowerCase();
+        return cardNo.includes(q) || label.includes(q) || empNo.includes(q) || assignedTxt.includes(q);
+      });
+    }
+
+    renderCardTable(res);
+  }
+
+  $('#cardSearchInput')?.addEventListener('input', applyCardFilters);
+  $('#cardFilterStatus')?.addEventListener('change', applyCardFilters);
+  $('#cardRefreshBtn')?.addEventListener('click', () => cards());
+
+  renderCardTable(list);
 }
 
 // Assign a registered card to an existing machine user (typed attach, no tap).

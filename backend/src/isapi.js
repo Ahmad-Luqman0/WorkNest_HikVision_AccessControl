@@ -128,35 +128,53 @@ export async function getDeviceInfo(device, { timeout = 2500, attempts = 2, prio
 const HIK_MESSAGES = {
   employeeNoAlreadyExist: 'That employee number already exists on this machine.',
   employeeNoNotExist: 'That user does not exist on this machine.',
-  userExceedLimit: 'This machine has reached its user limit.',
-  cardNoAlreadyExist: 'That card is already assigned on this machine.',
-  duplicateCardNo: 'That card is already assigned on this machine.',
-  cardNoExist: 'That card is already assigned on this machine.',
-  cardNumOverLimit: 'This machine has reached its card limit.',
-  cardNumFull: 'This machine has reached its card limit.',
+  userExceedLimit: 'This machine has reached its user capacity limit.',
+  cardNoAlreadyExist: 'This card is already assigned to another user on this machine.',
+  duplicateCardNo: 'This card is already registered on this machine.',
+  cardNoExist: 'This card is already assigned on this machine.',
+  cardNumOverLimit: 'This machine has reached its maximum card limit.',
+  cardNumFull: 'This machine has reached its maximum card limit.',
   fingerPrintDataExist: 'This fingerprint is already enrolled on this machine.',
   duplicateFingerPrint: 'This fingerprint is already enrolled for another user.',
-  fingerPrintNumOverLimit: 'This machine has reached its fingerprint limit.',
+  fingerPrintNumOverLimit: 'This machine has reached its fingerprint capacity limit.',
+  fingerPrintNumFull: 'This machine has reached its fingerprint capacity limit.',
   faceDataExist: 'A face is already enrolled for this user.',
-  deviceError: 'Nothing was presented at the reader, or the device reported an error. Try again.',
-  deviceBusy: 'The machine is busy — a previous card/fingerprint capture is still open. Wait about 30 seconds and try again.',
-  methodNotAllowed: 'This operation is not allowed on this machine.',
-  notSupport: 'This machine does not support that operation.',
-  badJsonContent: 'The machine rejected the request format.',
+  duplicateFace: 'This face is already enrolled for another user.',
+  faceNumOverLimit: 'This machine has reached its face recognition capacity limit.',
+  faceNumFull: 'This machine has reached its face recognition capacity limit.',
+  noFaceDetected: 'No clear face was detected. Ensure proper lighting and face the camera directly.',
+  faceQualityTooLow: 'Face image quality is too low. Please look directly into the camera.',
+  deviceError: 'Nothing was presented at the reader, or the device reported an error. Please try again.',
+  deviceBusy: 'The machine is busy with another operation. Please wait 15 seconds and try again.',
+  timeOut: 'Operation timed out — no credential was presented at the reader in time.',
+  methodNotAllowed: 'This operation is not supported by this machine firmware.',
+  notSupport: 'This machine model does not support that operation.',
+  badJsonContent: 'The machine rejected the request parameters.',
   badXmlContent: 'The machine rejected the request format.',
-  invalidContent: 'The machine rejected the request content.',
-  notActivated: 'The machine is not activated.',
-  riskPassword: 'The machine reports a weak/risky password.',
+  invalidContent: 'The machine rejected the payload content.',
+  notActivated: 'The terminal is not activated.',
+  riskPassword: 'The terminal reports a weak or risky password.',
+  permissionDenied: 'Terminal access denied (insufficient privileges).',
 };
 
 // Turn an interpret()/capture result into a friendly, machine-aware message.
 export function describe(result) {
   if (!result) return 'Unknown device error';
+  if (result.duplicateWith) {
+    return `This fingerprint is already enrolled for employee #${result.duplicateWith}.`;
+  }
+  if (result.errorMsg) return result.errorMsg;
   if (result.error) return result.error;
   const sub = result.subStatusCode;
   if (sub && HIK_MESSAGES[sub]) return HIK_MESSAGES[sub];
-  if (result.statusString && result.statusString !== 'Invalid Operation') return result.statusString;
-  return sub || (result.httpStatus ? `Device returned HTTP ${result.httpStatus}` : 'Device error');
+  const st = String(result.statusString || '');
+  if (/cardReaderRecvStatus.*5/i.test(st)) return 'Duplicate fingerprint — already enrolled for another user.';
+  if (/cardReaderRecvStatus.*4/i.test(st)) return 'Fingerprint already exists for this member.';
+  if (/cardReaderRecvStatus.*3/i.test(st)) return 'Terminal fingerprint capacity full.';
+  if (/cardReaderRecvStatus.*2/i.test(st)) return 'Poor scan quality. Please press finger firmly on the sensor.';
+  if (/cardReaderRecvStatus.*6/i.test(st)) return 'Failed to write fingerprint template to card reader.';
+  if (st && st !== 'Invalid Operation' && !st.startsWith('cardReaderRecvStatus')) return st;
+  return sub || (result.httpStatus ? `Device returned HTTP ${result.httpStatus}` : 'Device communication error');
 }
 
 // Extract the text of the first <tag>…</tag> from a (namespaced) XML string.

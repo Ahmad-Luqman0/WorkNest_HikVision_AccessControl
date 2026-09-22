@@ -57,15 +57,16 @@ cardsRouter.get('/', async (req, res) => {
       }
     } catch {}
 
-    // Machine truth ALWAYS runs — card assignments live on the machines, and
-    // the DB rows above only cover dashboard-managed visitor/card records.
-    // Snapshot-backed reads make this milliseconds when warm (Vercel too).
+    // Resolve member names from DB once (sub-millisecond query, avoiding WAN roster scans)
+    const empRows = await getRows('SELECT employee_no, name FROM dbo.WN_HIK_Employees WHERE employee_no IS NOT NULL').catch(() => []);
+    const nameCache = new Map(empRows.map((u) => [String(u.employee_no), u.name || null]));
+
+    // Read card assignments from fast snapshot cache (with a 2s per-device timeout guard)
     const devices = (await getAllDevices()).filter((d) => d.online);
+    const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
     await Promise.all(devices.map(async (dev) => {
       try {
-        const all = await getCardTable(dev);
-        const roster = await getRoster(dev).catch(() => []);
-        const nameCache = new Map(roster.map((u) => [String(u.employeeNo), u.name || null]));
+        const all = await Promise.race([getCardTable(dev, 3600000), timeout(2000)]);
         for (const c of all) {
           const no = String(c.cardNo);
           const emp = String(c.employeeNo);
@@ -75,7 +76,7 @@ cardsRouter.get('/', async (req, res) => {
             list.push({ device: dev.name, device_id: dev.id, employeeNo: emp, name: nameCache.get(emp) ?? null });
           }
         }
-      } catch { /* unreachable machine — skip */ }
+      } catch { /* skip slow or offline terminal */ }
     }));
 
     res.json(registry.map((r) => ({
