@@ -966,7 +966,7 @@ function onLiveActivityEvent(entry) {
             <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
             <div class="ticker-sub"><small class="hint">${esc(new Date().toLocaleTimeString())}</small></div>
           </div>
-          <span class="badge ${entry.ok ? 'synced' : 'error'}">${entry.ok ? 'Granted' : 'Denied'}</span>
+          ${getLogStatusBadge(entry.action, entry.ok)}
         </div>`);
       tickerBody.insertBefore(row, tickerBody.firstChild);
       while (tickerBody.children.length > 8) tickerBody.lastChild.remove();
@@ -1545,6 +1545,19 @@ const getCredBadge = (action) => {
   return { icon: ICONS.machine, label: 'Access Event', cls: 'cred-gen' };
 };
 
+const getLogStatusBadge = (action, ok) => {
+  const act = String(action || '').toLowerCase();
+  const isSync = act.startsWith('sync-') || act.includes('copy-') || act.includes('time-sync') || act.includes('store-');
+  if (isSync) {
+    return `<span class="badge ${ok ? 'synced' : 'error'}">${ok ? 'Synced' : 'Failed'}</span>`;
+  }
+  const isSystemOp = act.includes('user') || act.includes('role') || act.includes('booking') || act === 'test';
+  if (isSystemOp) {
+    return `<span class="badge ${ok ? 'synced' : 'error'}">${ok ? 'Success' : 'Failed'}</span>`;
+  }
+  return `<span class="badge ${ok ? 'synced' : 'error'}">${ok ? 'Granted' : 'Denied'}</span>`;
+};
+
 async function dashboard() {
   initSse();
   // Instant shell — the page appears immediately while live data loads on first paint.
@@ -1792,7 +1805,7 @@ async function dashboard() {
         <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
         <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}</small></div>
       </div>
-      <span class="badge ${l.ok ? 'synced' : 'error'}">${l.ok ? 'Granted' : 'Denied'}</span>
+      ${getLogStatusBadge(l.action, l.ok)}
     </div>`;
   }).join('') : '<div class="list-empty">No entry activity stream yet.</div>';
 
