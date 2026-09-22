@@ -223,89 +223,164 @@ function initCardSpotlights() {
   }, { passive: true });
 }
 
-// Smooth Cubic Bezier Spline Path Generator
-function buildCubicSpline(pts) {
+let _inflowViewMode = localStorage.getItem('wn_inflow_view') || 'live';
+
+// Monotonic Cubic Spline Generator — strictly clamped to prevent baseline sagging
+function buildMonotonicSpline(pts, bottomY, topY) {
   if (!pts || !pts.length) return '';
+  if (pts.length === 1) return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+
+  const n = pts.length;
+  const dx = [];
+  const dy = [];
+  const m = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx[i] = Math.max(0.1, pts[i + 1].x - pts[i].x);
+    dy[i] = pts[i + 1].y - pts[i].y;
+    m[i] = dy[i] / dx[i];
+  }
+
+  const tangents = new Array(n).fill(0);
+  tangents[0] = m[0];
+  tangents[n - 1] = m[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    if (pts[i].val === 0) {
+      tangents[i] = 0;
+    } else if (m[i - 1] * m[i] <= 0) {
+      tangents[i] = 0;
+    } else {
+      tangents[i] = (m[i - 1] + m[i]) / 2;
+    }
+  }
+
   let path = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i === 0 ? 0 : i - 1];
+  for (let i = 0; i < n - 1; i++) {
     const p1 = pts[i];
     const p2 = pts[i + 1];
-    const p3 = pts[i + 2 >= pts.length ? pts.length - 1 : i + 2];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    if (p1.val === 0 && p2.val === 0) {
+      path += ` L ${p2.x.toFixed(1)} ${bottomY.toFixed(1)}`;
+      continue;
+    }
+
+    const segDx = dx[i];
+    const cp1x = p1.x + segDx / 3;
+    let cp1y = p1.y + (tangents[i] * segDx) / 3;
+    const cp2x = p2.x - segDx / 3;
+    let cp2y = p2.y - (tangents[i + 1] * segDx) / 3;
+
+    cp1y = Math.min(bottomY, Math.max(topY, cp1y));
+    cp2y = Math.min(bottomY, Math.max(topY, cp2y));
+
     path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }
   return path;
 }
 
-// 24-Hour Inflow Chart & Executive Daily Digest
+// Inflow Activity Chart & Executive Daily Digest
 function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct) {
   const rawDist = analyticsData?.hourlyDistribution || [];
-  const counts = Array.isArray(rawDist) && rawDist.length === 24 ? rawDist : new Array(24).fill(0);
+  const fullCounts = Array.isArray(rawDist) && rawDist.length === 24 ? rawDist : new Array(24).fill(0);
+
+  const now = new Date();
+  const nowHour = now.getHours();
+  const nowMin = now.getMinutes();
+  const nowHourFloat = nowHour + nowMin / 60;
+
+  const isLiveMode = _inflowViewMode === 'live';
+  // In live mode, scale the window to cover up to current hour + 1 (min 12 hours)
+  const endHour = isLiveMode ? Math.min(23, Math.max(12, nowHour + 1)) : 23;
+  const numHours = endHour + 1;
+  const counts = fullCounts.slice(0, numHours);
+
   const maxVal = Math.max(...counts, 8);
 
-  const left = 45;
-  const width = 675;
-  const top = 18;
-  const height = 135;
+  const left = 42;
+  const width = 680;
+  const top = 22;
+  const height = 130;
   const bottomY = top + height;
 
   const pts = counts.map((cnt, i) => ({
-    x: left + (i / 23) * width,
+    x: left + (i / (numHours - 1)) * width,
     y: bottomY - (cnt / maxVal) * height,
     val: cnt,
     hour: i,
   }));
 
-  const spline = buildCubicSpline(pts);
+  const spline = buildMonotonicSpline(pts, bottomY, top);
   const areaPath = `${spline} L ${pts[pts.length - 1].x.toFixed(1)} ${bottomY} L ${pts[0].x.toFixed(1)} ${bottomY} Z`;
 
-  const yTop = top;
-  const yMid = top + height / 2;
-  const yBot = bottomY;
-
-  const xTicks = [0, 4, 8, 12, 16, 20, 23];
-  const xLabelsSvg = xTicks.map((hr) => {
+  // Dynamic X-axis labels
+  const step = numHours <= 14 ? 2 : 4;
+  let xLabelsSvg = '';
+  for (let hr = 0; hr < numHours; hr += step) {
     const pt = pts[hr];
-    const label = `${p2(hr)}:00`;
-    return `<text x="${pt.x.toFixed(1)}" y="182" text-anchor="middle" class="chart-axis-text">${label}</text>`;
-  }).join('');
+    if (pt) {
+      xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${p2(hr)}:00</text>`;
+    }
+  }
+  if (pts[numHours - 1] && (numHours - 1) % step !== 0) {
+    const pt = pts[numHours - 1];
+    xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${p2(endHour)}:00</text>`;
+  }
 
+  // Peak marker
   let maxIdx = 0;
   counts.forEach((v, idx) => { if (v > counts[maxIdx]) maxIdx = idx; });
   const peakPt = pts[maxIdx];
   const peakMarkerSvg = peakPt.val > 0 ? `
-    <circle cx="${peakPt.x.toFixed(1)}" cy="${peakPt.y.toFixed(1)}" r="4.5" fill="#10b981" stroke="#ffffff" stroke-width="2" />
+    <g class="chart-peak-group" style="pointer-events:none;">
+      <circle cx="${peakPt.x.toFixed(1)}" cy="${peakPt.y.toFixed(1)}" r="4.5" fill="#6366f1" stroke="#ffffff" stroke-width="2.5" filter="drop-shadow(0 0 6px rgba(99,102,241,0.6))" />
+      <rect x="${(peakPt.x - 28).toFixed(1)}" y="${(peakPt.y - 20).toFixed(1)}" width="56" height="15" rx="4" fill="rgba(15, 23, 42, 0.9)" stroke="rgba(99,102,241,0.5)" stroke-width="1"/>
+      <text x="${peakPt.x.toFixed(1)}" y="${(peakPt.y - 9).toFixed(1)}" text-anchor="middle" fill="#38bdf8" font-size="9" font-weight="700" font-family="'Plus Jakarta Sans', sans-serif">PEAK · ${peakPt.val}</text>
+    </g>
   ` : '';
 
+  // "Now" marker line
+  let nowMarkerSvg = '';
+  if (nowHourFloat >= 0 && nowHourFloat <= endHour) {
+    const nowX = left + (nowHourFloat / (numHours - 1)) * width;
+    nowMarkerSvg = `
+      <g style="pointer-events:none;">
+        <line x1="${nowX.toFixed(1)}" y1="${top - 6}" x2="${nowX.toFixed(1)}" y2="${bottomY}" stroke="#10b981" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.85"/>
+        <circle cx="${nowX.toFixed(1)}" cy="${top - 6}" r="3.5" fill="#10b981" />
+        <rect x="${(nowX - 28).toFixed(1)}" y="${top - 18}" width="56" height="13" rx="3" fill="#10b981" />
+        <text x="${nowX.toFixed(1)}" y="${top - 8}" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700" font-family="sans-serif">NOW · ${p2(nowHour)}:${p2(nowMin)}</text>
+      </g>
+    `;
+  }
+
   const chartSvg = `
-    <svg viewBox="0 0 760 190" class="inflow-chart-svg" id="inflowChartSvg" preserveAspectRatio="none">
+    <svg viewBox="0 0 760 180" class="inflow-chart-svg" id="inflowChartSvg" preserveAspectRatio="none">
       <defs>
         <linearGradient id="inflowAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stop-color="#6366f1" stop-opacity="0.45"/>
-          <stop offset="65%" stop-color="#8b5cf6" stop-opacity="0.18"/>
-          <stop offset="100%" stop-color="#10b981" stop-opacity="0.0"/>
+          <stop offset="0%" stop-color="#6366f1" stop-opacity="0.32"/>
+          <stop offset="70%" stop-color="#8b5cf6" stop-opacity="0.10"/>
+          <stop offset="100%" stop-color="#6366f1" stop-opacity="0.0"/>
         </linearGradient>
       </defs>
 
-      <line x1="${left}" y1="${yTop}" x2="${left + width}" y2="${yTop}" class="chart-grid-line" />
-      <line x1="${left}" y1="${yMid}" x2="${left + width}" y2="${yMid}" class="chart-grid-line" />
-      <line x1="${left}" y1="${yBot}" x2="${left + width}" y2="${yBot}" class="chart-grid-line" />
+      <!-- Horizontal grid guides -->
+      <line x1="${left}" y1="${top}" x2="${left + width}" y2="${top}" class="chart-grid-line" />
+      <line x1="${left}" y1="${top + height / 2}" x2="${left + width}" y2="${top + height / 2}" class="chart-grid-line" />
+      <line x1="${left}" y1="${bottomY}" x2="${left + width}" y2="${bottomY}" class="chart-grid-line" />
 
-      <text x="${left - 8}" y="${yTop + 4}" text-anchor="end" class="chart-axis-text">${maxVal}</text>
-      <text x="${left - 8}" y="${yMid + 4}" text-anchor="end" class="chart-axis-text">${Math.round(maxVal / 2)}</text>
-      <text x="${left - 8}" y="${yBot + 3}" text-anchor="end" class="chart-axis-text">0</text>
+      <!-- Y axis labels -->
+      <text x="${left - 8}" y="${top + 4}" text-anchor="end" class="chart-axis-text">${maxVal}</text>
+      <text x="${left - 8}" y="${top + height / 2 + 3}" text-anchor="end" class="chart-axis-text">${Math.round(maxVal / 2)}</text>
+      <text x="${left - 8}" y="${bottomY + 3}" text-anchor="end" class="chart-axis-text">0</text>
 
+      <!-- Area and Line Paths -->
       <path d="${areaPath}" fill="url(#inflowAreaGrad)" class="chart-area-path" />
       <path d="${spline}" class="chart-line-path" />
 
       ${peakMarkerSvg}
+      ${nowMarkerSvg}
 
+      <!-- Interactive Crosshair & Cursor Point -->
       <line id="inflowCrosshair" x1="0" y1="${top}" x2="0" y2="${bottomY}" class="chart-crosshair" />
-      <circle id="inflowCursorPoint" cx="0" cy="0" r="5" class="chart-indicator-point" />
+      <circle id="inflowCursorPoint" cx="0" cy="0" r="4.5" class="chart-indicator-point" />
 
       ${xLabelsSvg}
     </svg>
@@ -325,9 +400,12 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
     <div class="dash-telemetry-grid" id="dashTelemetryGrid">
       <section class="inflow-chart-panel">
         <header>
-          <h3><span class="live-dot"></span> Hourly Inflow Activity (24H Curve)</h3>
-          <div class="panel-actions">
-            <span class="latency-pill"><span class="latency-dot"></span> Live Telemetry</span>
+          <h3><span class="live-dot"></span> Hourly Inflow Activity</h3>
+          <div class="panel-actions" style="display:flex;align-items:center;gap:8px;">
+            <div class="chart-seg-control">
+              <button class="chart-seg-btn ${isLiveMode ? 'active' : ''}" id="inflowBtnLive" type="button">Today (Live)</button>
+              <button class="chart-seg-btn ${!isLiveMode ? 'active' : ''}" id="inflowBtn24h" type="button">Full 24H</button>
+            </div>
           </div>
         </header>
         <div class="inflow-chart-body">
@@ -343,23 +421,30 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
 
       <section class="daily-digest-panel">
         <header>
-          <h3>${ICONS.zap} Executive Daily Digest</h3>
+          <h3>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Today's Operations Briefing</span>
+          </h3>
           <div class="panel-actions">
-            <span class="badge online" style="font-size:10px;padding:2px 7px;">Smart Insights</span>
+            <span class="badge online" style="font-size:10px;padding:2px 7px;">Real-Time</span>
           </div>
         </header>
         <div class="daily-digest-body">
           <div class="digest-item">
-            <div class="digest-item-icon blue">${ICONS.door || ICONS.machine}</div>
+            <div class="digest-item-icon blue">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17M14 12v.01"/></svg>
+            </div>
             <div class="digest-item-info">
-              <div class="digest-item-title">Busiest Gateway</div>
+              <div class="digest-item-title">Primary Gateway</div>
               <div class="digest-item-val">${esc(topDoorName)}</div>
               <div class="digest-item-sub">${topDoorShare}</div>
             </div>
           </div>
 
           <div class="digest-item">
-            <div class="digest-item-icon amber">${ICONS.clock}</div>
+            <div class="digest-item-icon amber">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+            </div>
             <div class="digest-item-info">
               <div class="digest-item-title">Peak Arrival Window</div>
               <div class="digest-item-val">${esc(peakWindow)}</div>
@@ -368,10 +453,12 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
           </div>
 
           <div class="digest-item">
-            <div class="digest-item-icon green">${ICONS.user}</div>
+            <div class="digest-item-icon green">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.5 3.6-5.5 7-5.5s6.2 2 7 5.5"/></svg>
+            </div>
             <div class="digest-item-info">
-              <div class="digest-item-title">Facility Occupancy</div>
-              <div class="digest-item-val">${occupancyPct}% utilized (${liveHeadcount}/${totalCapacity})</div>
+              <div class="digest-item-title">Space Utilization</div>
+              <div class="digest-item-val">${occupancyPct}% Capacity <small style="font-weight:500;color:var(--text-muted);">(${liveHeadcount}/${totalCapacity})</small></div>
               <div class="digest-progress-track">
                 <div class="digest-progress-fill" style="width:${Math.min(100, occupancyPct)}%"></div>
               </div>
@@ -379,7 +466,9 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
           </div>
 
           <div class="digest-item">
-            <div class="digest-item-icon ${isFleetAllGood ? 'green' : 'amber'}">${ICONS.machine}</div>
+            <div class="digest-item-icon ${isFleetAllGood ? 'green' : 'amber'}">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><circle cx="12" cy="9" r="2.6"/><path d="M8.5 17h7"/></svg>
+            </div>
             <div class="digest-item-info">
               <div class="digest-item-title">Hardware Connectivity</div>
               <div class="digest-item-val">${fleetHealthText}</div>
@@ -392,7 +481,31 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
   `;
 }
 
-function wireInflowChartInteractivity(analyticsData) {
+function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct) {
+  // Wire view toggle buttons
+  const btnLive = $('#inflowBtnLive');
+  const btn24h = $('#inflowBtn24h');
+  if (btnLive && btn24h) {
+    btnLive.onclick = () => {
+      _inflowViewMode = 'live';
+      localStorage.setItem('wn_inflow_view', 'live');
+      const slot = $('#dashTelemetrySlot');
+      if (slot) {
+        slot.innerHTML = renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
+        wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
+      }
+    };
+    btn24h.onclick = () => {
+      _inflowViewMode = '24h';
+      localStorage.setItem('wn_inflow_view', '24h');
+      const slot = $('#dashTelemetrySlot');
+      if (slot) {
+        slot.innerHTML = renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
+        wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
+      }
+    };
+  }
+
   const wrapper = $('#inflowChartWrapper');
   const svg = $('#inflowChartSvg');
   const crosshair = $('#inflowCrosshair');
@@ -404,16 +517,23 @@ function wireInflowChartInteractivity(analyticsData) {
   if (!wrapper || !svg || !crosshair || !cursorPoint || !tooltip) return;
 
   const rawDist = analyticsData?.hourlyDistribution || [];
-  const counts = Array.isArray(rawDist) && rawDist.length === 24 ? rawDist : new Array(24).fill(0);
+  const fullCounts = Array.isArray(rawDist) && rawDist.length === 24 ? rawDist : new Array(24).fill(0);
+  const now = new Date();
+  const nowHour = now.getHours();
+  const isLiveMode = _inflowViewMode === 'live';
+  const endHour = isLiveMode ? Math.min(23, Math.max(12, nowHour + 1)) : 23;
+  const numHours = endHour + 1;
+  const counts = fullCounts.slice(0, numHours);
+
   const maxVal = Math.max(...counts, 8);
-  const left = 45;
-  const width = 675;
-  const top = 18;
-  const height = 135;
+  const left = 42;
+  const width = 680;
+  const top = 22;
+  const height = 130;
   const bottomY = top + height;
 
   const pts = counts.map((cnt, i) => ({
-    x: left + (i / 23) * width,
+    x: left + (i / (numHours - 1)) * width,
     y: bottomY - (cnt / maxVal) * height,
     val: cnt,
     hour: i,
@@ -443,7 +563,7 @@ function wireInflowChartInteractivity(analyticsData) {
     cursorPoint.style.opacity = '1';
 
     const pxX = (nearest.x / 760) * rect.width;
-    const pxY = (nearest.y / 190) * rect.height;
+    const pxY = (nearest.y / 180) * rect.height;
 
     tooltip.style.left = `${pxX}px`;
     tooltip.style.top = `${pxY}px`;
@@ -1384,7 +1504,7 @@ async function dashboard() {
     const telemetrySlot = $('#dashTelemetrySlot');
     if (telemetrySlot) {
       telemetrySlot.innerHTML = renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
-      wireInflowChartInteractivity(analyticsData);
+      wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
     }
 
     $('#dashMachineList').innerHTML = machineRows;
@@ -1481,7 +1601,7 @@ async function dashboard() {
   animateCounter($('#presenceUniqueVal'), uniqueToday);
   animateCounter($('#occupancyHeadcountVal'), liveHeadcount, 700, ' Members Live');
 
-  wireInflowChartInteractivity(analyticsData);
+  wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachines, liveHeadcount, totalCapacity, occupancyPct);
   wireDashActions(devs);
 }
 
