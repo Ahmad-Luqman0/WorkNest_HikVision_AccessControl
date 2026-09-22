@@ -4930,6 +4930,137 @@ input.locked:focus { box-shadow: none !important; border-color: var(--border-str
   gap: 5px;
 }
 
+/* Inflow Chart Point Styles */
+.chart-point-dot {
+  transition: r 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
+}
+.chart-point-dot:hover {
+  r: 6px;
+  fill: #38bdf8 !important;
+  stroke: #ffffff !important;
+  stroke-width: 2.5px !important;
+}
+.chart-peak-group {
+  transition: transform 0.15s ease;
+}
+.chart-peak-group:hover {
+  filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.85));
+}
+.chart-peak-group:hover rect {
+  fill: rgba(99, 102, 241, 0.95);
+  stroke: #818cf8;
+}
+.chart-peak-group:hover text {
+  fill: #ffffff;
+}
+
+/* Hourly Details Modal */
+.modal:has(.hourly-details-modal) {
+  width: min(880px, 96vw);
+  max-width: 880px;
+  padding: 24px 28px;
+}
+
+.hourly-details-modal {
+  display: flex;
+  flex-direction: column;
+}
+
+.hr-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 680px) {
+  .hr-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.hr-kpi-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+[data-theme="light"] .hr-kpi-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.hr-kpi-lbl {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.hr-kpi-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+[data-theme="light"] .hr-kpi-val {
+  color: #0f172a;
+}
+
+.hr-kpi-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.hr-pill-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.hr-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ffffff;
+}
+
+.hr-pill-btn.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);
+}
+
+[data-theme="light"] .hr-pill-btn {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+[data-theme="light"] .hr-pill-btn:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+[data-theme="light"] .hr-pill-btn.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
 [data-theme="light"] .inflow-chart-tooltip .tt-val {
   color: #0284c7;
 }

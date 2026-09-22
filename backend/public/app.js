@@ -223,6 +223,33 @@ function initCardSpotlights() {
   }, { passive: true });
 }
 
+// Global Event / Telemetry Definitions
+const EVENT_LABELS = {
+  1: 'Entry authorized',
+  2: 'Card + password',
+  21: 'Door opened',
+  22: 'Door closed',
+  23: 'Door open timeout',
+  27: 'Remote unlock',
+  38: 'Fingerprint OK',
+  39: 'Fingerprint denied',
+  75: 'Face OK',
+  76: 'Face not recognized',
+  112: 'Entry denied (expired)',
+};
+const eventLabel = (e) => EVENT_LABELS[e.minor] || `Event ${e.minor}`;
+const EVENT_DENIED = new Set([23, 39, 76, 112]);
+
+// How did the person authenticate? Derived from the event's minor code + data.
+function entryMethod(e) {
+  if (e.minor === 38 || e.minor === 39) return 'fingerprint';
+  if (e.minor === 75 || e.minor === 76) return 'face';
+  if (e.cardNo) return 'card';
+  if (e.minor === 21 || e.minor === 22 || e.minor === 23) return 'door';
+  if (e.minor === 27) return 'remote';
+  return 'other';
+}
+
 let _inflowViewMode = localStorage.getItem('wn_inflow_view') || 'live';
 
 // Monotonic Cubic Spline Generator — strictly clamped to prevent baseline sagging
@@ -330,12 +357,19 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
   counts.forEach((v, idx) => { if (v > counts[maxIdx]) maxIdx = idx; });
   const peakPt = pts[maxIdx];
   const peakMarkerSvg = peakPt.val > 0 ? `
-    <g class="chart-peak-group" style="pointer-events:none;">
-      <circle cx="${peakPt.x.toFixed(1)}" cy="${peakPt.y.toFixed(1)}" r="4.5" fill="#6366f1" stroke="#ffffff" stroke-width="2.5" filter="drop-shadow(0 0 6px rgba(99,102,241,0.6))" />
+    <g class="chart-peak-group" style="cursor:pointer;" data-hour="${peakPt.hour}" title="Click to view ${peakPt.val} scans during peak">
+      <circle cx="${peakPt.x.toFixed(1)}" cy="${peakPt.y.toFixed(1)}" r="5" fill="#6366f1" stroke="#ffffff" stroke-width="2.5" filter="drop-shadow(0 0 8px rgba(99,102,241,0.75))" />
       <rect x="${(peakPt.x - 28).toFixed(1)}" y="${(peakPt.y - 20).toFixed(1)}" width="56" height="15" rx="4" fill="rgba(15, 23, 42, 0.9)" stroke="rgba(99,102,241,0.5)" stroke-width="1"/>
       <text x="${peakPt.x.toFixed(1)}" y="${(peakPt.y - 9).toFixed(1)}" text-anchor="middle" fill="#38bdf8" font-size="9" font-weight="700" font-family="'Plus Jakarta Sans', sans-serif">PEAK · ${peakPt.val}</text>
     </g>
   ` : '';
+
+  // Interactive data point dots along the line
+  const pointsSvg = pts.map((p) => {
+    const isPeak = p.hour === peakPt.hour && p.val > 0;
+    const r = isPeak ? 4.5 : (p.val > 0 ? 3.5 : 2);
+    return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" class="chart-point-dot ${isPeak ? 'peak-dot' : ''}" data-hour="${p.hour}" fill="${isPeak ? '#6366f1' : '#ffffff'}" stroke="#6366f1" stroke-width="${isPeak ? 2.5 : 1.8}" style="cursor:pointer;" />`;
+  }).join('');
 
   // "Now" marker line
   let nowMarkerSvg = '';
@@ -374,6 +408,7 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
       <!-- Area and Line Paths -->
       <path d="${areaPath}" fill="url(#inflowAreaGrad)" class="chart-area-path" />
       <path d="${spline}" class="chart-line-path" />
+      ${pointsSvg}
 
       ${peakMarkerSvg}
       ${nowMarkerSvg}
@@ -409,11 +444,14 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
           </div>
         </header>
         <div class="inflow-chart-body">
-          <div class="inflow-chart-wrapper" id="inflowChartWrapper">
+          <div class="inflow-chart-wrapper" id="inflowChartWrapper" style="cursor:pointer;" title="Click anywhere or on a peak to view scan details">
             ${chartSvg}
             <div class="inflow-chart-tooltip" id="inflowChartTooltip">
               <div class="tt-time" id="inflowTtTime">10:00 - 11:00 AM</div>
               <div class="tt-val" id="inflowTtVal">12 scans</div>
+              <div class="tt-hint" style="font-size:9.5px;color:#a5b4fc;margin-top:3px;font-weight:600;display:flex;align-items:center;gap:3px;">
+                <span>⚡ Click to inspect scans</span>
+              </div>
             </div>
           </div>
         </div>
@@ -539,6 +577,12 @@ function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachin
     hour: i,
   }));
 
+  let maxIdx = 0;
+  counts.forEach((v, idx) => { if (v > counts[maxIdx]) maxIdx = idx; });
+  const peakPt = pts[maxIdx];
+
+  let currentNearest = null;
+
   wrapper.onmousemove = (e) => {
     const rect = svg.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -553,6 +597,8 @@ function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachin
         nearest = pt;
       }
     }
+
+    currentNearest = nearest;
 
     crosshair.setAttribute('x1', nearest.x);
     crosshair.setAttribute('x2', nearest.x);
@@ -578,11 +624,273 @@ function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachin
     }
   };
 
+  wrapper.onclick = (e) => {
+    if (e.target.closest('button')) return;
+    const dot = e.target.closest('[data-hour]');
+    const hr = dot ? Number(dot.dataset.hour) : (currentNearest ? currentNearest.hour : null);
+    if (hr === null || hr === undefined || Number.isNaN(hr)) return;
+    const isPeak = hr === peakPt.hour && peakPt.val > 0;
+    const val = counts[hr] || 0;
+    openHourlyInflowModal(hr, val, isPeak, analyticsData);
+  };
+
   wrapper.onmouseleave = () => {
     crosshair.style.opacity = '0';
     cursorPoint.style.opacity = '0';
     tooltip.style.opacity = '0';
   };
+}
+
+// Modal displaying deep details of an hourly scan window (e.g. peak scans, who scanned, machine breakdown)
+async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
+  const hrLabel = `${p2(hour)}:00 – ${p2(hour + 1)}:00`;
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+  const displayDate = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+
+  openModal(`
+    <div class="hourly-details-modal">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <h2 style="margin:0;font-size:18px;font-weight:700;letter-spacing:-0.02em;">Scan Activity: ${esc(hrLabel)}</h2>
+            ${isPeak ? `<span class="badge" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);font-size:11px;font-weight:700;padding:2px 8px;">★ Peak Traffic Window</span>` : ''}
+          </div>
+          <div class="hint" style="font-size:12px;margin:0;">${esc(displayDate)} · Complete terminal authentication log for this 1-hour window</div>
+        </div>
+        <button class="btn sm ghost" id="hrModalCloseBtn" style="padding:4px 8px;font-size:15px;line-height:1;" title="Close">✕</button>
+      </div>
+
+      <div id="hrModalBody">
+        <div style="padding:40px 16px;text-align:center;">
+          <div class="spin" style="font-size:26px;margin-bottom:10px;color:#6366f1;">↻</div>
+          <div class="muted" style="font-size:13px;">Retrieving access control logs for ${esc(hrLabel)}…</div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  $('#hrModalCloseBtn')?.addEventListener('click', closeModal);
+
+  let data;
+  try {
+    data = await api.get(`/analytics/hourly-details?hour=${hour}&date=${todayISO}`);
+  } catch (err) {
+    const b = $('#hrModalBody');
+    if (b) {
+      b.innerHTML = `<div class="notice-banner" style="color:#ef4444;border-color:rgba(239,68,68,0.3);margin-top:10px;">Failed to load hourly scan details: ${esc(err?.message || err)}</div>`;
+    }
+    return;
+  }
+
+  const container = $('#hrModalBody');
+  if (!container) return;
+
+  const rawEvents = (data && data.events) || [];
+  const totalScans = data?.totalScans ?? rawEvents.length;
+  const uniquePersons = data?.uniquePersons ?? new Set(rawEvents.map((e) => e.employeeNoString || e.name).filter(Boolean)).size;
+
+  const machineCounts = data?.machineCounts || {};
+  let topMachine = '—';
+  let topMachineScans = 0;
+  for (const [mName, mCnt] of Object.entries(machineCounts)) {
+    if (mCnt > topMachineScans) {
+      topMachineScans = mCnt;
+      topMachine = mName;
+    }
+  }
+
+  const methodCounts = data?.methodCounts || { face: 0, fp: 0, card: 0, other: 0, denied: 0 };
+
+  if (rawEvents.length === 0) {
+    container.innerHTML = `
+      <div style="padding:40px 16px;text-align:center;color:var(--text-muted);">
+        <div style="font-size:32px;margin-bottom:10px;">🕒</div>
+        <b style="color:var(--text-main);font-size:15px;">No scans recorded in this window</b>
+        <p style="font-size:12.5px;margin-top:6px;max-width:400px;margin-left:auto;margin-right:auto;">
+          No face recognition, fingerprint, or RFID card access attempts were registered between ${esc(hrLabel)}.
+        </p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="hr-kpi-grid">
+      <div class="hr-kpi-card">
+        <span class="hr-kpi-lbl">Total Scans</span>
+        <span class="hr-kpi-val">${totalScans}</span>
+        <span class="hr-kpi-sub">in 1-hour window</span>
+      </div>
+      <div class="hr-kpi-card">
+        <span class="hr-kpi-lbl">Unique Members</span>
+        <span class="hr-kpi-val">${uniquePersons}</span>
+        <span class="hr-kpi-sub">distinct individuals</span>
+      </div>
+      <div class="hr-kpi-card">
+        <span class="hr-kpi-lbl">Top Terminal</span>
+        <span class="hr-kpi-val" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(topMachine)}">${esc(topMachine)}</span>
+        <span class="hr-kpi-sub">${topMachineScans} scans (${totalScans ? Math.round((topMachineScans / totalScans) * 100) : 0}%)</span>
+      </div>
+      <div class="hr-kpi-card">
+        <span class="hr-kpi-lbl">Methods Split</span>
+        <span class="hr-kpi-val" style="font-size:13px;font-weight:600;display:flex;gap:6px;flex-wrap:wrap;">
+          <span>👤 ${methodCounts.face}</span>
+          <span>👆 ${methodCounts.fp}</span>
+          <span>💳 ${methodCounts.card}</span>
+        </span>
+        <span class="hr-kpi-sub">${methodCounts.denied ? `${methodCounts.denied} denied` : '100% authorized'}</span>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:12px 0 10px;">
+      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:260px;">
+        <input type="text" id="hrFilterSearch" placeholder="Search person, ID, terminal, card…" style="padding:6px 12px;font-size:12.5px;border-radius:20px;flex:1;max-width:320px;">
+        <div style="display:flex;gap:5px;flex-wrap:wrap;" id="hrFilterPills">
+          <button class="hr-pill-btn active" data-filter="all">All (${rawEvents.length})</button>
+          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">👤 Face (${methodCounts.face})</button>` : ''}
+          ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">👆 FP (${methodCounts.fp})</button>` : ''}
+          ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">💳 Card (${methodCounts.card})</button>` : ''}
+          ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">✕ Denied (${methodCounts.denied})</button>` : ''}
+        </div>
+      </div>
+      <button class="btn sm" id="hrExportCsvBtn" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
+        ⬇ Export CSV
+      </button>
+    </div>
+
+    <div class="table-wrap" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
+      <table style="width:100%;margin:0;font-size:12.5px;">
+        <thead>
+          <tr style="position:sticky;top:0;background:var(--bg-panel);z-index:2;box-shadow:0 1px 0 var(--border);">
+            <th style="padding:9px 12px;width:90px;">Time</th>
+            <th style="padding:9px 12px;">Person</th>
+            <th style="padding:9px 12px;width:100px;">Employee #</th>
+            <th style="padding:9px 12px;">Terminal</th>
+            <th style="padding:9px 12px;width:120px;">Method</th>
+            <th style="padding:9px 12px;width:110px;text-align:right;">Status</th>
+          </tr>
+        </thead>
+        <tbody id="hrScanTbody"></tbody>
+      </table>
+    </div>
+  `;
+
+  let activeFilter = 'all';
+  let activeSearch = '';
+
+  function renderTableRows() {
+    const tbody = $('#hrScanTbody');
+    if (!tbody) return;
+
+    const filtered = rawEvents.filter((ev) => {
+      const isDenied = EVENT_DENIED.has(ev.minor);
+      if (activeFilter === 'denied' && !isDenied) return false;
+      if (activeFilter === 'face' && ev.minor !== 75 && ev.minor !== 76) return false;
+      if (activeFilter === 'fp' && ev.minor !== 38 && ev.minor !== 39) return false;
+      if (activeFilter === 'card' && !ev.cardNo) return false;
+
+      if (activeSearch) {
+        const q = activeSearch.toLowerCase();
+        const nameMatch = String(ev.name || '').toLowerCase().includes(q);
+        const empMatch = String(ev.employeeNoString || '').toLowerCase().includes(q);
+        const devMatch = String(ev.device || '').toLowerCase().includes(q);
+        const cardMatch = String(ev.cardNo || '').toLowerCase().includes(q);
+        if (!nameMatch && !empMatch && !devMatch && !cardMatch) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">No scan events match the current filter</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map((ev) => {
+      const isDenied = EVENT_DENIED.has(ev.minor);
+      const timeStr = ev.time ? String(ev.time).slice(11, 19) : '—';
+      const name = ev.name || (ev.employeeNoString ? `Employee #${ev.employeeNoString}` : (ev.cardNo ? `Cardholder (${ev.cardNo})` : 'Guest / Unknown'));
+      const empNo = ev.employeeNoString ? `#${ev.employeeNoString}` : '—';
+      const devName = ev.device || 'Access Terminal';
+
+      let methodBadge = '';
+      if (ev.minor === 75 || ev.minor === 76) {
+        methodBadge = `<span class="badge" style="background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);font-size:11px;gap:4px;">👤 Face</span>`;
+      } else if (ev.minor === 38 || ev.minor === 39) {
+        methodBadge = `<span class="badge" style="background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);font-size:11px;gap:4px;">👆 Fingerprint</span>`;
+      } else if (ev.cardNo) {
+        methodBadge = `<span class="badge" style="background:rgba(234,179,8,0.12);color:#facc15;border:1px solid rgba(234,179,8,0.3);font-size:11px;gap:4px;">💳 Card</span>`;
+      } else {
+        methodBadge = `<span class="badge muted" style="font-size:11px;">🚪 Door Relay</span>`;
+      }
+
+      const statusBadge = isDenied
+        ? `<span class="badge danger" style="font-size:11px;padding:2px 7px;">✕ Denied</span>`
+        : `<span class="badge ok" style="font-size:11px;padding:2px 7px;">✓ Authorized</span>`;
+
+      return `
+        <tr>
+          <td style="font-family:monospace;font-size:12px;color:var(--text-muted);">${esc(timeStr)}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${renderAvatar(ev.name || 'Member', 'sm')}
+              <div>
+                <b style="color:var(--text-main);display:block;line-height:1.2;">${esc(name)}</b>
+                ${ev.cardNo ? `<span style="font-size:10.5px;color:var(--text-faint);">Card: ${esc(ev.cardNo)}</span>` : ''}
+              </div>
+            </div>
+          </td>
+          <td><span style="font-size:11.5px;color:var(--text-muted);">${esc(empNo)}</span></td>
+          <td><span style="font-size:12px;color:var(--text-main);">${esc(devName)}</span></td>
+          <td>${methodBadge}</td>
+          <td style="text-align:right;">${statusBadge}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  renderTableRows();
+
+  $('#hrFilterSearch')?.addEventListener('input', (e) => {
+    activeSearch = e.target.value.trim();
+    renderTableRows();
+  });
+
+  $('#hrFilterPills')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.hr-pill-btn');
+    if (!btn) return;
+    $('#hrFilterPills').querySelectorAll('.hr-pill-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter || 'all';
+    renderTableRows();
+  });
+
+  $('#hrExportCsvBtn')?.addEventListener('click', () => {
+    const headers = ['Time', 'Name', 'EmployeeNo', 'Terminal', 'Method', 'CardNo', 'Status', 'SerialNo'];
+    const rows = [headers.join(',')];
+    for (const ev of rawEvents) {
+      const isDenied = EVENT_DENIED.has(ev.minor);
+      const mLabel = (ev.minor === 75 || ev.minor === 76) ? 'Face' : ((ev.minor === 38 || ev.minor === 39) ? 'Fingerprint' : (ev.cardNo ? 'Card' : 'Door'));
+      rows.push([
+        `"${String(ev.time || '').replace(/"/g, '""')}"`,
+        `"${String(ev.name || '').replace(/"/g, '""')}"`,
+        `"${String(ev.employeeNoString || '').replace(/"/g, '""')}"`,
+        `"${String(ev.device || '').replace(/"/g, '""')}"`,
+        `"${mLabel}"`,
+        `"${String(ev.cardNo || '').replace(/"/g, '""')}"`,
+        `"${isDenied ? 'Denied' : 'Authorized'}"`,
+        `"${String(ev.serialNo || '').replace(/"/g, '""')}"`
+      ].join(','));
+    }
+    const blob = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hourly_scans_${todayISO}_${p2(hour)}00.csv`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 100);
+  });
 }
 
 // ---- Global Server-Sent Events (SSE) Live Stream ----
@@ -4312,37 +4620,10 @@ function addCardModal() {
 }
 
 // ---- Activity: machine entry log + dashboard action log ----
-const EVENT_LABELS = {
-  1: 'Entry authorized',
-  2: 'Card + password',
-  21: 'Door opened',
-  22: 'Door closed',
-  23: 'Door open timeout',
-  27: 'Remote unlock',
-  38: 'Fingerprint OK',
-  39: 'Fingerprint denied',
-  75: 'Face OK',
-  76: 'Face not recognized',
-  112: 'Entry denied (expired)',
-};
-const eventLabel = (e) => EVENT_LABELS[e.minor] || `Event ${e.minor}`;
-const EVENT_DENIED = new Set([23, 39, 76, 112]);
-
+// (EVENT_LABELS, eventLabel, EVENT_DENIED, and entryMethod are declared globally above)
 let _logMode = 'entries';
 let _logEvents = null; // cached last /events response (survives refreshes)
 let _logBusy = false;
-
-// How did the person authenticate? Derived from the event's minor code + data.
-function entryMethod(e) {
-  if (e.minor === 38 || e.minor === 39) return 'fingerprint';
-  if (e.minor === 75 || e.minor === 76) return 'face';
-  if (e.cardNo) return 'card';
-  // Door-state events come from the machine's own door sensor / relay —
-  // no person or credential is involved (opened, closed, open timeout).
-  if (e.minor === 21 || e.minor === 22 || e.minor === 23) return 'door';
-  if (e.minor === 27) return 'remote';
-  return 'other';
-}
 
 async function logs() {
   // Live view: entries refresh silently so the table never blanks out.

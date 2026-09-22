@@ -1022,6 +1022,112 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
+// Detail scans and breakdown for a specific hour of a specific day
+app.get('/api/analytics/hourly-details', async (req, res) => {
+  try {
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const nowD = new Date();
+    const today = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}-${p2(nowD.getDate())}`;
+    const date = DATE_RE.test(String(req.query.date || '')) ? req.query.date : today;
+    const hour = Math.max(0, Math.min(23, Number(req.query.hour) || 0));
+
+    // Best-effort background archive refresh for today
+    if (date === today) {
+      try {
+        const lastA = await sp('WN_HIK_Settings_Get', { key: 'events_archived_at' });
+        if (!(Number(lastA[0]?.value) > Date.now() - 60000)) {
+          await sp('WN_HIK_Settings_Set', { key: 'events_archived_at', value: String(Date.now()) });
+          archiveEvents().catch(() => {});
+        }
+      } catch { }
+    }
+
+    const startStr = `${date}T${p2(hour)}:00:00`;
+    const endStr = `${date}T${p2(hour)}:59:59`;
+
+    const events = await getRows(
+      `SELECT TOP 1000
+         e.device_id,
+         e.device_name AS device,
+         e.employee_no AS employeeNoString,
+         COALESCE(NULLIF(e.name, ''), emp.name, '') AS name,
+         e.card_no AS cardNo,
+         e.minor,
+         e.serial_no AS serialNo,
+         e.event_time AS time
+       FROM dbo.WN_HIK_Events e WITH (NOLOCK)
+       LEFT JOIN dbo.WN_HIK_Employees emp WITH (NOLOCK) ON emp.employee_no = e.employee_no
+       WHERE e.event_time BETWEEN ? AND ?
+       ORDER BY e.event_time DESC`,
+      [startStr, endStr]
+    ).catch(() => []);
+
+    // Also get live events from active devices if it's the current hour of today and DB has few rows
+    let combinedEvents = events || [];
+    if (date === today && hour === nowD.getHours() && combinedEvents.length < 5) {
+      try {
+        const devs = (await getAllDevices()).filter((d) => d.online);
+        const liveFetches = await Promise.all(
+          devs.slice(0, 8).map(async (dev) => {
+            try {
+              const live = await isapi.readEvents(dev, 30);
+              return (live.events || []).filter((ev) => {
+                if (!ev.time) return false;
+                const evDate = String(ev.time).slice(0, 10);
+                const evHr = Number(String(ev.time).slice(11, 13));
+                return evDate === date && evHr === hour;
+              });
+            } catch { return []; }
+          })
+        );
+        const seenSerials = new Set(combinedEvents.map((e) => `${e.device_id}-${e.serialNo}`));
+        for (const list of liveFetches) {
+          for (const ev of list) {
+            const key = `${ev.device_id}-${ev.serialNo}`;
+            if (!seenSerials.has(key)) {
+              seenSerials.add(key);
+              combinedEvents.push(ev);
+            }
+          }
+        }
+        combinedEvents.sort((a, b) => new Date(b.time) - new Date(a.time));
+      } catch { }
+    }
+
+    // Compute stats
+    const totalScans = combinedEvents.length;
+    const uniquePersons = new Set(
+      combinedEvents.map((e) => e.employeeNoString || e.name).filter(Boolean)
+    ).size;
+    const machineCounts = {};
+    const methodCounts = { face: 0, fp: 0, card: 0, other: 0, denied: 0 };
+    const DENIED_MINORS = new Set([23, 39, 76, 112]);
+
+    for (const e of combinedEvents) {
+      const dName = e.device || 'Unknown Terminal';
+      machineCounts[dName] = (machineCounts[dName] || 0) + 1;
+      if (DENIED_MINORS.has(e.minor)) methodCounts.denied++;
+      if (e.minor === 75 || e.minor === 76) methodCounts.face++;
+      else if (e.minor === 38 || e.minor === 39) methodCounts.fp++;
+      else if (e.cardNo) methodCounts.card++;
+      else methodCounts.other++;
+    }
+
+    res.json({
+      ok: true,
+      date,
+      hour,
+      totalScans,
+      uniquePersons,
+      machineCounts,
+      methodCounts,
+      events: combinedEvents
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // Single user deep analytics breakdown (scan history, doors, peak times, and recent logs)
 app.get('/api/analytics/user/:employeeNo', async (req, res) => {
   try {
