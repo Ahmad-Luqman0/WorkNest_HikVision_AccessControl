@@ -1142,21 +1142,46 @@ function renderAvatar(name, size = 'sm') {
 const COPY_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
 const CHECK_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
-// "5m ago" style stamp with the full timestamp on hover.
+// Activity log timestamp: renders clean clock time (e.g. 10:30) with date context for past days and full timestamp on hover
 function relStamp(ts) {
   if (!ts) return '<small class="hint">—</small>';
-  const str = String(ts).slice(0, 19).replace('T', ' ');
-  const t = new Date(String(ts).replace(' ', 'T')).getTime();
-  if (!Number.isFinite(t)) return `<small class="hint">${esc(str)}</small>`;
-  const s = Math.floor((Date.now() - t) / 1000);
-  let rel;
-  if (s < 45) rel = 'just now';
-  else if (s < 3600) rel = Math.floor(s / 60) + 'm ago';
-  else if (s < 86400) rel = Math.floor(s / 3600) + 'h ago';
-  else if (s < 7 * 86400) rel = Math.floor(s / 86400) + 'd ago';
-  else rel = str.slice(0, 16);
-  return `<small class="hint" title="${esc(str)}">${esc(rel)}</small>`;
+  const rawStr = String(ts).slice(0, 19).replace('T', ' ');
+  let d = null;
+  if (ts instanceof Date) {
+    d = ts;
+  } else if (typeof ts === 'string') {
+    const isoLike = ts.includes(' ') && !ts.includes('T') ? ts.replace(' ', 'T') : ts;
+    d = new Date(isoLike);
+  } else {
+    d = new Date(ts);
+  }
+
+  let timeStr = '';
+  let dateStr = '';
+  let isToday = false;
+
+  if (d && !isNaN(d.getTime())) {
+    timeStr = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    const now = new Date();
+    isToday = (
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear()
+    );
+    dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } else {
+    timeStr = rawStr.slice(11, 16) || rawStr;
+    dateStr = rawStr.slice(5, 10);
+    const todayYMD = new Date().toISOString().slice(0, 10);
+    isToday = rawStr.slice(0, 10) === todayYMD;
+  }
+
+  if (isToday) {
+    return `<span class="tabular-nums" style="font-weight:600;" title="${esc(rawStr)}">${esc(timeStr)}</span>`;
+  }
+  return `<span class="tabular-nums" style="font-weight:600;" title="${esc(rawStr)}">${esc(timeStr)}</span> <small class="hint" style="font-size:11px;opacity:0.8;">${esc(dateStr)}</small>`;
 }
+const formatLogTime = relStamp;
 
 function copyableBadge(text, display = null) {
   if (text === null || text === undefined || text === '') return '<small class="hint">—</small>';
