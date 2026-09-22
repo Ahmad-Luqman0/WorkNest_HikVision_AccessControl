@@ -50,12 +50,55 @@ function showLogin() {
   $('#lg_user').focus();
   $('#loginForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const r = await (await fetch('/api/auth/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: $('#lg_user').value.trim(), password: $('#lg_pass').value }),
-    })).json();
-    if (r.ok) { location.reload(); }
-    else { $('#lg_err').textContent = r.error || 'Sign-in failed'; $('#lg_pass').value = ''; $('#lg_pass').focus(); }
+    const userVal = $('#lg_user').value.trim();
+    const passVal = $('#lg_pass').value;
+    const errEl = $('#lg_err');
+    const submitBtn = $('#loginForm button[type="submit"]');
+
+    if (!userVal) {
+      errEl.textContent = 'Please enter your username.';
+      $('#lg_user').focus();
+      return;
+    }
+    if (!passVal) {
+      errEl.textContent = 'Please enter your password.';
+      $('#lg_pass').focus();
+      return;
+    }
+
+    errEl.textContent = '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Signing in…';
+    }
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: userVal, password: passVal }),
+      });
+      const r = await res.json().catch(() => ({ ok: false, error: 'Service temporarily unreachable.' }));
+      if (r.ok) {
+        location.reload();
+      } else {
+        let msg = r.error || 'Sign-in failed. Please check your credentials.';
+        // Sanitize technical errors, connection strings, IPs, timeouts
+        if (/Failed to connect|ETIMEOUT|ECONNREFUSED|ENOTFOUND|timeout|119\.159\./i.test(msg)) {
+          msg = 'Database service is temporarily unreachable. Please check network connection.';
+        }
+        errEl.textContent = msg;
+        $('#lg_pass').value = '';
+        $('#lg_pass').focus();
+      }
+    } catch {
+      errEl.textContent = 'Unable to reach authentication service. Please check your connection.';
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign in';
+      }
+    }
   });
 }
 

@@ -41,11 +41,19 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 // exists before any request is handled. initDb() caches, so this is a no-op
 // after the first call.
 app.use(async (req, res, next) => {
+  // Allow auth endpoints to proceed so login can validate and respond cleanly
+  if (!req.path.startsWith('/api') || req.path.startsWith('/api/auth')) {
+    return next();
+  }
   try {
     await initDb();
     next();
   } catch (e) {
-    res.status(500).json({ error: 'database unavailable: ' + String(e.message || e) });
+    const isConnErr = /Failed to connect|ETIMEOUT|ECONNREFUSED|ENOTFOUND|timeout|closed|119\.159\./i.test(e.message || '');
+    const clientMsg = isConnErr
+      ? 'Database service is temporarily unreachable. Please check connection.'
+      : 'Service temporarily unavailable.';
+    res.status(503).json({ ok: false, error: clientMsg });
   }
 });
 

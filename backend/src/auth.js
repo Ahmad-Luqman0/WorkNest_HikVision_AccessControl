@@ -51,10 +51,15 @@ let _secret = null;
 async function authSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   if (_secret) return _secret;
-  let s = await getSetting('auth_secret');
+  let s = null;
+  try {
+    s = await getSetting('auth_secret');
+  } catch {
+    // If DB is offline, continue without throwing
+  }
   if (!s) {
     s = crypto.randomBytes(32).toString('hex');
-    await setSetting('auth_secret', s);
+    try { await setSetting('auth_secret', s); } catch {}
   }
   _secret = s;
   return s;
@@ -80,7 +85,11 @@ async function checkCredentials(username, password) {
       return { username, role: 'admin' };
     }
   }
-  await ensureSeedCredentials();
+  try {
+    await ensureSeedCredentials();
+  } catch (err) {
+    console.warn('[auth] DB unavailable during ensureSeedCredentials:', err.message);
+  }
   const user = await getDashUser(username);
   if (user && verifyPassword(password, user.password_hash)) {
     return { username: user.username, role: ROLES.includes(user.role) ? user.role : 'user' };
@@ -143,17 +152,30 @@ export const authRouter = Router();
 
 authRouter.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
+  const userTrimmed = String(username || '').trim();
+  const passStr = String(password || '');
+
+  // 1. Input validation
+  if (!userTrimmed || !passStr) {
+    return res.status(400).json({ ok: false, error: 'Please enter both username and password.' });
+  }
+
   try {
-    const user = await checkCredentials(String(username || ''), String(password || ''));
+    const user = await checkCredentials(userTrimmed, passStr);
     if (!user) {
-      logAudit('guest', 'LOGIN_FAILED', String(username || ''), getClientIp(req), 'Invalid credentials');
+      try { logAudit('guest', 'LOGIN_FAILED', userTrimmed, getClientIp(req), 'Invalid credentials'); } catch {}
       return res.status(401).json({ ok: false, error: 'Wrong username or password' });
     }
     setCookie(res, req, await makeToken(user), SESSION_DAYS * 86400);
-    logAudit(user.username, 'LOGIN_SUCCESS', user.username, getClientIp(req), `Logged in as ${user.role}`);
+    try { logAudit(user.username, 'LOGIN_SUCCESS', user.username, getClientIp(req), `Logged in as ${user.role}`); } catch {}
     res.json({ ok: true, username: user.username, role: user.role });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
+    console.error('[auth] login error:', e.message);
+    const isConnErr = /Failed to connect|ETIMEOUT|ECONNREFUSED|ENOTFOUND|timeout|closed|119\.159\./i.test(e.message || '');
+    const friendlyMsg = isConnErr
+      ? 'Database service is currently unreachable. Please check your network or try again shortly.'
+      : 'Sign-in service encountered an error. Please try again.';
+    res.status(503).json({ ok: false, error: friendlyMsg });
   }
 });
 

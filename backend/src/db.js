@@ -29,11 +29,21 @@ const config = {
 };
 
 let pool = null;
+let _lastPoolError = 0;
+let _lastPoolErrorMsg = '';
 
 export async function initDb() {
   if (pool) return pool;
   pool = await new sql.ConnectionPool(config).connect();
-  pool.on('error', (e) => console.error('[db] pool error:', e.message));
+  pool.on('error', (e) => {
+    const now = Date.now();
+    const msg = e.message || String(e);
+    if (msg !== _lastPoolErrorMsg || now - _lastPoolError > 30000) {
+      _lastPoolError = now;
+      _lastPoolErrorMsg = msg;
+      console.error('[db] pool error:', msg);
+    }
+  });
   await ensurePendingOps();
   await ensureFpVault();
   await ensureEventsTable();
