@@ -3411,6 +3411,12 @@ tr.selected-row {
   color: #0f172a;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
+.view-toggle-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  display: block;
+}
 
 /* ---- User Member Cards Grid View ---- */
 .user-cards-grid {
