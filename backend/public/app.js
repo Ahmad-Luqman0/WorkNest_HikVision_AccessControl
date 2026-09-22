@@ -450,7 +450,7 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
               <div class="tt-time" id="inflowTtTime">10:00 - 11:00 AM</div>
               <div class="tt-val" id="inflowTtVal">12 scans</div>
               <div class="tt-hint" style="font-size:9.5px;color:#a5b4fc;margin-top:3px;font-weight:600;display:flex;align-items:center;gap:3px;">
-                <span>⚡ Click to inspect scans</span>
+                <span>Click to inspect scans</span>
               </div>
             </div>
           </div>
@@ -654,7 +654,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
         <div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
             <h2 style="margin:0;font-size:18px;font-weight:700;letter-spacing:-0.02em;">Scan Activity: ${esc(hrLabel)}</h2>
-            ${isPeak ? `<span class="badge" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);font-size:11px;font-weight:700;padding:2px 8px;">★ Peak Traffic Window</span>` : ''}
+            ${isPeak ? `<span class="badge" style="background:rgba(99,102,241,0.2);color:#818cf8;border:1px solid rgba(99,102,241,0.4);font-size:11px;font-weight:700;padding:2px 8px;">Peak Window</span>` : ''}
           </div>
           <div class="hint" style="font-size:12px;margin:0;">${esc(displayDate)} · Complete terminal authentication log for this 1-hour window</div>
         </div>
@@ -705,9 +705,8 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
   if (rawEvents.length === 0) {
     container.innerHTML = `
       <div style="padding:40px 16px;text-align:center;color:var(--text-muted);">
-        <div style="font-size:32px;margin-bottom:10px;">🕒</div>
-        <b style="color:var(--text-main);font-size:15px;">No scans recorded in this window</b>
-        <p style="font-size:12.5px;margin-top:6px;max-width:400px;margin-left:auto;margin-right:auto;">
+        <b style="color:var(--text-main);font-size:15px;display:block;margin-bottom:6px;">No scans recorded in this window</b>
+        <p style="font-size:12.5px;margin:0;max-width:400px;margin-left:auto;margin-right:auto;">
           No face recognition, fingerprint, or RFID card access attempts were registered between ${esc(hrLabel)}.
         </p>
       </div>
@@ -734,10 +733,10 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
       </div>
       <div class="hr-kpi-card">
         <span class="hr-kpi-lbl">Methods Split</span>
-        <span class="hr-kpi-val" style="font-size:13px;font-weight:600;display:flex;gap:6px;flex-wrap:wrap;">
-          <span>👤 ${methodCounts.face}</span>
-          <span>👆 ${methodCounts.fp}</span>
-          <span>💳 ${methodCounts.card}</span>
+        <span class="hr-kpi-val" style="font-size:12.5px;font-weight:600;display:flex;gap:8px;flex-wrap:wrap;">
+          <span style="color:#38bdf8;">Face: ${methodCounts.face}</span>
+          <span style="color:#c084fc;">FP: ${methodCounts.fp}</span>
+          <span style="color:#facc15;">Card: ${methodCounts.card}</span>
         </span>
         <span class="hr-kpi-sub">${methodCounts.denied ? `${methodCounts.denied} denied` : '100% authorized'}</span>
       </div>
@@ -748,14 +747,14 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
         <input type="text" id="hrFilterSearch" placeholder="Search person, ID, terminal, card…" style="padding:6px 12px;font-size:12.5px;border-radius:20px;flex:1;max-width:320px;">
         <div style="display:flex;gap:5px;flex-wrap:wrap;" id="hrFilterPills">
           <button class="hr-pill-btn active" data-filter="all">All (${rawEvents.length})</button>
-          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">👤 Face (${methodCounts.face})</button>` : ''}
-          ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">👆 FP (${methodCounts.fp})</button>` : ''}
-          ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">💳 Card (${methodCounts.card})</button>` : ''}
-          ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">✕ Denied (${methodCounts.denied})</button>` : ''}
+          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">Face (${methodCounts.face})</button>` : ''}
+          ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">Fingerprint (${methodCounts.fp})</button>` : ''}
+          ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">Card (${methodCounts.card})</button>` : ''}
+          ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">Denied (${methodCounts.denied})</button>` : ''}
         </div>
       </div>
       <button class="btn sm" id="hrExportCsvBtn" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
-        ⬇ Export CSV
+        Export CSV
       </button>
     </div>
 
@@ -815,18 +814,18 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
       let methodBadge = '';
       if (ev.minor === 75 || ev.minor === 76) {
-        methodBadge = `<span class="badge" style="background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);font-size:11px;gap:4px;">👤 Face</span>`;
+        methodBadge = `<span class="badge" style="background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);font-size:11px;font-weight:600;">Face</span>`;
       } else if (ev.minor === 38 || ev.minor === 39) {
-        methodBadge = `<span class="badge" style="background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);font-size:11px;gap:4px;">👆 Fingerprint</span>`;
+        methodBadge = `<span class="badge" style="background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);font-size:11px;font-weight:600;">Fingerprint</span>`;
       } else if (ev.cardNo) {
-        methodBadge = `<span class="badge" style="background:rgba(234,179,8,0.12);color:#facc15;border:1px solid rgba(234,179,8,0.3);font-size:11px;gap:4px;">💳 Card</span>`;
+        methodBadge = `<span class="badge" style="background:rgba(234,179,8,0.12);color:#facc15;border:1px solid rgba(234,179,8,0.3);font-size:11px;font-weight:600;">Card</span>`;
       } else {
-        methodBadge = `<span class="badge muted" style="font-size:11px;">🚪 Door Relay</span>`;
+        methodBadge = `<span class="badge muted" style="font-size:11px;font-weight:600;">Door Relay</span>`;
       }
 
       const statusBadge = isDenied
-        ? `<span class="badge danger" style="font-size:11px;padding:2px 7px;">✕ Denied</span>`
-        : `<span class="badge ok" style="font-size:11px;padding:2px 7px;">✓ Authorized</span>`;
+        ? `<span class="badge danger" style="font-size:11px;padding:2px 7px;">Denied</span>`
+        : `<span class="badge ok" style="font-size:11px;padding:2px 7px;">Authorized</span>`;
 
       return `
         <tr>
