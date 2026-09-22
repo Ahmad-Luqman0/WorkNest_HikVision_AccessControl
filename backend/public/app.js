@@ -1011,11 +1011,15 @@ function onLiveActivityEvent(entry) {
       const cred = getCredBadge(entry.action);
       const who = entry.name || prettyAction(entry.action);
       const avatar = renderActivityAvatar(entry.action, who, 'md');
+      const empNo = entry.employeeNo || entry.employee_no || '';
+      const whoHtml = (entry.name || empNo)
+        ? `<a class="link member-drawer-trigger" data-emp="${esc(empNo)}" data-name="${esc(entry.name || who)}" style="cursor:pointer" title="View member profile"><b>${esc(who)}</b></a>`
+        : `<b>${esc(who)}</b>`;
       const row = el(`
         <div class="ticker-item live-incoming">
           ${avatar}
           <div class="ticker-main">
-            <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+            <div class="ticker-person">${whoHtml} <span class="ticker-cred-label">${cred.label}</span></div>
             <div class="ticker-sub"><small class="hint">${esc(new Date().toLocaleTimeString())}</small></div>
           </div>
           ${getLogStatusBadge(entry.action, entry.ok)}
@@ -1033,7 +1037,11 @@ function onLiveActivityEvent(entry) {
       const isRemote = entry.action === 'door:open';
       const who = entry.name || 'Member';
       const actionLabel = isRemote ? 'unlocked remotely' : 'accessed';
-      liveTicker.innerHTML = `<b>${esc(who)}</b> ${actionLabel} <b>${esc(entry.device || 'Entrance')}</b> <span class="badge ${Boolean(entry.ok) ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${Boolean(entry.ok) ? 'Granted' : 'Denied'}</span> <small class="hint">Just now</small>`;
+      const empNo = entry.employeeNo || entry.employee_no || '';
+      const whoHtml = (entry.name || empNo)
+        ? `<a class="link member-drawer-trigger" data-emp="${esc(empNo)}" data-name="${esc(entry.name || who)}" style="cursor:pointer" title="View member profile"><b>${esc(who)}</b></a>`
+        : `<b>${esc(who)}</b>`;
+      liveTicker.innerHTML = `${whoHtml} ${actionLabel} <b>${esc(entry.device || 'Entrance')}</b> <span class="badge ${Boolean(entry.ok) ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${Boolean(entry.ok) ? 'Granted' : 'Denied'}</span> <small class="hint">Just now</small>`;
       liveTicker.classList.add('ticker-pop');
       setTimeout(() => liveTicker.classList.remove('ticker-pop'), 1200);
     }
@@ -1745,8 +1753,13 @@ async function dashboard() {
   if (latestSwipe) {
     const isRemote = latestSwipe.action === 'door:open';
     const actionLabel = isRemote ? 'unlocked remotely' : 'accessed';
+    const who = latestSwipe.name || 'Member';
+    const empNo = latestSwipe.employeeNo || latestSwipe.employee_no || '';
+    const whoHtml = latestSwipe.name
+      ? `<a class="link member-drawer-trigger" data-emp="${esc(empNo)}" data-name="${esc(who)}" style="cursor:pointer" title="View member profile"><b>${esc(who)}</b></a>`
+      : `<b>${esc(who)}</b>`;
     lastSwipeHtml = `
-      <b>${esc(latestSwipe.name || 'Member')}</b> ${actionLabel} <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
+      ${whoHtml} ${actionLabel} <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
       <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span>
       <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>
     `;
@@ -1881,11 +1894,15 @@ async function dashboard() {
     const who = empInfo && !l.employee_name ? `${prettyAction(l.action)} (${empInfo})` : (l.employee_name || prettyAction(l.action));
     const avatar = renderActivityAvatar(l.action, l.employee_name || who, 'md');
     const note = detailObj?.note ? ` · ${esc(detailObj.note)}` : (detailObj?.error ? ` · ${esc(detailObj.error)}` : '');
+    const empNo = detailObj?.employeeNo || l.employee_no || '';
+    const whoHtml = (l.employee_name || empNo)
+      ? `<a class="link member-drawer-trigger" data-emp="${esc(empNo)}" data-name="${esc(l.employee_name || who)}" style="cursor:pointer" title="View member profile"><b>${esc(who)}</b></a>`
+      : `<b>${esc(who)}</b>`;
     return `
     <div class="ticker-item animate-slide">
       ${avatar}
       <div class="ticker-main">
-        <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
+        <div class="ticker-person">${whoHtml} <span class="ticker-cred-label">${cred.label}</span></div>
         <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}${note}</small></div>
       </div>
       ${getLogStatusBadge(l.action, l.ok)}
@@ -3687,207 +3704,441 @@ async function captureFp(srcDev, employeeNo, devs, replicateIds = [], fingerNo =
   } finally { captureBusy = false; }
 }
 
-// Full profile popup: per-machine access state, validity window, role and
-// every credential (fingerprint/face counts, actual card numbers).
-async function userProfileModal(entry) {
-  const { u } = entry;
-  openModal(`
-    <h2>${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
-    <div class="field" id="up_body" style="padding: 6px 0;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 10px;">
-        <span style="font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px;color:var(--text, #f1f5f9);">
-          <span class="status-dot on" style="width:7px;height:7px;background:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,0.7);"></span>
-          Querying profile & credentials from machines…
-        </span>
-        <span class="hint" style="font-size:11px;">Please wait</span>
+// ==========================================================================
+// Slide-Over Member Profile Drawer
+// ==========================================================================
+function closeMemberDrawer() {
+  const backdrop = $('#drawerBackdrop');
+  if (backdrop) backdrop.hidden = true;
+}
+
+$('#drawerBackdrop')?.addEventListener('click', (e) => {
+  if (e.target.id === 'drawerBackdrop') closeMemberDrawer();
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#drawerBackdrop') && !$('#drawerBackdrop').hidden) {
+    closeMemberDrawer();
+  }
+});
+
+document.body.addEventListener('click', (ev) => {
+  const trigger = ev.target.closest('.member-drawer-trigger, [data-member-drawer]');
+  if (trigger) {
+    ev.preventDefault();
+    const emp = trigger.dataset.emp || trigger.dataset.memberDrawer;
+    const name = trigger.dataset.name || trigger.dataset.memberName;
+    if (emp || name) openMemberDrawer(emp, name);
+  }
+});
+
+async function openMemberDrawer(employeeNo, rawName = '') {
+  const backdrop = $('#drawerBackdrop');
+  const panel = $('#memberDrawer');
+  if (!backdrop || !panel) return;
+
+  const empStr = String(employeeNo || '').trim();
+  const nameStr = String(rawName || '').trim();
+
+  // 1. Initial Skeleton Drawer View
+  panel.innerHTML = `
+    <div class="drawer-header">
+      <button class="drawer-close-btn" id="drawerCloseBtn" title="Close Drawer (Esc)">✕</button>
+      <div class="drawer-profile-top">
+        <div class="drawer-avatar-wrap">
+          ${renderAvatar(nameStr || empStr || 'Member', 'lg')}
+          <span class="drawer-status-indicator active"></span>
+        </div>
+        <div class="drawer-profile-info">
+          <h3 class="drawer-profile-name">${esc(nameStr || 'User #' + empStr)}</h3>
+          <div class="drawer-profile-pills">
+            ${empStr ? copyableBadge(empStr) : ''}
+            <span class="badge" style="font-size:11px;">Loading profile…</span>
+          </div>
+        </div>
       </div>
-      <div class="loading-bar-container" style="height:6px;margin:0 0 16px 0;box-shadow:0 0 10px rgba(99,102,241,0.25);">
+      <div class="loading-bar-container" style="height:4px;margin:12px 0 6px 0;">
         <div class="loading-bar-indeterminate"></div>
       </div>
-      <div style="display:flex;gap:10px;margin-bottom:14px;">
-        <span class="skel-cell" style="flex:1;height:38px;border-radius:8px;"></span>
-        <span class="skel-cell" style="flex:1;height:38px;border-radius:8px;"></span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:8px;">
-        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.85;"></span>
-        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.65;"></span>
-        <span class="skel-cell" style="width:100%;height:32px;border-radius:6px;opacity:0.45;"></span>
+    </div>
+    <div class="drawer-body">
+      <div style="display:flex;flex-direction:column;gap:12px;padding:20px 0;">
+        <span class="skel-cell" style="width:100%;height:60px;border-radius:10px;"></span>
+        <span class="skel-cell" style="width:100%;height:100px;border-radius:10px;"></span>
+        <span class="skel-cell" style="width:100%;height:140px;border-radius:10px;"></span>
       </div>
     </div>
-    <div class="modal-actions"><button class="btn ghost" id="up_close">Close</button></div>`);
-  $('#up_close').addEventListener('click', closeModal);
-  const r = await api.get(`/profile?employeeNo=${encodeURIComponent(u.employeeNo)}&name=${encodeURIComponent(u.name || '')}`);
-  const body = $('#up_body');
-  if (!body) return;
-  if (!r.ok) { body.innerHTML = `<span class="muted">Failed: ${esc(r.error || 'error')}</span>`; return; }
+  `;
+  backdrop.hidden = false;
+  $('#drawerCloseBtn')?.addEventListener('click', closeMemberDrawer);
+
+  // 2. Fetch profile from /api/profile and deep analytics from /api/analytics/user/:employeeNo
+  let profileRes = { ok: false, machines: [] };
+  let analyticsRes = { ok: false };
+  try {
+    const [p, a] = await Promise.all([
+      api.get(`/profile?employeeNo=${encodeURIComponent(empStr)}&name=${encodeURIComponent(nameStr)}`).catch(() => ({ ok: false })),
+      api.get(`/analytics/user/${encodeURIComponent(empStr || '0')}?name=${encodeURIComponent(nameStr)}`).catch(() => ({ ok: false }))
+    ]);
+    profileRes = p || { ok: false };
+    analyticsRes = a || { ok: false };
+  } catch (err) {
+    console.error('Failed to load member drawer data:', err);
+  }
+
+  // 3. Compute Member Data
+  const machines = profileRes.machines || [];
+  const displayName = nameStr || analyticsRes.user?.name || machines.find((m) => m.name)?.name || (empStr ? `User #${empStr}` : 'Member');
+  const userEmpNo = empStr || analyticsRes.user?.employeeNo || '';
+  const cnicKey = `${userEmpNo}||${displayName.toLowerCase()}`;
+  const cnic = _cnicMap[cnicKey] || '';
+  const roomNo = analyticsRes.user?.roomNo || '';
 
   let maxFP = 0;
   let maxFace = 0;
   const cardsSet = new Set();
   let accessCount = 0;
+  let hasAdmin = false;
+  let latestEnd = null;
 
-  for (const m of r.machines) {
+  for (const m of machines) {
     if (m.present && m.enabled) accessCount++;
+    if (m.admin) hasAdmin = true;
     if (m.numOfFP) maxFP = Math.max(maxFP, m.numOfFP);
     if (m.numOfFace) maxFace = Math.max(maxFace, m.numOfFace);
     if (Array.isArray(m.cards)) {
       for (const c of m.cards) cardsSet.add(c);
     }
+    if (m.validEnd) {
+      if (!latestEnd || new Date(m.validEnd) > new Date(latestEnd)) latestEnd = m.validEnd;
+    }
   }
 
-  const credParts = [];
-  if (maxFP) credParts.push(`${maxFP} fingerprint${maxFP === 1 ? '' : 's'}`);
-  if (maxFace) credParts.push(`${maxFace} face`);
-  if (cardsSet.size) credParts.push(`Card${cardsSet.size === 1 ? '' : 's'}: ${[...cardsSet].join(', ')}`);
-  const credsSummary = credParts.length ? credParts.join(' · ') : 'No credentials enrolled';
+  if (analyticsRes.user?.cardNo) cardsSet.add(analyticsRes.user.cardNo);
 
-  const rows = r.machines.map((m) => {
-    let dotClass = 'off';
-    let statusBadge = '<span class="badge">no access</span>';
-    let validStr = '—';
+  const isActive = accessCount > 0;
+  const isBlocked = machines.some((m) => m.present && !m.enabled);
+  const isExpired = latestEnd && new Date(latestEnd) < new Date();
 
-    if (m.present === null) {
-      statusBadge = '<span class="badge offline">unreachable</span>';
-    } else if (m.present) {
-      dotClass = m.enabled ? 'on' : 'off';
-      statusBadge = m.enabled ? '<span class="badge synced">has access</span>' : '<span class="badge blocked">blocked</span>';
-      if (m.validEnd) {
-        validStr = esc(String(m.validEnd).replace('T', ' ').slice(0, 16));
-      }
-    }
+  const statusText = isBlocked ? 'Blocked' : isExpired ? 'Expired' : isActive ? 'Active' : 'Unprovisioned';
+  const statusCls = isBlocked ? 'blocked' : isExpired ? 'expired' : isActive ? 'synced' : 'pending';
+  const dotCls = isBlocked ? 'blocked' : isExpired ? 'expired' : isActive ? 'active' : '';
 
-    const roleBadge = m.admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>';
+  const validStr = latestEnd ? latestEnd.replace('T', ' ').slice(0, 16) : 'Permanent';
 
-    return `
-      <tr>
-        <td>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="status-dot ${dotClass}"></span>
-            <b>${esc(m.device)}</b>
-            <small class="hint">${esc(m.host || '')}</small>
+  // 4. Render Drawer Shell
+  panel.innerHTML = `
+    <div class="drawer-header">
+      <button class="drawer-close-btn" id="drawerCloseBtn" title="Close Drawer (Esc)">✕</button>
+      <div class="drawer-profile-top">
+        <div class="drawer-avatar-wrap">
+          ${renderAvatar(displayName, 'lg')}
+          <span class="drawer-status-indicator ${dotCls}"></span>
+        </div>
+        <div class="drawer-profile-info">
+          <h3 class="drawer-profile-name" title="${esc(displayName)}">${esc(displayName)}</h3>
+          <div class="drawer-profile-pills">
+            ${userEmpNo ? copyableBadge(userEmpNo) : ''}
+            <span class="badge ${statusCls}">${statusText}</span>
+            <span class="badge ${hasAdmin ? 'admin' : ''}">${hasAdmin ? 'Admin' : 'Member'}</span>
           </div>
-        </td>
-        <td class="nowrap"><small class="hint">${validStr}</small></td>
-        <td>${roleBadge}</td>
-        <td>${statusBadge}</td>
-      </tr>`;
-  }).join('');
-
-  body.innerHTML = `
-    <div class="profile-tabs">
-      <button class="profile-tab-btn active" id="ptab_doors">
-        Door Access
-      </button>
-      <button class="profile-tab-btn" id="ptab_audit">
-        Audit & Credential Diffs <span class="profile-tab-count" id="ptab_audit_count">…</span>
-      </button>
-    </div>
-
-    <div id="pview_doors">
-      <div class="profile-summary-bar">
-        <div class="psb-item"><span class="psb-label">Credentials:</span> <span class="psb-val">${esc(credsSummary)}</span></div>
-        <div class="psb-item"><span class="psb-label">Access:</span> <span class="psb-val">${accessCount} of ${r.machines.length} doors</span></div>
+        </div>
       </div>
-      <div class="table-wrapper" style="max-height:340px; overflow-y:auto;">
-        <table class="profile-table">
-          <thead>
-            <tr>
-              <th>Machine / Door</th>
-              <th>Valid Until</th>
-              <th>Role</th>
-              <th>Access Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
+
+      <div class="drawer-meta-grid">
+        <div class="drawer-meta-item">
+          <span class="drawer-meta-label">Assigned Room</span>
+          <span class="drawer-meta-val">${roomNo ? `Room ${esc(roomNo)}` : '<span class="hint">—</span>'}</span>
+        </div>
+        <div class="drawer-meta-item">
+          <span class="drawer-meta-label">Valid Until</span>
+          <span class="drawer-meta-val">${esc(validStr)}</span>
+        </div>
+        <div class="drawer-meta-item">
+          <span class="drawer-meta-label">Access Doors</span>
+          <span class="drawer-meta-val"><b>${accessCount}</b> <small class="hint">of ${machines.length || '—'}</small></span>
+        </div>
+        <div class="drawer-meta-item">
+          <span class="drawer-meta-label">Primary Card</span>
+          <span class="drawer-meta-val">${cardsSet.size ? esc([...cardsSet][0]) : '<span class="hint">—</span>'}</span>
+        </div>
+      </div>
+
+      <div class="drawer-action-strip">
+        <button class="btn sm" id="dact_syncBio">${ICONS.sync || '⚡'} Sync Biometrics</button>
+        <button class="btn sm" id="dact_extend">${ICONS.clock || '+'} Extend 30 Days</button>
       </div>
     </div>
 
-    <div id="pview_audit" style="display:none;">
-      <div id="ptab_audit_content">
-        <div class="empty" style="padding:24px 0;">Loading audit trail and change history…</div>
-      </div>
-    </div>`;
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" data-dtab="timeline">
+        Today's Journey <span class="drawer-tab-badge" id="dtab_timeline_badge">${analyticsRes.recentEvents?.length || 0}</span>
+      </button>
+      <button class="drawer-tab" data-dtab="doors">
+        Doors & Access <span class="drawer-tab-badge">${accessCount}</span>
+      </button>
+      <button class="drawer-tab" data-dtab="creds">
+        Biometrics & Cards
+      </button>
+      <button class="drawer-tab" data-dtab="audit">
+        Audit History <span class="drawer-tab-badge" id="dtab_audit_badge">…</span>
+      </button>
+    </div>
 
+    <div class="drawer-body">
+      <!-- PANE 1: TIMELINE -->
+      <div class="drawer-pane active" id="dpane_timeline">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px;">
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Today's Scans</div>
+            <div style="font-size:18px;font-weight:700;color:var(--text-main);margin-top:2px;">${analyticsRes.totalScans || (analyticsRes.recentEvents?.length || 0)}</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">First Entry</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.firstScan ? esc(String(analyticsRes.firstScan).replace('T', ' ').slice(11, 16)) : '—'}</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Last Seen</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.lastScan ? esc(String(analyticsRes.lastScan).replace('T', ' ').slice(11, 16)) : '—'}</div>
+          </div>
+        </div>
+
+        <div id="drawerTimelineList"></div>
+      </div>
+
+      <!-- PANE 2: DOORS & ACCESS -->
+      <div class="drawer-pane" id="dpane_doors">
+        <div class="drawer-door-search">
+          <input type="text" id="drawerDoorFilter" placeholder="Search door or room number…" style="width:100%;font-size:12.5px;padding:8px 12px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-main);">
+        </div>
+        <div class="drawer-door-list" id="drawerDoorList"></div>
+      </div>
+
+      <!-- PANE 3: BIOMETRICS & CARDS -->
+      <div class="drawer-pane" id="dpane_creds">
+        <div class="drawer-cred-grid">
+          <div class="drawer-cred-card">
+            <div class="drawer-cred-icon">${ICONS.fingerprint || 'FP'}</div>
+            <div class="drawer-cred-title">Fingerprint Biometrics</div>
+            <div class="drawer-cred-status">${maxFP > 0 ? `${maxFP} Template${maxFP > 1 ? 's' : ''} Enrolled` : 'Not Enrolled'}</div>
+            <span class="badge ${maxFP > 0 ? 'synced' : 'pending'}" style="font-size:10px;align-self:flex-start;">
+              ${maxFP > 0 ? 'Active on Terminals' : 'Pending Enrollment'}
+            </span>
+          </div>
+
+          <div class="drawer-cred-card">
+            <div class="drawer-cred-icon">${ICONS.face || 'Face'}</div>
+            <div class="drawer-cred-title">Facial Recognition</div>
+            <div class="drawer-cred-status">${maxFace > 0 ? `${maxFace} Profile Enrolled` : 'Not Registered'}</div>
+            <span class="badge ${maxFace > 0 ? 'synced' : 'pending'}" style="font-size:10px;align-self:flex-start;">
+              ${maxFace > 0 ? 'Active Face ID' : 'Optional'}
+            </span>
+          </div>
+
+          <div class="drawer-cred-card">
+            <div class="drawer-cred-icon">${ICONS.card || 'Card'}</div>
+            <div class="drawer-cred-title">RFID Smart Cards</div>
+            <div class="drawer-cred-status">${cardsSet.size ? `${cardsSet.size} Card${cardsSet.size > 1 ? 's' : ''}` : 'No Cards'}</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">${cardsSet.size ? [...cardsSet].join(', ') : 'None assigned'}</div>
+          </div>
+        </div>
+
+        <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:var(--radius-md);padding:16px;">
+          <h4 style="margin:0 0 6px;font-size:13.5px;color:#a5b4fc;">Biometric Cloud Vault Synchronization</h4>
+          <p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin:0 0 12px;">
+            WorkNest automatically caches biometric templates securely. If this member encounters denied scans on any entrance or room terminal, click below to immediately sync their templates across all authorized readers.
+          </p>
+          <button class="btn primary sm" id="dact_syncBioPane">Re-sync Biometrics Now</button>
+        </div>
+      </div>
+
+      <!-- PANE 4: AUDIT TRAIL -->
+      <div class="drawer-pane" id="dpane_audit">
+        <div id="drawerAuditList">
+          <div class="empty" style="padding:20px 0;">Loading audit history…</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Close handlers
+  $('#drawerCloseBtn')?.addEventListener('click', closeMemberDrawer);
+
+  // Tab switching
+  panel.querySelectorAll('.drawer-tab').forEach((tabBtn) => {
+    tabBtn.addEventListener('click', () => {
+      panel.querySelectorAll('.drawer-tab').forEach((t) => t.classList.remove('active'));
+      panel.querySelectorAll('.drawer-pane').forEach((p) => p.classList.remove('active'));
+      tabBtn.classList.add('active');
+      const pane = panel.querySelector(`#dpane_${tabBtn.dataset.dtab}`);
+      if (pane) pane.classList.add('active');
+      if (tabBtn.dataset.dtab === 'audit') loadDrawerAudit();
+    });
+  });
+
+  // Render Timeline
+  const timelineEl = $('#drawerTimelineList');
+  const events = analyticsRes.recentEvents || [];
+  if (!events.length) {
+    timelineEl.innerHTML = `
+      <div class="empty" style="padding:32px 0;">
+        <div style="margin-bottom:8px;font-weight:600;font-size:13.5px;">No scans recorded today</div>
+        <p class="hint" style="font-size:12px;max-width:320px;margin:0 auto;">
+          This member has not swiped at any terminal today. Historical entry logs and future scans will appear in this timeline stream.
+        </p>
+      </div>`;
+  } else {
+    timelineEl.innerHTML = `
+      <div class="timeline-stream">
+        ${events.map((ev) => {
+          const isDenied = ev.minor === 39 || ev.minor === 76;
+          const timeStr = ev.time ? String(ev.time).replace('T', ' ').slice(11, 19) : 'Just now';
+          const method = ev.minor === 38 || ev.minor === 39 ? 'Fingerprint' : (ev.minor === 75 || ev.minor === 76 ? 'Face Recognition' : (ev.cardNo ? `Card ${ev.cardNo}` : 'Terminal Verification'));
+          return `
+            <div class="timeline-node">
+              <div class="timeline-dot ${isDenied ? 'denied' : 'granted'}">
+                ${isDenied
+                  ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
+                  : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`}
+              </div>
+              <div class="timeline-card">
+                <div class="timeline-card-head">
+                  <span class="timeline-door">${esc(ev.device || 'Entrance Terminal')}</span>
+                  <span class="timeline-time">${esc(timeStr)}</span>
+                </div>
+                <div class="timeline-meta">
+                  <span class="badge ${isDenied ? 'error' : 'synced'}" style="font-size:10px;">${isDenied ? 'Access Denied' : 'Access Granted'}</span>
+                  <span class="hint">${esc(method)}</span>
+                </div>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  // Render Doors List
+  const renderDoors = (filter = '') => {
+    const dList = $('#drawerDoorList');
+    if (!dList) return;
+    const q = filter.toLowerCase().trim();
+    const filtered = machines.filter((m) => !q || m.device?.toLowerCase().includes(q) || m.host?.toLowerCase().includes(q));
+    if (!filtered.length) {
+      dList.innerHTML = `<div class="empty" style="padding:20px 0;">No matching doors found.</div>`;
+      return;
+    }
+    dList.innerHTML = filtered.map((m) => {
+      const hasAccess = m.present && m.enabled;
+      const isBlockedDoor = m.present && !m.enabled;
+      const statusBadge = isBlockedDoor
+        ? '<span class="badge blocked">Blocked</span>'
+        : hasAccess
+          ? '<span class="badge synced">Has Access</span>'
+          : '<span class="badge" style="opacity:0.6;">No Access</span>';
+      const roleBadge = m.admin ? '<span class="badge admin" style="font-size:9px;">Admin</span>' : '';
+      return `
+        <div class="drawer-door-item">
+          <div class="drawer-door-name-wrap">
+            <span class="status-dot ${hasAccess ? 'on' : 'off'}"></span>
+            <div>
+              <b>${esc(m.device || 'Terminal')}</b> ${roleBadge}
+              <div style="font-size:11px;color:var(--text-muted);">${esc(m.host || '')}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            ${statusBadge}
+            ${m.validEnd ? `<div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">Ends ${esc(m.validEnd.slice(0, 10))}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  };
+  renderDoors();
+  $('#drawerDoorFilter')?.addEventListener('input', (e) => renderDoors(e.target.value));
+
+  // Render Audit Tab
   let auditLoaded = false;
-  const loadUserAudit = async () => {
+  const loadDrawerAudit = async () => {
     if (auditLoaded) return;
-    const aContent = $('#ptab_audit_content');
-    const aCount = $('#ptab_audit_count');
-    if (!aContent) return;
+    const aList = $('#drawerAuditList');
+    const aBadge = $('#dtab_audit_badge');
+    if (!aList) return;
     try {
-      const data = await api.get(`/audit-logs?limit=100&employeeNo=${encodeURIComponent(u.employeeNo)}`);
+      const data = await api.get(`/audit-logs?limit=50&employeeNo=${encodeURIComponent(userEmpNo)}`);
       auditLoaded = true;
       if (!data?.ok || !data.logs || !data.logs.length) {
-        if (aCount) aCount.textContent = '0';
-        aContent.innerHTML = `<div class="empty" style="padding:24px 0;">No logged credential changes or audit events recorded for this member yet.</div>`;
+        if (aBadge) aBadge.textContent = '0';
+        aList.innerHTML = `<div class="empty" style="padding:24px 0;">No audit events recorded for this member.</div>`;
         return;
       }
-      if (aCount) aCount.textContent = String(data.logs.length);
-      const itemsHtml = data.logs.map((log, idx) => {
+      if (aBadge) aBadge.textContent = String(data.logs.length);
+      aList.innerHTML = data.logs.map((log) => {
         const diff = parseAuditDiff(log);
         return `
-          <div class="diff-timeline-item">
-            <div class="diff-timeline-icon">
-              ${diff.type === 'access' ? ICONS.machine : diff.type === 'extend' ? ICONS.clock : diff.type === 'card' ? ICONS.card : ICONS.audit}
+          <div class="timeline-card" style="margin-bottom:10px;">
+            <div class="timeline-card-head">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span class="badge ${diff.badgeCls}" style="font-size:10px;">${esc(diff.badge)}</span>
+                <b>${esc(diff.title)}</b>
+              </div>
+              <span class="timeline-time">${esc(log.ts)}</span>
             </div>
-            <div class="diff-timeline-card">
-              <div class="diff-timeline-head">
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <span class="diff-timeline-title">${esc(diff.title)}</span>
-                  <span class="badge ${diff.badgeCls}" style="font-size:10px;">${esc(diff.badge)}</span>
-                </div>
-                <span class="diff-timeline-time tabular-nums">${esc(log.ts)}</span>
-              </div>
-              <div class="diff-timeline-body">
-                <div>${diff.summaryHtml}</div>
-              </div>
-              <div class="diff-timeline-footer">
-                <span>Actor: <b>${esc(log.actor || 'admin')}</b> (${esc(log.ip || '127.0.0.1')})</span>
-                <button class="btn sm diff-btn" data-usr-diff="${idx}">Inspect Diff ▾</button>
-              </div>
-            </div>
-          </div>
-        `;
+            <div style="font-size:12px;margin:6px 0;">${diff.summaryHtml}</div>
+            <div style="font-size:11px;color:var(--text-muted);">Actor: <b>${esc(log.actor || 'admin')}</b></div>
+          </div>`;
       }).join('');
-
-      aContent.innerHTML = `<div class="diff-timeline">${itemsHtml}</div>`;
-      aContent.querySelectorAll('[data-usr-diff]').forEach((b) => {
-        b.addEventListener('click', () => {
-          const l = data.logs[Number(b.dataset.usrDiff)];
-          if (l) openVisualDiffModal(l);
-        });
-      });
-    } catch (err) {
-      aContent.innerHTML = `<div class="empty" style="padding:20px 0;">Failed to load audit history: ${esc(err?.message || err)}</div>`;
+    } catch {
+      aList.innerHTML = `<div class="empty" style="padding:20px 0;">Failed to load audit history.</div>`;
     }
   };
 
-  // Prefetch count in background
-  api.get(`/audit-logs?limit=50&employeeNo=${encodeURIComponent(u.employeeNo)}`).then((data) => {
-    const aCount = $('#ptab_audit_count');
-    if (aCount && data?.ok && Array.isArray(data.logs)) {
-      aCount.textContent = String(data.logs.length);
+  // Prefetch audit count
+  api.get(`/audit-logs?limit=20&employeeNo=${encodeURIComponent(userEmpNo)}`).then((data) => {
+    const aBadge = $('#dtab_audit_badge');
+    if (aBadge && data?.ok && Array.isArray(data.logs)) {
+      aBadge.textContent = String(data.logs.length);
     }
-  }).catch(() => { });
+  }).catch(() => {});
 
-  $('#ptab_doors')?.addEventListener('click', () => {
-    $('#ptab_doors')?.classList.add('active');
-    $('#ptab_audit')?.classList.remove('active');
-    $('#pview_doors')?.style.setProperty('display', '');
-    $('#pview_audit')?.style.setProperty('display', 'none');
-  });
+  // Action handlers
+  const handleSyncBio = async () => {
+    toast(`Syncing biometrics for #${userEmpNo} across all authorized terminals…`);
+    try {
+      const res = await api.post('/sync');
+      if (res.ok) toast(`Biometrics synchronized successfully!`, 'ok');
+      else toast(`Sync encountered warnings: ${res.error || 'Check activity log'}`, 'warn');
+    } catch (e) {
+      toast(`Sync request failed: ${e.message}`, 'err');
+    }
+  };
 
-  $('#ptab_audit')?.addEventListener('click', () => {
-    $('#ptab_audit')?.classList.add('active');
-    $('#ptab_doors')?.classList.remove('active');
-    $('#pview_doors')?.style.setProperty('display', 'none');
-    $('#pview_audit')?.style.setProperty('display', '');
-    loadUserAudit();
+  $('#dact_syncBio')?.addEventListener('click', handleSyncBio);
+  $('#dact_syncBioPane')?.addEventListener('click', handleSyncBio);
+
+  $('#dact_extend')?.addEventListener('click', async () => {
+    if (!userEmpNo) return;
+    const ok = await confirmDialog({
+      title: 'Extend Membership',
+      message: `Extend membership validity by 30 days for ${displayName} (#${userEmpNo}) across all assigned terminals?`,
+      confirmText: 'Extend 30 Days'
+    });
+    if (!ok) return;
+    toast(`Extending membership for #${userEmpNo}…`);
+    const r = await api.post('/expiring/extend', { employeeNo: userEmpNo, days: 30 });
+    if (r.ok) {
+      toast(`Extended validity for #${userEmpNo} by 30 days`, 'ok');
+      openMemberDrawer(userEmpNo, displayName);
+    } else {
+      toast(`Failed to extend: ${r.error || 'error'}`, 'err');
+    }
   });
 }
+
+// Backward-compatible forwarder for legacy callers
+async function userProfileModal(entry) {
+  if (!entry) return;
+  const u = entry.u || entry;
+  openMemberDrawer(u.employeeNo, u.name);
+}
+
 
 // Edit a user's name / employee # across every machine they exist on.
 function editUserModal(entry, devs) {
@@ -4901,7 +5152,9 @@ function renderEntries() {
         <div class="user-identity">
           ${renderAvatar(who, 'sm')}
           <div class="user-identity-names">
-            <b>${esc(who)}</b>${e.employeeNoString ? ` <small class="hint">${copyableBadge(e.employeeNoString)}</small>` : ''}
+            ${(e.name || e.employeeNoString)
+              ? `<a class="link member-drawer-trigger" data-emp="${esc(e.employeeNoString || '')}" data-name="${esc(e.name || who)}" style="cursor:pointer" title="View member profile"><b>${esc(who)}</b></a>`
+              : `<b>${esc(who)}</b>`}${e.employeeNoString ? ` <small class="hint">${copyableBadge(e.employeeNoString)}</small>` : ''}
           </div>
         </div>
       </td>
