@@ -746,22 +746,36 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
       </div>
     </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:12px 0 10px;">
-      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:260px;">
-        <input type="text" id="hrFilterSearch" placeholder="Search member, ID, terminal, card…" style="padding:6px 12px;font-size:12.5px;border-radius:20px;flex:1;max-width:300px;">
-        <div style="display:flex;gap:5px;flex-wrap:wrap;" id="hrFilterPills">
-          <button class="hr-pill-btn active" data-filter="all">All (${rawEvents.length})</button>
-          <button class="hr-pill-btn" data-filter="members">Member Scans (${rawEvents.filter(e => e.minor === 75 || e.minor === 76 || e.minor === 38 || e.minor === 39 || e.cardNo).length})</button>
-          ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">Fingerprint (${methodCounts.fp})</button>` : ''}
-          ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">Face (${methodCounts.face})</button>` : ''}
-          ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">Card (${methodCounts.card})</button>` : ''}
-          ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">Denied (${methodCounts.denied})</button>` : ''}
-          ${rawEvents.some(e => e.minor === 21 || e.minor === 22 || e.minor === 23) ? `<button class="hr-pill-btn" data-filter="relay">Exit Buttons / Sensors</button>` : ''}
+    <div style="display:flex;flex-direction:column;gap:10px;margin:14px 0 12px;">
+      <!-- Primary Controls: Full-width search bar + Status count + Export -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div style="position:relative;flex:1;min-width:280px;display:flex;align-items:center;">
+          <svg style="position:absolute;left:13px;width:16px;height:16px;color:var(--text-faint);pointer-events:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="hrFilterSearch" placeholder="Search by member name, employee ID, terminal, card #…" style="width:100%;padding:9px 36px 9px 38px;font-size:13px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--surface-input);color:var(--text-main);transition:all 0.2s cubic-bezier(0.4,0,0.2,1);box-shadow:inset 0 1px 2px rgba(0,0,0,0.15);">
+          <button id="hrClearSearchBtn" type="button" style="position:absolute;right:10px;display:none;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:none;background:rgba(255,255,255,0.1);color:var(--text-muted);cursor:pointer;padding:0;font-size:12px;line-height:1;" title="Clear search (Esc)">✕</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+          <span id="hrFilterCount" style="font-size:12px;color:var(--text-muted);font-weight:600;padding:5px 10px;border-radius:12px;background:var(--border-subtle);border:1px solid var(--border);">${rawEvents.length} events</span>
+          <button class="btn sm" id="hrExportCsvBtn" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            Export CSV
+          </button>
         </div>
       </div>
-      <button class="btn sm" id="hrExportCsvBtn" style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
-        Export CSV
-      </button>
+
+      <!-- Secondary Controls: Category Filter Pills -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;" id="hrFilterPills">
+        <button class="hr-pill-btn active" data-filter="all">All (${rawEvents.length})</button>
+        <button class="hr-pill-btn" data-filter="members">Member Scans (${rawEvents.filter(e => e.minor === 75 || e.minor === 76 || e.minor === 38 || e.minor === 39 || e.cardNo).length})</button>
+        ${methodCounts.fp ? `<button class="hr-pill-btn" data-filter="fp">Fingerprint (${methodCounts.fp})</button>` : ''}
+        ${methodCounts.face ? `<button class="hr-pill-btn" data-filter="face">Face (${methodCounts.face})</button>` : ''}
+        ${methodCounts.card ? `<button class="hr-pill-btn" data-filter="card">Card (${methodCounts.card})</button>` : ''}
+        ${methodCounts.denied ? `<button class="hr-pill-btn" data-filter="denied">Denied (${methodCounts.denied})</button>` : ''}
+        ${rawEvents.some(e => (e.minor >= 21 && e.minor <= 26) || e.minor === 31) ? `<button class="hr-pill-btn" data-filter="relay">Exit Buttons / Sensors</button>` : ''}
+      </div>
     </div>
 
     <div class="table-wrap" style="max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
@@ -790,7 +804,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
     const filtered = rawEvents.filter((ev) => {
       const isDenied = EVENT_DENIED.has(ev.minor);
-      const isDoorRelay = ev.minor === 21 || ev.minor === 22 || ev.minor === 23;
+      const isDoorRelay = (ev.minor >= 21 && ev.minor <= 26) || ev.minor === 31;
       const isMemberScan = ev.minor === 75 || ev.minor === 76 || ev.minor === 38 || ev.minor === 39 || Boolean(ev.cardNo);
 
       if (activeFilter === 'members' && !isMemberScan) return false;
@@ -810,6 +824,17 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
       }
       return true;
     });
+
+    const countEl = $('#hrFilterCount');
+    if (countEl) {
+      countEl.textContent = filtered.length === rawEvents.length
+        ? `${rawEvents.length} events`
+        : `${filtered.length} of ${rawEvents.length} events`;
+    }
+    const clearBtn = $('#hrClearSearchBtn');
+    if (clearBtn) {
+      clearBtn.style.display = activeSearch ? 'inline-flex' : 'none';
+    }
 
     if (filtered.length === 0) {
       tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">No scan events match the current filter</td></tr>`;
@@ -895,8 +920,31 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
 
   renderTableRows();
 
-  $('#hrFilterSearch')?.addEventListener('input', (e) => {
+  const searchInput = $('#hrFilterSearch');
+  const clearBtn = $('#hrClearSearchBtn');
+
+  searchInput?.addEventListener('input', (e) => {
     activeSearch = e.target.value.trim();
+    if (clearBtn) clearBtn.style.display = activeSearch ? 'inline-flex' : 'none';
+    renderTableRows();
+  });
+
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.target.value = '';
+      activeSearch = '';
+      if (clearBtn) clearBtn.style.display = 'none';
+      renderTableRows();
+    }
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
+    }
+    activeSearch = '';
+    clearBtn.style.display = 'none';
     renderTableRows();
   });
 
@@ -962,7 +1010,7 @@ function onLiveActivityEvent(entry) {
 
       const cred = getCredBadge(entry.action);
       const who = entry.name || prettyAction(entry.action);
-      const avatar = renderAvatar(who, 'md');
+      const avatar = renderActivityAvatar(entry.action, who, 'md');
       const row = el(`
         <div class="ticker-item live-incoming">
           ${avatar}
@@ -1542,15 +1590,23 @@ const prettyAction = (a) => ACTION_LABELS[a] || a;
 
 const getCredBadge = (action) => {
   const act = String(action || '').toLowerCase();
+  if (act === 'online' || act === 'offline') return { icon: ICONS.machine, label: 'Connectivity', cls: 'cred-status' };
   if (act.includes('card') || act.includes('rfid')) return { icon: ICONS.card, label: 'RFID Card', cls: 'cred-card' };
   if (act.includes('face')) return { icon: ICONS.user, label: 'Facial Scan', cls: 'cred-face' };
   if (act.includes('finger')) return { icon: ICONS.user, label: 'Fingerprint', cls: 'cred-finger' };
   if (act.includes('door') || act.includes('unlock') || act.includes('open')) return { icon: ICONS.unlock, label: 'Remote Unlock', cls: 'cred-remote' };
-  return { icon: ICONS.machine, label: 'Access Event', cls: 'cred-gen' };
+  if (act.startsWith('sync-') || act === 'time-sync') return { icon: ICONS.sync, label: 'Auto Sync', cls: 'cred-sync' };
+  return { icon: ICONS.machine, label: 'System Event', cls: 'cred-gen' };
 };
 
 const getLogStatusBadge = (action, ok) => {
   const act = String(action || '').toLowerCase();
+  if (act === 'online') {
+    return `<span class="badge online">Online</span>`;
+  }
+  if (act === 'offline') {
+    return `<span class="badge offline">Offline</span>`;
+  }
   const isSync = act.startsWith('sync-') || act.includes('copy-') || act.includes('time-sync') || act.includes('store-');
   if (isSync) {
     return `<span class="badge ${ok ? 'synced' : 'error'}">${ok ? 'Synced' : 'Failed'}</span>`;
@@ -1561,6 +1617,20 @@ const getLogStatusBadge = (action, ok) => {
   }
   return `<span class="badge ${ok ? 'synced' : 'error'}">${ok ? 'Granted' : 'Denied'}</span>`;
 };
+
+function renderActivityAvatar(action, who, size = 'md') {
+  const act = String(action || '').toLowerCase();
+  if (act === 'online') {
+    return `<span class="avatar-badge ${size}" style="background:rgba(16,185,129,0.15);color:#10b981;border-color:rgba(16,185,129,0.3);" title="Machine Online">${ICONS.online}</span>`;
+  }
+  if (act === 'offline') {
+    return `<span class="avatar-badge ${size}" style="background:rgba(239,68,68,0.15);color:#ef4444;border-color:rgba(239,68,68,0.3);" title="Machine Offline">${ICONS.machine}</span>`;
+  }
+  if (act.startsWith('sync-') || act.includes('copy-') || act === 'time-sync') {
+    return `<span class="avatar-badge ${size}" style="background:rgba(99,102,241,0.15);color:#818cf8;border-color:rgba(99,102,241,0.3);" title="System Sync">${ICONS.sync}</span>`;
+  }
+  return renderAvatar(who, size);
+}
 
 async function dashboard() {
   initSse();
@@ -1809,7 +1879,7 @@ async function dashboard() {
     try { detailObj = typeof l.detail === 'string' ? JSON.parse(l.detail) : l.detail; } catch { }
     const empInfo = l.employee_name || (detailObj?.employeeNo ? `Member #${detailObj.employeeNo}` : null);
     const who = empInfo && !l.employee_name ? `${prettyAction(l.action)} (${empInfo})` : (l.employee_name || prettyAction(l.action));
-    const avatar = renderAvatar(l.employee_name || who, 'md');
+    const avatar = renderActivityAvatar(l.action, l.employee_name || who, 'md');
     const note = detailObj?.note ? ` · ${esc(detailObj.note)}` : (detailObj?.error ? ` · ${esc(detailObj.error)}` : '');
     return `
     <div class="ticker-item animate-slide">
