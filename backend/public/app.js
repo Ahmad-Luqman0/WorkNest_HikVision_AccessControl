@@ -131,8 +131,60 @@ async function changePasswordModal() {
 const $ = (s) => document.querySelector(s);
 const content = $('#content');
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; };
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const p2 = (n) => String(n).padStart(2, '0');
+
+// ---- 12-Hour Time Helpers (Enterprise Standard) ----
+function formatTime12(ts, withSeconds = false) {
+  if (!ts) return '—';
+  let d = null;
+  if (ts instanceof Date) {
+    d = ts;
+  } else if (typeof ts === 'string') {
+    const isoLike = ts.includes(' ') && !ts.includes('T') ? ts.replace(' ', 'T') : ts;
+    d = new Date(isoLike);
+  } else {
+    d = new Date(ts);
+  }
+
+  if (d && !isNaN(d.getTime())) {
+    let hours = d.getHours();
+    const minutes = p2(d.getMinutes());
+    const seconds = p2(d.getSeconds());
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12 || 12;
+    return withSeconds ? `${hours}:${minutes}:${seconds} ${ampm}` : `${hours}:${minutes} ${ampm}`;
+  }
+
+  try {
+    const s = String(ts).replace('T', ' ');
+    const timePart = s.slice(11, 19);
+    const [hStr, mStr, sStr] = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    if (!isNaN(h)) {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return withSeconds && sStr ? `${h}:${mStr || '00'}:${sStr} ${ampm}` : `${h}:${mStr || '00'} ${ampm}`;
+    }
+  } catch {}
+  return String(ts);
+}
+
+function formatHour12(hr) {
+  const h = ((Number(hr) % 24) + 24) % 24;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12} ${ampm}`;
+}
+
+function formatHourRange12(hr) {
+  const h1 = ((Number(hr) % 24) + 24) % 24;
+  const h2 = (h1 + 1) % 24;
+  const ampm1 = h1 >= 12 ? 'PM' : 'AM';
+  const ampm2 = h2 >= 12 ? 'PM' : 'AM';
+  const disp1 = h1 % 12 || 12;
+  const disp2 = h2 % 12 || 12;
+  return `${disp1}:00 ${ampm1} – ${disp2}:00 ${ampm2}`;
+}
 
 function toast(msg, kind = '') {
   const t = $('#toast');
@@ -385,18 +437,18 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
   const spline = buildMonotonicSpline(pts, bottomY, top);
   const areaPath = `${spline} L ${pts[pts.length - 1].x.toFixed(1)} ${bottomY} L ${pts[0].x.toFixed(1)} ${bottomY} Z`;
 
-  // Dynamic X-axis labels
+  // Dynamic X-axis labels (12-hour format)
   const step = numHours <= 14 ? 2 : 4;
   let xLabelsSvg = '';
   for (let hr = 0; hr < numHours; hr += step) {
     const pt = pts[hr];
     if (pt) {
-      xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${p2(hr)}:00</text>`;
+      xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${formatHour12(hr)}</text>`;
     }
   }
   if (pts[numHours - 1] && (numHours - 1) % step !== 0) {
     const pt = pts[numHours - 1];
-    xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${p2(endHour)}:00</text>`;
+    xLabelsSvg += `<text x="${pt.x.toFixed(1)}" y="${bottomY + 18}" text-anchor="middle" class="chart-axis-text">${formatHour12(endHour)}</text>`;
   }
 
   // Peak marker
@@ -426,8 +478,8 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
       <g style="pointer-events:none;">
         <line x1="${nowX.toFixed(1)}" y1="${top - 6}" x2="${nowX.toFixed(1)}" y2="${bottomY}" stroke="#10b981" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.85"/>
         <circle cx="${nowX.toFixed(1)}" cy="${top - 6}" r="3.5" fill="#10b981" />
-        <rect x="${(nowX - 28).toFixed(1)}" y="${top - 18}" width="56" height="13" rx="3" fill="#10b981" />
-        <text x="${nowX.toFixed(1)}" y="${top - 8}" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700" font-family="sans-serif">NOW · ${p2(nowHour)}:${p2(nowMin)}</text>
+        <rect x="${(nowX - 32).toFixed(1)}" y="${top - 18}" width="64" height="13" rx="3" fill="#10b981" />
+        <text x="${nowX.toFixed(1)}" y="${top - 8}" text-anchor="middle" fill="#ffffff" font-size="8.5" font-weight="700" font-family="sans-serif">NOW · ${formatTime12(now, false)}</text>
       </g>
     `;
   }
@@ -663,7 +715,7 @@ function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachin
     tooltip.style.opacity = '1';
 
     const h = nearest.hour;
-    const hrLabel = `${p2(h)}:00 - ${p2(h + 1)}:00`;
+    const hrLabel = formatHourRange12(h);
     if (ttTime) ttTime.textContent = hrLabel;
     if (ttVal) {
       const isPeak = nearest.val === analyticsData?.maxPeak && nearest.val > 0;
@@ -690,7 +742,7 @@ function wireInflowChartInteractivity(analyticsData, totalMachines, onlineMachin
 
 // Modal displaying deep details of an hourly scan window (e.g. peak scans, who scanned, machine breakdown)
 async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
-  const hrLabel = `${p2(hour)}:00 – ${p2(hour + 1)}:00`;
+  const hrLabel = formatHourRange12(hour);
   const now = new Date();
   const todayISO = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
   const displayDate = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
@@ -888,7 +940,7 @@ async function openHourlyInflowModal(hour, count, isPeak, analyticsData) {
       const isDoorRelay = (ev.minor >= 21 && ev.minor <= 26) || ev.minor === 31;
       const isRemoteUnlock = ev.minor === 27 || ev.minor === 28;
       const isDenied = EVENT_DENIED.has(ev.minor);
-      const timeStr = ev.time ? String(ev.time).slice(11, 19) : '—';
+      const timeStr = ev.time ? formatTime12(ev.time, true) : '—';
       const empNo = ev.employeeNoString ? `#${ev.employeeNoString}` : '—';
       const devName = ev.device || 'Access Terminal';
 
@@ -1063,7 +1115,7 @@ function onLiveActivityEvent(entry) {
           ${avatar}
           <div class="ticker-main">
             <div class="ticker-person">${whoHtml} <span class="ticker-cred-label">${cred.label}</span></div>
-            <div class="ticker-sub"><small class="hint">${esc(new Date().toLocaleTimeString())}</small></div>
+            <div class="ticker-sub"><small class="hint">${esc(formatTime12(new Date(), false))}</small></div>
           </div>
           ${getLogStatusBadge(entry.action, entry.ok)}
         </div>`);
@@ -1142,7 +1194,7 @@ function renderAvatar(name, size = 'sm') {
 const COPY_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
 const CHECK_SVG = `<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
-// Activity log timestamp: renders clean clock time (e.g. 10:30) with date context for past days and full timestamp on hover
+// Activity log timestamp: renders clean 12-hour clock time (e.g. 10:30 AM) with date context for past days and full timestamp on hover
 function relStamp(ts) {
   if (!ts) return '<small class="hint">—</small>';
   const rawStr = String(ts).slice(0, 19).replace('T', ' ');
@@ -1161,7 +1213,7 @@ function relStamp(ts) {
   let isToday = false;
 
   if (d && !isNaN(d.getTime())) {
-    timeStr = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    timeStr = formatTime12(d, false);
     const now = new Date();
     isToday = (
       d.getDate() === now.getDate() &&
@@ -1170,7 +1222,7 @@ function relStamp(ts) {
     );
     dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   } else {
-    timeStr = rawStr.slice(11, 16) || rawStr;
+    timeStr = formatTime12(rawStr, false);
     dateStr = rawStr.slice(5, 10);
     const todayYMD = new Date().toISOString().slice(0, 10);
     isToday = rawStr.slice(0, 10) === todayYMD;
@@ -1267,7 +1319,7 @@ function generateBezierAreaChartSvg(dataPoints, width = 740, height = 240) {
 
   const xLabels = [0, 4, 8, 12, 16, 20, 23].map((hr) => {
     const pt = coords[hr];
-    const label = `${String(hr).padStart(2, '0')}:00`;
+    const label = formatHour12(hr);
     return `<text class="chart-axis-label" x="${pt.x}" y="${height - 8}" text-anchor="middle">${label}</text>`;
   }).join('');
 
@@ -1329,7 +1381,7 @@ function wireBezierChart() {
         dot.setAttribute('cy', closest.y);
         dot.style.opacity = '1';
 
-        const hrStr = `${String(closest.hr).padStart(2, '0')}:00`;
+        const hrStr = formatHourRange12(closest.hr);
         tt.innerHTML = `<span class="tt-time">${hrStr}</span> <span class="tt-val">${closest.val} scan${closest.val === 1 ? '' : 's'}</span>`;
         tt.style.left = `${(closest.x / 740) * 100}%`;
         tt.style.top = `${(closest.y / 240) * 100}%`;
@@ -1829,7 +1881,7 @@ async function dashboard() {
     lastSwipeHtml = `
       ${whoHtml} ${actionLabel} <b>${esc(latestSwipe.deviceName || 'Entrance')}</b>
       <span class="badge ${latestSwipe.ok ? 'synced' : 'error'}" style="font-size:10px;padding:2px 6px;">${latestSwipe.ok ? 'Granted' : 'Denied'}</span>
-      <small class="hint">${esc(latestSwipe.time ? String(latestSwipe.time).replace('T', ' ').slice(11, 19) : 'Just now')}</small>
+      <small class="hint">${esc(latestSwipe.time ? formatTime12(latestSwipe.time, false) : 'Just now')}</small>
     `;
   } else {
     lastSwipeHtml = '<span class="hint">No member access events recorded today (terminals offline)</span>';
@@ -1916,7 +1968,7 @@ async function dashboard() {
         <div class="occupancy-details">
           <div class="occupancy-details-val" id="occupancyHeadcountVal">${liveHeadcount} Members Live</div>
           <div class="occupancy-details-sub" id="occupancyCapacitySub">Capacity target: ${totalCapacity}</div>
-          <div class="occupancy-details-sub" style="color:var(--accent); font-weight:600">Peak: ${esc(analyticsData?.peakHourLabel || '14:00')}</div>
+          <div class="occupancy-details-sub" style="color:var(--accent); font-weight:600">Peak: ${esc(analyticsData?.peakHourLabel || '2:00 PM')}</div>
         </div>
       </div>
     </div>
@@ -1971,7 +2023,7 @@ async function dashboard() {
       ${avatar}
       <div class="ticker-main">
         <div class="ticker-person">${whoHtml} <span class="ticker-cred-label">${cred.label}</span></div>
-        <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}${note}</small></div>
+        <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(formatTime12(l.ts, false))}${note}</small></div>
       </div>
       ${getLogStatusBadge(l.action, l.ok)}
     </div>`;
@@ -2545,7 +2597,7 @@ async function devices() {
           const mt = new Date(r.machineTime);
           const drift = Number(r.driftSeconds) || 0;
           const driftStr = Math.abs(drift) <= 2 ? 'in sync' : `${Math.abs(drift)}s ${drift > 0 ? 'ahead' : 'behind'}`;
-          clockStr = ` · machine clock ${mt.toLocaleTimeString()} (${driftStr})`;
+          clockStr = ` · machine clock ${formatTime12(mt, true)} (${driftStr})`;
         }
         toast(r?.ok ? `Connected: ${r.info?.model || 'ok'}${clockStr}` : `Failed: ${r?.error || 'unreachable'}`, r?.ok ? 'ok' : 'err');
       } catch (err) {
@@ -3963,11 +4015,11 @@ async function openMemberDrawer(employeeNo, rawName = '') {
           </div>
           <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center;">
             <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">First Entry</div>
-            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.firstScan ? esc(String(analyticsRes.firstScan).replace('T', ' ').slice(11, 16)) : '—'}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.firstScan ? esc(formatTime12(analyticsRes.firstScan, false)) : '—'}</div>
           </div>
           <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;text-align:center;">
             <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Last Seen</div>
-            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.lastScan ? esc(String(analyticsRes.lastScan).replace('T', ' ').slice(11, 16)) : '—'}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-main);margin-top:5px;">${analyticsRes.lastScan ? esc(formatTime12(analyticsRes.lastScan, false)) : '—'}</div>
           </div>
         </div>
 
@@ -4060,7 +4112,7 @@ async function openMemberDrawer(employeeNo, rawName = '') {
       <div class="timeline-stream">
         ${events.map((ev) => {
           const isDenied = ev.minor === 39 || ev.minor === 76;
-          const timeStr = ev.time ? String(ev.time).replace('T', ' ').slice(11, 19) : 'Just now';
+          const timeStr = ev.time ? formatTime12(ev.time, false) : 'Just now';
           const method = ev.minor === 38 || ev.minor === 39 ? 'Fingerprint' : (ev.minor === 75 || ev.minor === 76 ? 'Face Recognition' : (ev.cardNo ? `Card ${ev.cardNo}` : 'Terminal Verification'));
           return `
             <div class="timeline-node">
@@ -5333,7 +5385,7 @@ function renderEntries() {
 }
 
 // ---- Bookings (from the booking system's WN_Bookings / WN_Spaces tables) ----
-const fmtDT = (v) => String(v || '—').replace('T', ' ').slice(0, 16);
+const fmtDT = (v) => v ? `${String(v).replace('T', ' ').slice(0, 10)} ${formatTime12(v, false)}` : '—';
 
 function renderBookingsGantt(items, devs = []) {
   const spaceMap = new Map();
@@ -5376,7 +5428,7 @@ function renderBookingsGantt(items, devs = []) {
   const nowM = now.getHours() * 60 + now.getMinutes();
   const showNow = nowM >= 480 && nowM <= 1200;
   const nowPct = showNow ? (((nowM - 480) / 720) * 100).toFixed(2) : null;
-  const timeLabels = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'];
+  const timeLabels = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM', '8:00 PM'];
 
   const rowsHtml = spaces.map((sp) => {
     const sorted = [...sp.bookings].sort((a, b) => new Date(a.start) - new Date(b.start));
@@ -5392,7 +5444,7 @@ function renderBookingsGantt(items, devs = []) {
       const width = Math.max(2.5, ((eClamp - sClamp) / 720) * 100).toFixed(2);
       const full = b.capacity > 0 && b.enrolled >= b.capacity;
       const statusText = full ? 'Full' : `${b.enrolled}/${b.capacity || '∞'}`;
-      const timeStr = `${String(ds.getHours()).padStart(2, '0')}:${String(ds.getMinutes()).padStart(2, '0')} - ${String(de.getHours()).padStart(2, '0')}:${String(de.getMinutes()).padStart(2, '0')}`;
+      const timeStr = `${formatTime12(ds, false)} - ${formatTime12(de, false)}`;
 
       return `
         <div class="gantt-slot-booked" style="left:${left}%; width:${width}%;" data-enroll="${b.id}" title="${esc(b.challan || b.ref)} · ${esc(b.customer || 'Booking')} (${timeStr}) — Click to manage attendees">
@@ -5952,16 +6004,10 @@ async function showUserAnalyticsBreakdown(empNo, name) {
     const roomBadge = u.roomNo ? `<span class="badge">Room ${esc(u.roomNo)}</span>` : '';
     const cardBadge = u.cardNo ? `<span class="badge monospace">Card: ${copyableBadge(u.cardNo)}</span>` : '<span class="badge">No card registered</span>';
 
-    // Format first / last scan
+    // Format first / last scan (12-hour format)
     const formatScanTime = (iso) => {
       if (!iso) return '—';
-      try {
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(11, 16);
-        return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
-      } catch {
-        return String(iso).replace('T', ' ').slice(11, 16);
-      }
+      return formatTime12(iso, false);
     };
 
     const firstStr = formatScanTime(r.firstScan);
@@ -5994,21 +6040,19 @@ async function showUserAnalyticsBreakdown(empNo, name) {
 
     // Recent scans table
     const recentRows = (r.recentEvents || []).slice(0, 15).map((e) => {
-      let timeStr = '—';
+      let timeStr = e.time ? formatTime12(e.time, false) : '—';
       let dateStr = '—';
       try {
         if (e.time) {
           const d = new Date(e.time);
           if (!isNaN(d.getTime())) {
-            timeStr = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
             dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
           } else {
-            timeStr = String(e.time).replace('T', ' ').slice(11, 19);
             dateStr = String(e.time).slice(5, 10);
           }
         }
       } catch {
-        timeStr = String(e.time || '—').slice(11, 19);
+        dateStr = String(e.time || '—').slice(5, 10);
       }
       return `
         <tr>

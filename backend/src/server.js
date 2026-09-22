@@ -987,13 +987,22 @@ app.get('/api/analytics', async (req, res) => {
       percent: Math.round(((Number(d.count) || 0) / totalDoorScans) * 100),
     }));
 
-    // 3. Peak Hour
+    // 3. Peak Hour (12-hour format)
     let peakHour = 9;
     let maxPeak = 0;
     hourlyDistribution.forEach((cnt, hr) => {
       if (cnt > maxPeak) { maxPeak = cnt; peakHour = hr; }
     });
-    const peakHourLabel = `${p2(peakHour)}:00 - ${p2(peakHour + 1)}:00`;
+    const fmt12HourRange = (h) => {
+      const h1 = ((h % 24) + 24) % 24;
+      const h2 = (h1 + 1) % 24;
+      const ampm1 = h1 >= 12 ? 'PM' : 'AM';
+      const ampm2 = h2 >= 12 ? 'PM' : 'AM';
+      const disp1 = h1 % 12 || 12;
+      const disp2 = h2 % 12 || 12;
+      return `${disp1}:00 ${ampm1} - ${disp2}:00 ${ampm2}`;
+    };
+    const peakHourLabel = fmt12HourRange(peakHour);
 
     // 4. Estimated Live Headcount
     const liveHeadcount = Math.max(0, Math.min(todayTotal, s.active || 0));
@@ -1299,7 +1308,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       allTimeScans: Number(allTimeRow?.total) || totalScans,
       firstScan: metaRow?.first_scan ? String(metaRow.first_scan) : null,
       lastScan: metaRow?.last_scan ? String(metaRow.last_scan) : null,
-      peakHourLabel: peakVal > 0 ? `${p2(peakHr)}:00 - ${p2(peakHr + 1)}:00 (${peakVal} scans)` : '—',
+      peakHourLabel: peakVal > 0 ? `${fmt12HourRange(peakHr)} (${peakVal} scans)` : '—',
       doors: doorBreakdown.map((d) => ({
         name: d.name || 'Terminal',
         count: Number(d.count) || 0,
