@@ -827,7 +827,16 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', liveOnly, async
     if (!cap.ok) return res.status(502).json({ ok: false, error: isapi.describe(cap) || 'Capture failed — no finger detected.' });
     const stored = await isapi.addFingerprint(dev, req.params.employeeNo, cap.fingerData, fingerNo);
     logSync(null, dev.id, 'store-fingerprint', stored.ok, stored);
-    if (!stored.ok) return res.status(502).json({ ok: false, error: isapi.describe(stored) });
+    if (!stored.ok) {
+      let errMsg = isapi.describe(stored);
+      if (stored.duplicateWith) {
+        try {
+          const dupUser = await getRow('SELECT name FROM dbo.WN_HIK_Employees WHERE employee_no=?', [stored.duplicateWith]);
+          if (dupUser?.name) errMsg = `Duplicate fingerprint — already enrolled for ${dupUser.name} (#${stored.duplicateWith}).`;
+        } catch {}
+      }
+      return res.status(502).json({ ok: false, error: errMsg });
+    }
     // Vault the template so machines coming online later (or new machines)
     // receive this fingerprint automatically — devices never export them.
     try {
@@ -853,7 +862,14 @@ devicesRouter.post('/:id/users/:employeeNo/capture-fingerprint', liveOnly, async
       try {
         const rr = await isapi.addFingerprint(rdev, emp, cap.fingerData, fingerNo);
         logSync(null, rdev.id, 'store-fingerprint', rr.ok, rr);
-        return { device: rdev.name, ok: rr.ok, error: rr.ok ? undefined : isapi.describe(rr) };
+        let repErr = rr.ok ? undefined : isapi.describe(rr);
+        if (rr.duplicateWith) {
+          try {
+            const dupUser = await getRow('SELECT name FROM dbo.WN_HIK_Employees WHERE employee_no=?', [rr.duplicateWith]);
+            if (dupUser?.name) repErr = `Duplicate fingerprint of ${dupUser.name} (#${rr.duplicateWith})`;
+          } catch {}
+        }
+        return { device: rdev.name, ok: rr.ok, error: repErr };
       } catch (e) {
         if (isUnreachableErr(e)) {
           await queueOp(rdev.id, 'add-fp', emp, { fingerData: cap.fingerData, fingerNo }).catch(() => {});
