@@ -30,79 +30,90 @@
     </div>
 
     <nav class="nav-menu">
-      <a data-view="dashboard" class="nav-item active">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="9" rx="1.5" />
-          <rect x="14" y="3" width="7" height="5" rx="1.5" />
-          <rect x="14" y="12" width="7" height="9" rx="1.5" />
-          <rect x="3" y="16" width="7" height="5" rx="1.5" />
-        </svg>
-        <span>Dashboard</span>
-      </a>
-      <a data-view="devices" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="5" y="2.5" width="14" height="19" rx="2.5" />
-          <circle cx="12" cy="9" r="2.5" />
-          <path d="M8.5 17h7" />
-        </svg>
-        <span>Machines</span>
-      </a>
-      <a data-view="users" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-          <circle cx="9" cy="7" r="4" />
-          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-        </svg>
-        <span>Users</span>
-      </a>
-      <a data-view="cards" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
-          <line x1="2.5" y1="10" x2="21.5" y2="10" />
-          <line x1="6.5" y1="15" x2="10.5" y2="15" />
-        </svg>
-        <span>Cards</span>
-      </a>
-      <a data-view="bookings" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4.5" width="18" height="17" rx="2.5" />
-          <line x1="3" y1="10" x2="21" y2="10" />
-          <line x1="8" y1="2.5" x2="8" y2="6.5" />
-          <line x1="16" y1="2.5" x2="16" y2="6.5" />
-          <path d="M8 15h3l1.5 2.5L14 14l1.5 2H17" />
-        </svg>
-        <span>Bookings</span>
-      </a>
-      <a data-view="logs" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-        </svg>
-        <span>Activity Log</span>
-      </a>
-      <a data-view="analytics" class="nav-item">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="20" x2="18" y2="10" />
-          <line x1="12" y1="20" x2="12" y2="4" />
-          <line x1="6" y1="20" x2="6" y2="14" />
-        </svg>
-        <span>Analytics</span>
-      </a>
-      <a data-view="audit" class="nav-item" id="navAudit" style="display:none">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-        </svg>
-        <span>Admin Audit</span>
-      </a>
-      <a data-view="dashusers" class="nav-item" id="navDashUsers" style="display:none">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="9" cy="8" r="3.5" />
-          <path d="M2.5 20c.7-3.2 3.2-5 6.5-5s5.8 1.8 6.5 5" />
-          <path d="M17.5 4.5l4 4" />
-          <path d="M19.5 2.5l2 2-5.5 5.5-2.5.5.5-2.5z" />
-        </svg>
-        <span>Dashboard Users</span>
-      </a>
+      <div class="nav-group">
+        <div class="nav-group-title">Operations</div>
+        <a data-view="dashboard" class="nav-item active">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="9" rx="1.5" />
+            <rect x="14" y="3" width="7" height="5" rx="1.5" />
+            <rect x="14" y="12" width="7" height="9" rx="1.5" />
+            <rect x="3" y="16" width="7" height="5" rx="1.5" />
+          </svg>
+          <span>Dashboard</span>
+        </a>
+        <a data-view="logs" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          <span>Activity Log</span>
+        </a>
+        <a data-view="analytics" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="20" x2="18" y2="10" />
+            <line x1="12" y1="20" x2="12" y2="4" />
+            <line x1="6" y1="20" x2="6" y2="14" />
+          </svg>
+          <span>Analytics</span>
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">Access Control</div>
+        <a data-view="users" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          <span>Users</span>
+        </a>
+        <a data-view="cards" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2.5" y="5" width="19" height="14" rx="2.5" />
+            <line x1="2.5" y1="10" x2="21.5" y2="10" />
+            <line x1="6.5" y1="15" x2="10.5" y2="15" />
+          </svg>
+          <span>Cards</span>
+        </a>
+        <a data-view="bookings" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4.5" width="18" height="17" rx="2.5" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+            <line x1="8" y1="2.5" x2="8" y2="6.5" />
+            <line x1="16" y1="2.5" x2="16" y2="6.5" />
+            <path d="M8 15h3l1.5 2.5L14 14l1.5 2H17" />
+          </svg>
+          <span>Bookings</span>
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">Hardware & Admin</div>
+        <a data-view="devices" class="nav-item">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="5" y="2.5" width="14" height="19" rx="2.5" />
+            <circle cx="12" cy="9" r="2.5" />
+            <path d="M8.5 17h7" />
+          </svg>
+          <span>Machines</span>
+        </a>
+        <a data-view="audit" class="nav-item" id="navAudit" style="display:none">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+          <span>Admin Audit</span>
+        </a>
+        <a data-view="dashusers" class="nav-item" id="navDashUsers" style="display:none">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="9" cy="8" r="3.5" />
+            <path d="M2.5 20c.7-3.2 3.2-5 6.5-5s5.8 1.8 6.5 5" />
+            <path d="M17.5 4.5l4 4" />
+            <path d="M19.5 2.5l2 2-5.5 5.5-2.5.5.5-2.5z" />
+          </svg>
+          <span>Dashboard Users</span>
+        </a>
+      </div>
     </nav>
 
     <div class="sidebar-footer">
