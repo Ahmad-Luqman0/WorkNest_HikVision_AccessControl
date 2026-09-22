@@ -500,6 +500,27 @@ app.post('/api/consistency/fix', hardwareRateLimiter, async (req, res) => {
   }
 });
 
+// Harmonize ALL credentials (cards, fingerprints, face templates) across ALL machines
+// for every user. Fixes discrepancies (e.g. user has face & fp on machine 1, but lacks
+// face on machine 2..10) across the entire fleet in one pass.
+app.post('/api/consistency/sync-all', hardwareRateLimiter, async (req, res) => {
+  try {
+    // 1. Sync any pending access grants / person profiles in DB to their machines
+    const pending = await syncAllPending().catch(() => []);
+    // 2. Full fleet credential harmonization across all online machines
+    const credResult = await runCredentialSync();
+    // 3. Push any vaulted templates (face/fingerprint) to machines lacking them
+    const vaultedGaps = await closeCredentialGaps(500).catch(() => ({ written: 0 }));
+    // 4. Invalidate roster caches so all subsequent queries pull fresh device data
+    invalidateRoster();
+    const totalCopied = (credResult?.copied || 0) + (vaultedGaps?.written || 0);
+    logSync(null, null, 'fleet-credential-sync', true, { copied: totalCopied, pending: pending.length });
+    res.json({ ok: true, copied: totalCopied, pending: pending.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 // Central-truth check: compare every person's credentials across machines and
 // report disagreements. The auto-sync fixes what it can on its own; what it
 // CANNOT fix (e.g. one card owned by different users on different machines)

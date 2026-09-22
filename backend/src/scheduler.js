@@ -182,6 +182,7 @@ export async function runCredentialSync() {
     if (members.length < 2) continue;
     copied += (await syncCredentialGroup(members)).copied;
   }
+  if (copied > 0) invalidateRoster();
   return { copied };
 }
 

@@ -2327,6 +2327,12 @@ async function users() {
           </button>
         </div>
 
+        <button class="btn sm" id="u_sync_all" title="Harmonize all credentials (faces, fingerprints, cards) across all machines. Background auto-sync is active.">
+          ${ICONS.sync} Sync all to machines
+        </button>
+        <span class="badge ok" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;padding:4px 8px;" title="Background auto-sync is active and checks terminals automatically">
+          <span class="live-dot" style="width:6px;height:6px;"></span> Auto-sync on
+        </span>
         <button class="btn sm primary" id="u_add">+ Add user</button>
         <button class="btn sm" id="u_daypass">+ Day pass</button>
         <button class="btn sm" id="u_refresh" title="Reload from machines">↻</button>
@@ -2337,6 +2343,7 @@ async function users() {
 
   $('#u_dev').addEventListener('change', (e) => { _usersDevId = e.target.value === 'all' ? 'all' : Number(e.target.value); loadUsersTable(devs); });
   $('#u_refresh').addEventListener('click', () => loadUsersTable(devs));
+  $('#u_sync_all')?.addEventListener('click', () => triggerFleetSyncAll(devs));
   $('#u_add').addEventListener('click', () => addUserModal(_usersDevId === 'all' ? devs[0] : devs.find((d) => d.id == _usersDevId), devs, _usersDevId === 'all'));
   $('#u_daypass').addEventListener('click', () => dayPassModal(devs));
 
@@ -2375,6 +2382,56 @@ async function users() {
   });
 
   loadUsersTable(devs);
+}
+
+async function triggerFleetSyncAll(devs) {
+  const ok = await confirmDialog({
+    title: 'Sync All Credentials Across Machines',
+    message: 'This will inspect all users across all machines and harmonize any missing credentials (fingerprints, face scans, and RFID cards).\n\nFor example, if a user has a face or fingerprint on Machine 1 but is missing them on other authorized machines, it replicates them so all machines match.\n\nBackground auto-sync runs periodically, but this initiates an immediate full-fleet pass. Proceed?',
+    confirmText: 'Sync All Machines'
+  });
+  if (!ok) return;
+
+  const btn = $('#u_sync_all');
+  const bannerBtn = $('#bannerSyncAllBtn');
+  const origBtnHtml = btn ? btn.innerHTML : '';
+  const origBannerHtml = bannerBtn ? bannerBtn.innerHTML : '';
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spin" style="margin-right:4px;">↻</span> Syncing fleet…`;
+  }
+  if (bannerBtn) {
+    bannerBtn.disabled = true;
+    bannerBtn.innerHTML = `<span class="spin" style="margin-right:4px;">↻</span> Syncing fleet…`;
+  }
+
+  toast('Harmonizing credentials across all machines…', 'info');
+  try {
+    const r = await api.post('/consistency/sync-all');
+    if (r && r.ok) {
+      const copied = r.copied || 0;
+      if (copied > 0) {
+        toast(`Sync complete! Harmonized ${copied} credential(s) across all machines.`, 'ok');
+      } else {
+        toast('Sync complete! All machines are already fully harmonized with no discrepancies.', 'ok');
+      }
+      loadUsersTable(devs);
+    } else {
+      toast(`Sync failed: ${r?.error || 'Unknown error occurred'}`, 'err');
+    }
+  } catch (err) {
+    toast(`Sync error: ${err?.message || err}`, 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origBtnHtml;
+    }
+    if (bannerBtn) {
+      bannerBtn.disabled = false;
+      bannerBtn.innerHTML = origBannerHtml;
+    }
+  }
 }
 
 async function loadUsersTable(devs) {
@@ -2851,12 +2908,20 @@ async function loadUsersTable(devs) {
     });
     document.getElementById('consistencyNote').innerHTML = `
       <div class="notice-banner" style="cursor:default">
-        <b>${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines</b> — the dashboard compared ${c.checked} reachable machine${c.checked === 1 ? '' : 's'}.
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <b>${c.issues.length} credential mismatch${c.issues.length === 1 ? '' : 'es'} between machines</b> — the dashboard compared ${c.checked} reachable machine${c.checked === 1 ? '' : 's'}.
+          </div>
+          <button class="btn sm primary" id="bannerSyncAllBtn" style="white-space:nowrap;display:inline-flex;align-items:center;gap:6px;">
+            ${ICONS.sync} Fix & Sync All Discrepancies
+          </button>
+        </div>
         <details style="margin-top:6px"><summary style="cursor:pointer">Show details</summary>
           <ul style="margin:8px 0 0 18px; padding:0">${c.issues.map((i, n) => `<li style="margin-bottom:6px">${esc(i.detail)}
             ${i.employeeNo !== undefined && i.type !== 'card-conflict' ? `<button class="btn sm" style="margin-left:8px" data-fixmm="${n}">Copy missing to ${esc(i.name || '#' + i.employeeNo)}'s machines</button>` : ''}</li>`).join('')}</ul>
         </details>
       </div>`;
+    $('#bannerSyncAllBtn')?.addEventListener('click', () => triggerFleetSyncAll(devs));
     document.querySelectorAll('[data-fixmm]').forEach((b) => b.addEventListener('click', async () => {
       const iss = c.issues[Number(b.dataset.fixmm)];
       b.disabled = true;

@@ -1816,6 +1816,17 @@ select option {
   }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  display: inline-block;
+  animation: spin 0.9s linear infinite;
+  transform-origin: center center;
+}
+
 /* User Analytics Breakdown Modal */
 .uab-stat-grid {
   display: grid;
