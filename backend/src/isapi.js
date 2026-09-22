@@ -558,11 +558,14 @@ export async function addFingerprint(device, employeeNo, fingerData, fingerNo = 
   const st = (res.json() || {}).FingerPrintStatus?.StatusList;
   if (Array.isArray(st)) {
     const okAll = st.length > 0 && st.every((s) => Number(s.cardReaderRecvStatus) === 1);
+    const dup = st.find((s) => Number(s.cardReaderRecvStatus) === 5);
     return {
       ok: res.ok && okAll,
       op: 'addFingerprint',
       httpStatus: res.status,
       statusString: okAll ? 'OK' : `cardReaderRecvStatus ${st.map((s) => s.cardReaderRecvStatus).join(',')}`,
+      duplicateWith: dup?.errorMsg ? String(dup.errorMsg) : null,
+      errorMsg: dup ? `Duplicate fingerprint of employee #${dup.errorMsg}` : (st.map((s) => s.errorMsg).filter(Boolean).join(', ') || null),
       raw: res.json(),
     };
   }

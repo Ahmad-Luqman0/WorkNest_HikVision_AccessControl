@@ -224,9 +224,14 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
         for (const [fid, data] of union) {
           if (have.has(fid)) continue;
           const r = await isapi.addFingerprint(s.m.dev, employeeNo, data, fid);
-          const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
-          logSync(null, s.m.dev.id, 'sync-fingerprint', ok, { employeeNo, fingerPrintID: fid });
-          if (r.ok) copied++;
+          const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || '')) || Boolean(r.duplicateWith);
+          logSync(null, s.m.dev.id, 'sync-fingerprint', ok, {
+            employeeNo,
+            fingerPrintID: fid,
+            ...(r.errorMsg ? { error: r.errorMsg } : {}),
+            ...(r.duplicateWith ? { duplicateWith: r.duplicateWith, note: `Active under employee #${r.duplicateWith}` } : {}),
+          });
+          if (r.ok || r.duplicateWith) copied++;
         }
       } catch { /* this machine only — retried next round */ }
     }));
@@ -336,9 +341,14 @@ export async function closeCredentialGaps(maxWrites = 10) {
           for (const v of prints) {
             try {
               const r = await isapi.addFingerprint(m.dev, emp, v.template, Number(v.finger_no) || 1);
-              const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || ''));
-              logSync(null, m.dev.id, 'sync-fingerprint', ok, { employeeNo: emp, fingerPrintID: Number(v.finger_no) || 1 });
-              if (r.ok) { written++; invalidateRoster(m.dev.id); }
+              const ok = r.ok || /alreadyexist/i.test(String(r.subStatusCode || '')) || Boolean(r.duplicateWith);
+              logSync(null, m.dev.id, 'sync-fingerprint', ok, {
+                employeeNo: emp,
+                fingerPrintID: Number(v.finger_no) || 1,
+                ...(r.errorMsg ? { error: r.errorMsg } : {}),
+                ...(r.duplicateWith ? { duplicateWith: r.duplicateWith, note: `Active under employee #${r.duplicateWith}` } : {}),
+              });
+              if (r.ok || r.duplicateWith) { written++; invalidateRoster(m.dev.id); }
             } catch { /* unreachable — next pass */ }
           }
         }

@@ -1796,18 +1796,22 @@ async function dashboard() {
 
   const actRows = logsList.length ? logsList.slice(0, 8).map((l) => {
     const cred = getCredBadge(l.action);
-    const who = l.employee_name || prettyAction(l.action);
-    const avatar = renderAvatar(who, 'md');
+    let detailObj = null;
+    try { detailObj = typeof l.detail === 'string' ? JSON.parse(l.detail) : l.detail; } catch { }
+    const empInfo = l.employee_name || (detailObj?.employeeNo ? `Member #${detailObj.employeeNo}` : null);
+    const who = empInfo && !l.employee_name ? `${prettyAction(l.action)} (${empInfo})` : (l.employee_name || prettyAction(l.action));
+    const avatar = renderAvatar(l.employee_name || who, 'md');
+    const note = detailObj?.note ? ` · ${esc(detailObj.note)}` : (detailObj?.error ? ` · ${esc(detailObj.error)}` : '');
     return `
     <div class="ticker-item animate-slide">
       ${avatar}
       <div class="ticker-main">
         <div class="ticker-person"><b>${esc(who)}</b> <span class="ticker-cred-label">${cred.label}</span></div>
-        <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}</small></div>
+        <div class="ticker-sub">${l.device_name ? esc(l.device_name) + ' · ' : ''}<small class="hint">${esc(l.ts)}${note}</small></div>
       </div>
       ${getLogStatusBadge(l.action, l.ok)}
     </div>`;
-  }).join('') : '<div class="list-empty">No entry activity stream yet.</div>';
+  }).join('') : '<div class="list-empty">No activity stream yet.</div>';
 
   const offline = devs.filter((d) => !d.online);
   const offlineHtml = offline.length
@@ -1932,7 +1936,7 @@ async function dashboard() {
 
       <section class="panel">
         <header>
-          <h3><span class="live-dot"></span> Real-Time Entry Stream</h3>
+          <h3><span class="live-dot"></span> Live Activity & Access Stream</h3>
           <div class="panel-actions"><button class="btn sm" id="dashGoLogs">View all →</button></div>
         </header>
         <div class="panel-body" id="dashTickerList" style="padding:10px;">${actRows}</div>
