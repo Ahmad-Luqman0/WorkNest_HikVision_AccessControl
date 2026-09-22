@@ -559,10 +559,7 @@ function renderHourlyInflowSection(analyticsData, totalMachines, onlineMachines,
 
       <section class="daily-digest-panel">
         <header>
-          <h3>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            <span>Today's Operations Briefing</span>
-          </h3>
+          <h3>Today's Operations Briefing</h3>
           <div class="panel-actions">
             <span class="badge online" style="font-size:10px;padding:2px 7px;">Real-Time</span>
           </div>
@@ -3996,8 +3993,8 @@ async function openMemberDrawer(employeeNo, rawName = '') {
       </div>
 
       <div class="drawer-action-strip">
-        <button class="btn sm" id="dact_syncBio">${ICONS.sync || '⚡'} Sync Biometrics</button>
-        <button class="btn sm" id="dact_extend">${ICONS.clock || '+'} Extend 30 Days</button>
+        <button class="btn sm" id="dact_syncBio">${ICONS.sync || ''} Sync Biometrics</button>
+        <button class="btn sm" id="dact_extend">${ICONS.clock || ''} Extend 30 Days</button>
       </div>
     </div>
 
