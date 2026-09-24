@@ -504,7 +504,7 @@ export async function archiveEvents() {
         if (!t || t.length < 19) continue;
         try {
           await run(
-            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, minor, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?)',
+            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event_category, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?)',
             [dev.id, dev.name, e.employeeNoString ? String(e.employeeNoString) : null, e.name || null,
              e.cardNo ? String(e.cardNo) : null, Number(e.minor) || null, serial, t]
           );

@@ -107,7 +107,7 @@ async function ensureEventsTable() {
           employee_no NVARCHAR(32) NULL,
           name NVARCHAR(128) NULL,
           card_no NVARCHAR(32) NULL,
-          minor INT NULL,
+          access_event_category INT NULL, -- Hikvision 'minor' event-type code
           serial_no BIGINT NULL,
           event_time DATETIME2(0) NOT NULL,
           created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Events_created DEFAULT (SYSDATETIME())
@@ -116,6 +116,8 @@ async function ensureEventsTable() {
         CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
         CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no) WHERE serial_no IS NOT NULL;
       END`);
+    // existing installs: 'minor' was renamed to the clearer name in place
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event_category', 'COLUMN'`);
   } catch (e) {
     console.error('[db] ensureEventsTable:', e.message);
   }
