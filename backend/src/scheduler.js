@@ -370,7 +370,7 @@ export async function syncCardGrants() {
     // standalone_no when unassigned.
     const holder = holderByCard.get(String(e.card_no)) || null;
     await run(`UPDATE dbo.WN_HIK_Cards SET
-        assigned_to_employee_no=?, assigned_to_name=?,
+        assigned_to_employee_no=?, employee_name=?,
         employee_no = COALESCE(?, standalone_no, employee_no)
       WHERE id=?`,
       [holder, holder ? (nameByEmp.get(holder) || null) : null, holder, e.id]).catch(() => {});
