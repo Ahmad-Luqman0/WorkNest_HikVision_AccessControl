@@ -15,6 +15,7 @@ import { getRoster, getCardTable, invalidateRoster } from './machineCache.js';
 import { startScheduler, runExpiryPass, runCredentialSync, runOnlineCheck, syncCredentialGroup, replayPendingOps, archiveEvents, sweepFaceVault, syncUsersTable, closeCredentialGaps, syncCardGrants } from './scheduler.js';
 import { securityHeaders, loginRateLimiter, hardwareRateLimiter, apiRateLimiter } from './security.js';
 import { notFoundHandler, errorHandler, asyncHandler, BadRequestError } from './errors.js';
+import { categoryLabel } from './eventCategories.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -286,7 +287,7 @@ app.get('/api/events', async (req, res) => {
          ORDER BY id DESC`
       );
     }
-    res.json({ ok: true, events: dbEvents || [], unreachable: [], fromDb: true });
+    res.json({ ok: true, events: (dbEvents || []).map((e) => ({ ...e, category_label: categoryLabel(e.minor) })), unreachable: [], fromDb: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }

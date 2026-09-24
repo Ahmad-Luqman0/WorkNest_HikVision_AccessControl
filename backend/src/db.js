@@ -118,8 +118,31 @@ async function ensureEventsTable() {
       END`);
     // existing installs: 'minor' was renamed to the clearer name in place
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event_category', 'COLUMN'`);
+    await ensureEventCategories();
   } catch (e) {
     console.error('[db] ensureEventsTable:', e.message);
+  }
+}
+
+// Readable lookup for access_event_category codes — mirrored from
+// ACCESS_EVENT_CATEGORY_MAPPING so SQL queries can JOIN to labels.
+async function ensureEventCategories() {
+  try {
+    const { ACCESS_EVENT_CATEGORY_MAPPING } = await import('./eventCategories.js');
+    await run(`IF OBJECT_ID('dbo.WN_HIK_EventCategories','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_EventCategories (
+        code INT NOT NULL CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY,
+        label NVARCHAR(64) NOT NULL,
+        is_denied BIT NOT NULL CONSTRAINT DF_WN_HIK_EvCat_denied DEFAULT (0)
+      )`);
+    for (const [code, m] of Object.entries(ACCESS_EVENT_CATEGORY_MAPPING)) {
+      await run(`MERGE dbo.WN_HIK_EventCategories AS t USING (SELECT ? AS code) s ON t.code = s.code
+        WHEN MATCHED THEN UPDATE SET label = ?, is_denied = ?
+        WHEN NOT MATCHED THEN INSERT (code, label, is_denied) VALUES (s.code, ?, ?);`,
+        [Number(code), m.label, m.denied ? 1 : 0, m.label, m.denied ? 1 : 0]);
+    }
+  } catch (e) {
+    console.error('[db] ensureEventCategories:', e.message);
   }
 }
 
