@@ -623,8 +623,16 @@ export async function replayPendingOps() {
         const r = await isapi.deletePerson(dev, emp);
         if (!r.ok && !/notExist/i.test(String(r.subStatusCode || ''))) throw new Error(isapi.describe(r));
       } else if (o.op === 'door-control') {
-        const r = await isapi.remoteControlDoor(dev, payload?.cmd || 'open');
-        if (!r.ok) throw new Error(isapi.describe(r));
+        // A door command is only meaningful for the person standing there NOW.
+        // Replaying an unlock queued hours ago (machine was offline) would
+        // open the door for whoever happens to be near when it reconnects.
+        const age = Date.now() - new Date(String(o.created_at).replace(' ', 'T')).getTime();
+        if (!(age >= 0 && age < 120000)) {
+          logSync(null, dev.id, 'dropped-stale-door-op', true, { queuedAt: o.created_at });
+        } else {
+          const r = await isapi.remoteControlDoor(dev, payload?.cmd || 'open');
+          if (!r.ok) throw new Error(isapi.describe(r));
+        }
       }
       await run('DELETE FROM dbo.WN_HIK_PendingOps WHERE id=?', [o.id]);
       logSync(null, dev.id, `applied-queued:${o.op}`, true, { employee_no: o.employee_no });
