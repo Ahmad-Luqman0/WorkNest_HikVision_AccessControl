@@ -129,7 +129,7 @@ cardsRouter.put('/:id', async (req, res) => {
   }
   if (updates.length) {
     vals.push(id);
-    await run(`UPDATE dbo.WN_HIK_Employees SET ${updates.join(', ')} WHERE id=?`, vals);
+    await run(`UPDATE dbo.WN_HIK_Cards SET ${updates.join(', ')} WHERE id=?`, vals);
     await run(
       `UPDATE dbo.WN_HIK_AccessGrants SET sync_state='pending' WHERE employee_id=? AND sync_state='synced'`,
       [id]
@@ -236,7 +236,7 @@ cardsRouter.delete('/:id', async (req, res) => {
       }
     }
   }
-  await run(`DELETE FROM dbo.WN_HIK_Employees WHERE id=? AND kind='card'`, [id]);
+  await run('DELETE FROM dbo.WN_HIK_Cards WHERE id=?', [id]);
   res.json({ ok: true, results, detached });
 });
 

@@ -176,7 +176,7 @@ extRouter.patch('/bookings/:ref', async (req, res) => {
     const nb = begin || row.valid_begin;
     const ne = end || row.valid_end;
     await run(
-      `UPDATE dbo.WN_HIK_Employees SET valid_begin=?, valid_end=?, status='active' WHERE id=?`,
+      `UPDATE dbo.WN_HIK_Visitors SET valid_begin=?, valid_end=?, status='active' WHERE id=?`,
       [nb, ne, row.id]
     );
     const grants = await getRows('SELECT device_id FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [row.id]);

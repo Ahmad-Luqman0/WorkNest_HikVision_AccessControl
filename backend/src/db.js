@@ -388,11 +388,13 @@ async function migrateFromSqliteIfEmpty() {
     const emps = lite.prepare('SELECT * FROM employees ORDER BY id').all();
     const empIdMap = new Map();
     for (const e of emps) {
+      // WN_HIK_Employees is a view over WN_HIK_Cards / WN_HIK_Visitors — route by kind.
+      const targetTable = (e.kind || 'member') === 'card' ? 'WN_HIK_Cards' : 'WN_HIK_Visitors';
       const r = await insert(
-        `INSERT INTO dbo.WN_HIK_Employees (employee_no, name, card_no, valid_begin, valid_end, auto_delete, status, notes, kind, booking_ref)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO dbo.${targetTable} (employee_no, name, card_no, valid_begin, valid_end, auto_delete, status, notes, booking_ref)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
         [String(e.employee_no), e.name, e.card_no || null, e.valid_begin || null, e.valid_end || null,
-         e.auto_delete ? 1 : 0, e.status || 'active', e.notes || null, e.kind || 'member', e.booking_ref || null]
+         e.auto_delete ? 1 : 0, e.status || 'active', e.notes || null, e.booking_ref || null]
       );
       empIdMap.set(e.id, r.lastInsertRowid);
     }

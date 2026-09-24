@@ -522,7 +522,7 @@ devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
         await run('DELETE FROM dbo.WN_HIK_AccessGrants WHERE employee_id=? AND device_id=?', [emp.id, dev.id]);
         if (emp.kind === 'visitor') {
           const left = await getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [emp.id]);
-          if (!Number(left?.n)) await run('DELETE FROM dbo.WN_HIK_Employees WHERE id=?', [emp.id]);
+          if (!Number(left?.n)) await run(`DELETE FROM dbo.${emp.kind === 'card' ? 'WN_HIK_Cards' : 'WN_HIK_Visitors'} WHERE id=?`, [emp.id]);
         }
       }
     }

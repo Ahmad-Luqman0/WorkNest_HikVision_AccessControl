@@ -91,7 +91,7 @@ export async function migrateRenewedBookings() {
 
   async function retarget(fromRef, toRef, newEnd, attendees, action) {
     await run(
-      `UPDATE dbo.WN_HIK_Employees SET booking_ref = ?, valid_end = ?, status = 'active' WHERE booking_ref = ?`,
+      `UPDATE dbo.WN_HIK_Visitors SET booking_ref = ?, valid_end = ?, status = 'active' WHERE booking_ref = ?`,
       [toRef, newEnd, fromRef]
     );
     for (const a of attendees) {
@@ -332,7 +332,7 @@ bookingsRouter.delete('/:id/attendees/:employeeNo', async (req, res) => {
     } catch (e) {
       return res.status(502).json({ ok: false, error: String(e.message || e) });
     }
-    await run('DELETE FROM dbo.WN_HIK_Employees WHERE id=?', [row.id]);
+    await run('DELETE FROM dbo.WN_HIK_Visitors WHERE id=?', [row.id]);
     logSync(null, null, 'booking-unenroll', true, { ref: REF(req.params.id), employeeNo: row.employee_no });
     res.json({ ok: true, machines });
   } catch (e) {
