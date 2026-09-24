@@ -25,13 +25,20 @@ export async function runExpiryPass() {
   for (const emp of expired) {
     logSync(emp.id, null, 'expire', true, `expired at ${now}`);
     if (emp.auto_delete) {
+      // A CARD record's employee_no is its holder — deleting that person
+      // would wipe a real member. For cards, remove the card itself; only
+      // visitor records (their own throwaway identities) delete the person.
+      const rec = await getRow('SELECT kind, card_no FROM dbo.WN_HIK_Employees WHERE id=?', [emp.id]).catch(() => null);
+      const isCard = rec?.kind === 'card';
       const grants = await getRows('SELECT * FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [emp.id]);
       for (const g of grants) {
         const dev = await getDeviceById(g.device_id);
         if (!dev) continue;
         try {
-          const r = await isapi.deletePerson(dev, emp.employee_no);
-          logSync(emp.id, dev.id, 'auto-delete', r.ok, r);
+          const r = isCard && rec?.card_no
+            ? await isapi.deleteCard(dev, String(rec.card_no))
+            : await isapi.deletePerson(dev, emp.employee_no);
+          logSync(emp.id, dev.id, isCard ? 'auto-delete-card' : 'auto-delete', r.ok, r);
         } catch (e) {
           logSync(emp.id, dev.id, 'auto-delete', false, String(e.message || e));
         }
@@ -358,10 +365,15 @@ export async function syncCardGrants() {
   let added = 0, removed = 0;
   for (const e of emps) {
     const on = byCard.get(String(e.card_no)) || new Set();
-    // keep the real holder mirrored on the card record
+    // keep the real holder mirrored on the card record: employee_no IS the
+    // holder's number while assigned, and reverts to the card's own
+    // standalone_no when unassigned.
     const holder = holderByCard.get(String(e.card_no)) || null;
-    await run('UPDATE dbo.WN_HIK_Cards SET assigned_to_employee_no=?, assigned_to_name=? WHERE id=?',
-      [holder, holder ? (nameByEmp.get(holder) || null) : null, e.id]).catch(() => {});
+    await run(`UPDATE dbo.WN_HIK_Cards SET
+        assigned_to_employee_no=?, assigned_to_name=?,
+        employee_no = COALESCE(?, standalone_no, employee_no)
+      WHERE id=?`,
+      [holder, holder ? (nameByEmp.get(holder) || null) : null, holder, e.id]).catch(() => {});
     const have = await getRows('SELECT id, device_id, sync_state FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [e.id]);
     const haveIds = new Set(have.map((g) => g.device_id));
     for (const devId of on) {
