@@ -56,6 +56,10 @@ export function notFoundHandler(req, res, next) {
 
 // Centralized Express Error Handling Middleware
 export function errorHandler(err, req, res, next) {
+  // Malformed request bodies are the CLIENT's fault, not a server error.
+  if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ ok: false, error: 'Invalid JSON body' });
+  }
   // Log unexpected internal errors
   const isOperational = err instanceof AppError;
   const statusCode = isOperational ? err.statusCode : 500;
