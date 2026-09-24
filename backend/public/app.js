@@ -2922,6 +2922,7 @@ async function users() {
         <span class="badge ok" style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;padding:4px 8px;" title="Background auto-sync is active and checks terminals automatically">
           <span class="live-dot" style="width:6px;height:6px;"></span> Auto-sync on
         </span>
+        ${dashRole === 'admin' ? '<button class="btn sm" id="u_import">Import CSV</button>' : ''}
         <button class="btn sm primary" id="u_add">+ Add user</button>
         <button class="btn sm" id="u_daypass">+ Day pass</button>
         <button class="btn sm" id="u_refresh" title="Reload from machines">↻</button>
@@ -2934,6 +2935,7 @@ async function users() {
   $('#u_refresh').addEventListener('click', () => loadUsersTable(devs));
   $('#u_sync_all')?.addEventListener('click', () => triggerFleetSyncAll(devs));
   $('#u_add').addEventListener('click', () => addUserModal(_usersDevId === 'all' ? devs[0] : devs.find((d) => d.id == _usersDevId), devs, _usersDevId === 'all'));
+  $('#u_import')?.addEventListener('click', () => importUsersModal(devs));
   $('#u_daypass').addEventListener('click', () => dayPassModal(devs));
 
   $('#userLiveSearch')?.addEventListener('input', (e) => {
@@ -3546,6 +3548,7 @@ async function loadUsersTable(devs) {
     const admin = !!e.u.localUIRight;
     showRowMenu(b, [
       ['View profile', () => userProfileModal(e)],
+      ['Monthly statement…', () => statementModal(e)],
       ['Edit name / #', () => editUserModal(e, devs)],
       ['Machine access', () => accessModal(e.on[0], e.u.employeeNo, e.u.name || '', devs)],
       ...(dashRole === 'admin' ? [[admin ? 'Change role: Admin → User' : 'Change role: User → Admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)]] : []),
@@ -4604,6 +4607,194 @@ async function setRole(devsOn, employeeNo, role, devs) {
     fails.length ? 'err' : 'ok'
   );
   if (devs && $('#u_table')) loadUsersTable(devs);
+}
+
+// ---- Monthly member statement (printable -> Save as PDF, or Excel/CSV) ----
+async function statementModal(entry) {
+  const { u } = entry;
+  const now = new Date();
+  const defMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  openModal(`
+    <h2>Monthly statement — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field"><label for="st_month">Month</label><input id="st_month" type="month" value="${defMonth}"></div>
+    <div class="field-help">Visits, entry times and doors used, from the entry archive. Opens a printable statement (use Print → Save as PDF) or downloads Excel.</div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="st_cancel">Cancel</button>
+      <button class="btn" id="st_excel">Download Excel</button>
+      <button class="btn primary" id="st_print">Open statement</button>
+    </div>`);
+  $('#st_cancel').addEventListener('click', closeModal);
+  const fetchStatement = async () => {
+    const month = $('#st_month').value;
+    if (!/^\d{4}-\d{2}$/.test(month)) { toast('Pick a month', 'err'); return null; }
+    const r = await api.get(`/statement?emp=${encodeURIComponent(u.employeeNo)}&name=${encodeURIComponent(u.name || '')}&month=${month}`);
+    if (!r?.ok) { toast(`Failed: ${r?.error || 'error'}`, 'err'); return null; }
+    return r;
+  };
+  $('#st_excel').addEventListener('click', async () => {
+    const r = await fetchStatement();
+    if (!r) return;
+    const lines = [
+      ['WorkNest Access Control — Monthly Statement'],
+      ['Member', r.member.name, 'Employee #', r.member.employee_no],
+      ['CNIC', r.member.cnic || '-', 'Room', r.member.room || '-'],
+      ['Month', r.month, 'Visit days', r.totals.visit_days, 'Total scans', r.totals.total_scans],
+      [],
+      ['Date', 'First entry', 'Last activity', 'Scans', 'Doors used'],
+      ...r.days.map((d) => [d.day, d.first_in, d.last_seen, d.scans, d.doors.join('; ')]),
+    ];
+    const csv = lines.map((row) => row.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `statement-${r.member.employee_no}-${r.month}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  $('#st_print').addEventListener('click', async () => {
+    const r = await fetchStatement();
+    if (!r) return;
+    const monthName = new Date(r.month + '-01T00:00:00').toLocaleString('en', { month: 'long', year: 'numeric' });
+    const rows = r.days.map((d) => `<tr><td>${esc(d.day)}</td><td>${esc(d.first_in)}</td><td>${esc(d.last_seen)}</td><td style="text-align:right">${d.scans}</td><td>${esc(d.doors.join(', '))}</td></tr>`).join('')
+      || '<tr><td colspan="5" style="text-align:center;color:#888">No visits recorded this month</td></tr>';
+    const w = window.open('', '_blank');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Statement ${esc(r.member.name)} ${esc(r.month)}</title>
+      <style>
+        body{font:13px/1.5 -apple-system,'Segoe UI',Roboto,sans-serif;color:#111;margin:40px;max-width:800px}
+        .head{display:flex;align-items:center;gap:14px;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:18px}
+        .head img{width:46px;height:46px;border-radius:10px}
+        h1{font-size:19px;margin:0} .sub{color:#666;font-size:12px}
+        .meta{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin-bottom:18px;font-size:13px}
+        .meta b{display:inline-block;min-width:90px;color:#555;font-weight:600}
+        table{width:100%;border-collapse:collapse;font-size:12.5px}
+        th,td{border:1px solid #ddd;padding:7px 9px;text-align:left}
+        th{background:#f4f5f7;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+        .totals{margin-top:14px;font-size:13px} .totals b{font-weight:700}
+        .foot{margin-top:26px;color:#999;font-size:11px}
+        @media print{ .noprint{display:none} }
+      </style></head><body>
+      <div class="head"><img src="${location.origin}/logo-mark.png"><div><h1>WorkNest Access Control</h1><div class="sub">Monthly Member Statement — ${esc(monthName)}</div></div></div>
+      <div class="meta">
+        <div><b>Member</b> ${esc(r.member.name)}</div><div><b>Employee #</b> ${esc(r.member.employee_no)}</div>
+        <div><b>CNIC</b> ${esc(r.member.cnic || '—')}</div><div><b>Room</b> ${esc(r.member.room || '—')}</div>
+      </div>
+      <table><thead><tr><th>Date</th><th>First entry</th><th>Last activity</th><th>Scans</th><th>Doors used</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="totals"><b>${r.totals.visit_days}</b> visit day${r.totals.visit_days === 1 ? '' : 's'} · <b>${r.totals.total_scans}</b> scans · doors used: ${esc(r.totals.doors_used.join(', ') || '—')}</div>
+      <div class="foot">Generated ${new Date().toLocaleString()} · WorkNest Access Control</div>
+      <div class="noprint" style="margin-top:20px"><button onclick="print()" style="padding:10px 18px;font-size:14px;cursor:pointer">Print / Save as PDF</button></div>
+      </body></html>`);
+    w.document.close();
+  });
+}
+
+// ---- Bulk import members from CSV (admin) ---------------------------------
+// Columns: name, cnic, room (optional), card (optional). Each person is
+// created on the FULL Entrance group + their room's machine, with an
+// auto-assigned employee # — same rules as the Add-user form.
+function importUsersModal(devs) {
+  openModal(`
+    <h2>Import members from CSV</h2>
+    <p class="modal-sub">Header row required: <span class="mono">name,cnic,room,card</span> — room and card optional. Save Excel sheets as CSV first.</p>
+    <div class="field"><label for="imp_file">CSV file</label><input id="imp_file" type="file" accept=".csv,text/csv"></div>
+    <div id="imp_preview"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="imp_cancel">Cancel</button>
+      <button class="btn primary" id="imp_go" disabled>Import</button>
+    </div>`);
+  $('#imp_cancel').addEventListener('click', closeModal);
+  let parsed = [];
+  const isEntr = (d) => String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+  const entranceIds = devs.filter(isEntr).map((d) => d.id);
+  $('#imp_file').addEventListener('change', async () => {
+    const f = $('#imp_file').files[0];
+    if (!f) return;
+    const text = await f.text();
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    const parseLine = (l) => {
+      const out = []; let cur = '', inQ = false;
+      for (let i = 0; i < l.length; i++) {
+        const ch = l[i];
+        if (inQ) { if (ch === '"') { if (l[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += ch; }
+        else if (ch === '"') inQ = true;
+        else if (ch === ',' || ch === ';') { out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out.map((x) => x.trim());
+    };
+    const header = parseLine(lines[0]).map((h) => h.toLowerCase());
+    const col = (name) => header.indexOf(name);
+    if (col('name') < 0 || col('cnic') < 0) {
+      $('#imp_preview').innerHTML = '<div class="field-help" style="color:var(--red)">Header must include "name" and "cnic" columns.</div>';
+      $('#imp_go').disabled = true;
+      return;
+    }
+    parsed = lines.slice(1).map((l, i) => {
+      const c = parseLine(l);
+      const row = {
+        line: i + 2,
+        name: c[col('name')] || '',
+        cnic: (c[col('cnic')] || '').replace(/\D/g, ''),
+        room: col('room') >= 0 ? (c[col('room')] || '').trim() : '',
+        card: col('card') >= 0 ? (c[col('card')] || '').trim() : '',
+      };
+      row.roomDev = row.room ? devs.find((d) => String(d.code) === String(row.room) && !isEntr(d)) : null;
+      row.err = !row.name ? 'name missing'
+        : !/^\d{13}$/.test(row.cnic) ? 'CNIC must be 13 digits'
+        : (row.room && !row.roomDev) ? `room "${row.room}" not found`
+        : (row.card && !/^\d+$/.test(row.card)) ? 'card must be digits'
+        : null;
+      return row;
+    });
+    const bad = parsed.filter((r) => r.err);
+    $('#imp_preview').innerHTML = `
+      <div class="field-help" style="margin-bottom:8px"><b>${parsed.length}</b> rows — <b>${parsed.length - bad.length}</b> valid${bad.length ? `, <span style="color:var(--red)">${bad.length} with problems (skipped)</span>` : ''}. Each valid member is created on all ${entranceIds.length} entrances${devs.some((d) => !isEntr(d)) ? ' + their room' : ''} with an auto employee #.</div>
+      <div class="device-checklist" style="max-height:200px">${parsed.slice(0, 60).map((r) => `
+        <label class="dev-check-item slim" style="cursor:default">
+          <div class="dev-info"><span class="dev-name">${esc(r.name || '(no name)')}</span>
+            <span class="dev-loc">${esc(r.cnic || '—')}${r.room ? ' · room ' + esc(r.room) : ''}${r.card ? ' · card ' + esc(r.card) : ''}</span></div>
+          ${r.err ? `<span class="dev-host" style="color:var(--red)">${esc(r.err)}</span>` : '<span class="dev-host">ok</span>'}
+        </label>`).join('')}</div>`;
+    $('#imp_go').disabled = !parsed.some((r) => !r.err);
+  });
+  $('#imp_go').addEventListener('click', async () => {
+    const rows = parsed.filter((r) => !r.err);
+    if (!rows.length) return;
+    closeModal();
+    const bar = progressBar(rows.length, 'Importing members —');
+    const results = [];
+    for (const row of rows) {
+      const deviceIds = [...entranceIds, ...(row.roomDev ? [row.roomDev.id] : [])];
+      try {
+        const r = await api.post('/devices/users', {
+          device_ids: deviceIds,
+          only_ids: deviceIds,
+          name: row.name,
+          cnic: row.cnic,
+          role: 'user',
+          card_no: row.card || undefined,
+        });
+        results.push({ row, ok: !!r?.results?.some((x) => x.ok), no: r?.employeeNo, error: r?.error });
+      } catch (e) {
+        results.push({ row, ok: false, error: String(e.message || e) });
+      }
+      bar.tick(1);
+    }
+    bar.close();
+    const ok = results.filter((x) => x.ok);
+    const bad = results.filter((x) => !x.ok);
+    openModal(`
+      <h2>Import finished</h2>
+      <p class="modal-sub"><b>${ok.length}</b> member${ok.length === 1 ? '' : 's'} created${bad.length ? ` · <span style="color:var(--red)">${bad.length} failed</span>` : ''}.</p>
+      <div class="device-checklist" style="max-height:260px">${results.map((x) => `
+        <label class="dev-check-item slim" style="cursor:default">
+          <div class="dev-info"><span class="dev-name">${esc(x.row.name)}</span>
+            <span class="dev-loc">${x.ok ? '#' + esc(x.no) : esc(x.error || 'failed')}</span></div>
+          <span class="dev-host" style="color:${x.ok ? 'var(--green, #059669)' : 'var(--red)'}">${x.ok ? 'created' : 'failed'}</span>
+        </label>`).join('')}</div>
+      <div class="modal-actions"><button class="btn primary" id="imp_done">Done</button></div>`);
+    $('#imp_done').addEventListener('click', () => { closeModal(); if ($('#u_table')) loadUsersTable(devs); });
+  });
 }
 
 function tagCard(entry, devs) {

@@ -1155,6 +1155,71 @@ app.get('/api/analytics/hourly-details', async (req, res) => {
 });
 
 // Single user deep analytics breakdown (scan history, doors, peak times, and recent logs)
+// Monthly member statement: per-day first entry / last activity, scans and
+// rooms used, aggregated from the events archive. ?emp=&name=&month=YYYY-MM
+app.get('/api/statement', async (req, res) => {
+  try {
+    const emp = String(req.query.emp || '').trim();
+    const name = String(req.query.name || '').trim();
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : null;
+    if (!emp || !month) return res.status(400).json({ error: 'emp and month=YYYY-MM required' });
+    const from = `${month}-01T00:00:00`;
+    const [y, m] = month.split('-').map(Number);
+    const to = `${y}-${p2(m)}-${p2(new Date(y, m, 0).getDate())}T23:59:59`;
+
+    const rows = await getRows(
+      `SELECT CONVERT(varchar(10), e.event_time, 126) AS day,
+              MIN(e.event_time) AS first_in,
+              MAX(e.event_time) AS last_seen,
+              COUNT(*) AS scans
+       FROM dbo.WN_HIK_Events e WITH (NOLOCK)
+       WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
+         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+       GROUP BY CONVERT(varchar(10), e.event_time, 126)
+       ORDER BY day`,
+      [emp, from, to]
+    );
+    // rooms/doors used per day (device names, entrances included but marked)
+    const devRows = await getRows(
+      `SELECT CONVERT(varchar(10), e.event_time, 126) AS day, e.device_name, COUNT(*) AS n
+       FROM dbo.WN_HIK_Events e WITH (NOLOCK)
+       WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
+         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+       GROUP BY CONVERT(varchar(10), e.event_time, 126), e.device_name`,
+      [emp, from, to]
+    );
+    const doorsByDay = {};
+    for (const d of devRows) {
+      (doorsByDay[d.day] ??= []).push(d.device_name);
+    }
+    const days = rows.map((r) => ({
+      day: r.day,
+      first_in: String(r.first_in).slice(11, 16),
+      last_seen: String(r.last_seen).slice(11, 16),
+      scans: r.scans,
+      doors: (doorsByDay[r.day] || []).sort(),
+    }));
+    const allDoors = [...new Set(devRows.map((d) => d.device_name))].sort();
+    // CNIC + room from the members table for the header
+    const u = await getRow(
+      'SELECT TOP 1 name, cnic, room FROM dbo.WN_HIK_Users WHERE employee_no = ?', [emp]
+    ).catch(() => null);
+    res.json({
+      ok: true,
+      member: { employee_no: emp, name: u?.name || name || `User ${emp}`, cnic: u?.cnic || null, room: u?.room || null },
+      month,
+      days,
+      totals: {
+        visit_days: days.length,
+        total_scans: days.reduce((a, b) => a + b.scans, 0),
+        doors_used: allDoors,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 app.get('/api/analytics/user/:employeeNo', async (req, res) => {
   try {
     const rawEmpNo = String(req.params.employeeNo || '').trim();
