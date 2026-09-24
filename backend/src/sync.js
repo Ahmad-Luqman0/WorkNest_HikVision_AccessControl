@@ -55,8 +55,11 @@ export async function removeEmployeeFromDevice(emp, dev) {
 export async function syncEmployee(employeeId) {
   const emp = await employee(employeeId);
   if (!emp) throw new Error('employee not found');
-  // An unassigned card has no person number — there is nothing to push to a
-  // machine until it is assigned to someone.
+  // Card records are mirrors: employee_no is the HOLDER, so pushing this
+  // record as a person would overwrite the real member's name and validity
+  // on the machines. Card access windows are applied by the cards route;
+  // grants for cards are informational mirrors maintained by the reconciler.
+  if (emp.kind === 'card') return [];
   if (!emp.employee_no) return [];
   const grants = await getRows('SELECT * FROM dbo.WN_HIK_AccessGrants WHERE employee_id = ?', [Number(employeeId)]);
   const results = [];

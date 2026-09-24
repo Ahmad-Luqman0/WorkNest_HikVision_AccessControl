@@ -5146,10 +5146,6 @@ function cardModal(c = null, devs = []) {
   if (!c) return addCardModal();
 
   const labelVal = c.name && !/^Card /.test(c.name) ? c.name : '';
-  const grantIds = new Set((c.grants || []).filter((g) => g.sync_state !== 'removing').map((g) => g.device_id));
-  const deviceChecks = devs.length
-    ? devs.map((d) => `<label><input type="checkbox" class="card-dev-check" value="${d.id}" ${grantIds.has(d.id) ? 'checked' : ''}> ${esc(d.name)} <small class="hint">${esc(d.host)}</small></label>`).join('')
-    : '<span class="muted">No machines yet — provision one in the database first.</span>';
   openModal(`
     <h2>Edit card</h2>
     <div class="form-section first">
@@ -5177,32 +5173,36 @@ function cardModal(c = null, devs = []) {
       <div class="field check"><input id="c_autodel" type="checkbox" ${c.auto_delete ? 'checked' : ''}><label>Auto-delete from machines after expiry</label></div>
       <div class="field-help">If this card is assigned to a user, the access period applies to that user on every machine holding the card — machines enforce validity per person, so it covers all their credentials there.</div>
     </div>
-    <div class="form-section">
-      <div class="form-section-head">Machines</div>
-      <div class="field-help" style="margin:-6px 0 10px">Standalone card only — pick one or more.</div>
-      ${groupSelectHtml(devs)}
-      <div class="device-checklist">${deviceChecks}</div>
-    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="c_cancel">Cancel</button>
-      <button class="btn primary" id="c_save">Save &amp; sync</button>
+      <button class="btn primary" id="c_save">Save</button>
     </div>`);
-  wireGroupSelect(devs, 'card-dev-check');
   $('#c_cancel').addEventListener('click', closeModal);
   $('#c_save').addEventListener('click', async () => {
     const card_no = $('#c_card').value.trim();
     if (!card_no) { toast('Card # required', 'err'); return; }
-    const deviceIds = [...document.querySelectorAll('.card-dev-check:checked')].map((x) => Number(x.value));
-    const r = await api.put(`/cards/${c.id}`, {
-      card_no,
-      label: $('#c_label').value.trim() || null,
-      notes: $('#c_notes').value.trim() || null,
-      valid_begin: fromLocalInput($('#c_begin').value),
-      valid_end: fromLocalInput($('#c_end').value),
-      auto_delete: $('#c_autodel').checked,
-    });
-    await api.put(`/cards/${c.id}/grants`, { device_ids: deviceIds });
-    await api.post(`/cards/${c.id}/sync`);
+    const btn = $('#c_save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    let r;
+    try {
+      r = await api.put(`/cards/${c.id}`, {
+        card_no,
+        label: $('#c_label').value.trim() || null,
+        notes: $('#c_notes').value.trim() || null,
+        valid_begin: fromLocalInput($('#c_begin').value),
+        valid_end: fromLocalInput($('#c_end').value),
+        auto_delete: $('#c_autodel').checked,
+      });
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Save';
+      toast(`Save failed: ${e.message || 'error'}`, 'err');
+      return;
+    }
+    if (r?.error) {
+      btn.disabled = false; btn.textContent = 'Save';
+      toast(`Save failed: ${r.error}`, 'err');
+      return;
+    }
     closeModal();
     const applied = (r.applied || []).filter((x) => x.ok);
     const failed = (r.applied || []).filter((x) => !x.ok);

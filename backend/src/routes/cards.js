@@ -132,23 +132,24 @@ cardsRouter.put('/:id', async (req, res) => {
   if (updates.length) {
     vals.push(id);
     await run(`UPDATE dbo.WN_HIK_Cards SET ${updates.join(', ')} WHERE id=?`, vals);
-    await run(
-      `UPDATE dbo.WN_HIK_AccessGrants SET sync_state='pending' WHERE employee_id=? AND sync_state='synced'`,
-      [id]
-    );
   }
 
   // If the access period changed, also apply it to every USER holding this card
   // on any machine. Machines enforce validity per person, so this updates the
   // holder's Valid Period there (all their credentials on that machine).
   const applied = [];
-  if (req.body.valid_end !== undefined || req.body.valid_begin !== undefined) {
-    const fresh = await getRow(`SELECT * FROM dbo.WN_HIK_Employees WHERE id=?`, [id]);
-    if (fresh?.card_no) {
-      const devices = await getAllDevices();
-      for (const dev of devices) {
+  const wantsWindow = req.body.valid_end !== undefined || req.body.valid_begin !== undefined;
+  const fresh0 = wantsWindow ? await getRow(`SELECT * FROM dbo.WN_HIK_Employees WHERE id=?`, [id]) : null;
+  // Apply the window only when one is actually set — and in PARALLEL: the
+  // old sequential 55-machine crawl blew past the serverless time cap and
+  // the whole save died silently.
+  if (fresh0?.card_no && (fresh0.valid_begin || fresh0.valid_end)) {
+    const fresh = fresh0;
+    {
+      const devices = (await getAllDevices()).filter((d) => d.online);
+      await Promise.all(devices.map(async (dev) => {
         try {
-          const all = await getCardTable(dev, 60000);
+          const all = await getCardTable(dev, 3600000);
           for (const c of all) {
             if (String(c.cardNo) !== String(fresh.card_no)) continue;
             const p = await isapi.getPerson(dev, c.employeeNo);
@@ -167,7 +168,7 @@ cardsRouter.put('/:id', async (req, res) => {
         } catch {
           applied.push({ device: dev.name, ok: false, error: 'unreachable' });
         }
-      }
+      }));
     }
   }
   res.json({ ok: true, applied });
