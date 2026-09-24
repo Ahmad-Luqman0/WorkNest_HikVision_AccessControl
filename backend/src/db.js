@@ -116,6 +116,8 @@ async function ensureEventsTable() {
         CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
         CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no) WHERE serial_no IS NOT NULL;
       END`);
+    // card records mirror who actually holds the card on the machines
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','assigned_to_employee_no') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD assigned_to_employee_no NVARCHAR(32) NULL, assigned_to_name NVARCHAR(128) NULL`);
     // existing installs: 'minor' was renamed to the clearer name in place
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event_category', 'COLUMN'`);
     await ensureEventCategories();

@@ -308,9 +308,27 @@ export async function syncCardGrants() {
       byCard.get(k).add(snap.device_id);
     }
   }
+  // Who actually HOLDS each card on the machines (card table snapshots map
+  // cardNo -> the holder's employee number; roster snapshots give the name).
+  const holderByCard = new Map(); // card_no -> employee_no
+  const nameByEmp = new Map(); // employee_no -> name
+  for (const snap of snaps) {
+    let list; try { list = JSON.parse(snap.cards); } catch { continue; }
+    for (const c of list) if (!holderByCard.has(String(c.cardNo))) holderByCard.set(String(c.cardNo), String(c.employeeNo));
+  }
+  try {
+    for (const r of await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL')) {
+      let users; try { users = JSON.parse(r.roster); } catch { continue; }
+      for (const u of users) if (!nameByEmp.has(String(u.employeeNo))) nameByEmp.set(String(u.employeeNo), String(u.name || '').trim());
+    }
+  } catch { /* names best-effort */ }
   let added = 0, removed = 0;
   for (const e of emps) {
     const on = byCard.get(String(e.card_no)) || new Set();
+    // keep the real holder mirrored on the card record
+    const holder = holderByCard.get(String(e.card_no)) || null;
+    await run('UPDATE dbo.WN_HIK_Cards SET assigned_to_employee_no=?, assigned_to_name=? WHERE id=?',
+      [holder, holder ? (nameByEmp.get(holder) || null) : null, e.id]).catch(() => {});
     const have = await getRows('SELECT id, device_id, sync_state FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [e.id]);
     const haveIds = new Set(have.map((g) => g.device_id));
     for (const devId of on) {
