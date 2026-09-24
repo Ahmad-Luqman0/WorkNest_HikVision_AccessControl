@@ -117,8 +117,7 @@ async function ensureEventsTable() {
         CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no) WHERE serial_no IS NOT NULL;
       END`);
     // card records mirror who actually holds the card on the machines
-    await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','assigned_to_employee_no') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD assigned_to_employee_no NVARCHAR(32) NULL, employee_name NVARCHAR(128) NULL`);
-    await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','assigned_to_name') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Cards.assigned_to_name', 'employee_name', 'COLUMN'`);
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','employee_name') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD employee_name NVARCHAR(128) NULL`);
     // standalone_no preserves the card's own registration number; employee_no
     // then shows the HOLDER's number (falls back to standalone_no when the
     // card is unassigned) — kept current by the grants reconciler.
