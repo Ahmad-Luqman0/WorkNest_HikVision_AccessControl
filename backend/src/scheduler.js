@@ -8,6 +8,7 @@ import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
 import { migrateRenewedBookings } from './routes/bookings.js';
+import { categoryLabel } from './eventCategories.js';
 
 function nowLocalIso() {
   const d = new Date();
@@ -568,9 +569,9 @@ export async function archiveEvents() {
         if (serial && serial <= lastSerial && lastTime && t <= lastTime) continue;
         try {
           await run(
-            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event_category, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?)',
+            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event, access_event_details, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?,?)',
             [dev.id, dev.name, e.employeeNoString ? String(e.employeeNoString) : null, e.name || null,
-             e.cardNo ? String(e.cardNo) : null, Number(e.minor) || null, serial, t]
+             e.cardNo ? String(e.cardNo) : null, Number(e.minor) || null, categoryLabel(e.minor), serial, t]
           );
           saved++;
         } catch { /* duplicate serial — already archived */ }
