@@ -554,13 +554,18 @@ export async function archiveEvents() {
         recent.push(...page.list);
         pos += page.list.length;
       }
-      const maxRow = await getRow('SELECT MAX(serial_no) AS m FROM dbo.WN_HIK_Events WHERE device_id=?', [dev.id]);
+      const maxRow = await getRow(`SELECT MAX(serial_no) AS m, CONVERT(varchar(19), MAX(event_time), 126) AS mt FROM dbo.WN_HIK_Events WHERE device_id=?`, [dev.id]);
       const lastSerial = Number(maxRow?.m) || 0;
+      const lastTime = maxRow?.mt ? String(maxRow.mt).slice(0, 19) : null;
       for (const e of recent) {
         const serial = Number(e.serialNo) || null;
-        if (serial && serial <= lastSerial) continue;
         const t = String(e.time || '').slice(0, 19);
         if (!t || t.length < 19) continue;
+        // Fast-path skip for already-archived tail re-reads — but only when
+        // the event time isn't newer than what's archived: a factory-reset
+        // machine restarts serials at 1, and serial alone would silently
+        // swallow all its fresh events.
+        if (serial && serial <= lastSerial && lastTime && t <= lastTime) continue;
         try {
           await run(
             'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event_category, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?)',

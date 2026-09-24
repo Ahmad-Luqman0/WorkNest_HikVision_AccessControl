@@ -114,7 +114,16 @@ async function ensureEventsTable() {
         );
         CREATE INDEX IX_WN_HIK_Events_time ON dbo.WN_HIK_Events (event_time);
         CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
-        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no) WHERE serial_no IS NOT NULL;
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no, event_time) WHERE serial_no IS NOT NULL;
+      END`);
+    // existing installs: widen the dedupe key so a factory-reset machine
+    // (serials restart at 1) can't have its fresh events silently swallowed
+    await run(`IF EXISTS (SELECT 1 FROM sys.indexes i
+        WHERE i.name='UX_WN_HIK_Events_dev_serial' AND i.object_id=OBJECT_ID('dbo.WN_HIK_Events')
+          AND (SELECT COUNT(*) FROM sys.index_columns ic WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id)=2)
+      BEGIN
+        DROP INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events;
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no, event_time) WHERE serial_no IS NOT NULL;
       END`);
     // card records mirror who actually holds the card on the machines
     await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','employee_name') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD employee_name NVARCHAR(128) NULL`);
