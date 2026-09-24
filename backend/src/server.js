@@ -449,16 +449,20 @@ app.get('/api/roster', async (req, res) => {
 
   const rosters = await Promise.all(devices.map(async (dev) => {
     try {
-      if (!dev.online) throw new Error('Device is offline');
+      // getRoster serves an OFFLINE machine from its last snapshot — real
+      // members, exactly as last seen. Throwing early on !online skipped
+      // that and fell through to the grants fallback, which rendered CARD
+      // records (named "Card 00105…", numbered as their holder) as users.
       const users = await getRoster(dev);
       return { device_id: dev.id, ok: true, users: isAdmin ? users : users.filter((u) => !u.localUIRight) };
     } catch (e) {
-      // Fast fallback to database records for this device so users view never hangs
+      // Last resort when no snapshot exists at all: visitor records only —
+      // card records are cards, not people.
       try {
         const dbUsers = await getRows(
           `SELECT e.employee_no AS employeeNo, e.name, e.card_no, e.valid_begin, e.valid_end, e.status
            FROM dbo.WN_HIK_AccessGrants g
-           JOIN dbo.WN_HIK_Employees e ON e.id = g.employee_id
+           JOIN dbo.WN_HIK_Employees e ON e.id = g.employee_id AND e.kind = 'visitor'
            WHERE g.device_id = ?`,
           [dev.id]
         );

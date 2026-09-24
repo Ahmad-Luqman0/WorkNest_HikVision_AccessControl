@@ -287,7 +287,7 @@ devicesRouter.get('/:id/users', async (req, res) => {
     } catch { cnics = undefined; }
   }
   try {
-    if (!dev.online) throw new Error('Device is offline');
+    // offline machines serve their last roster snapshot via getRoster
     const users = hideAdmins(req, await getRoster(dev));
     // Attach the actual card numbers per user (one bulk read for the whole
     // machine — not one call per user).
