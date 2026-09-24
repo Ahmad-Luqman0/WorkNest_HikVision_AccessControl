@@ -289,6 +289,45 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   return { copied };
 }
 
+// Keep WN_HIK_AccessGrants mirroring reality for card records: one grant row
+// per machine that actually holds the card (per the card-table snapshots).
+// 'pending' rows (queued pushes) are never touched; only the mirrored
+// 'synced' rows are added/removed, and a machine with no snapshot is left
+// alone. Pure DB work — safe on serverless.
+export async function syncCardGrants() {
+  const emps = await getRows("SELECT id, card_no FROM dbo.WN_HIK_Employees WHERE kind='card' AND status='active' AND card_no IS NOT NULL");
+  if (!emps.length) return { added: 0, removed: 0 };
+  const snaps = await getRows('SELECT device_id, cards FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE cards IS NOT NULL');
+  const snapped = new Set(snaps.map((x) => x.device_id));
+  const byCard = new Map(); // card_no -> Set(device_id)
+  for (const snap of snaps) {
+    let list; try { list = JSON.parse(snap.cards); } catch { continue; }
+    for (const c of list) {
+      const k = String(c.cardNo);
+      if (!byCard.has(k)) byCard.set(k, new Set());
+      byCard.get(k).add(snap.device_id);
+    }
+  }
+  let added = 0, removed = 0;
+  for (const e of emps) {
+    const on = byCard.get(String(e.card_no)) || new Set();
+    const have = await getRows('SELECT id, device_id, sync_state FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [e.id]);
+    const haveIds = new Set(have.map((g) => g.device_id));
+    for (const devId of on) {
+      if (haveIds.has(devId)) continue;
+      await run("INSERT INTO dbo.WN_HIK_AccessGrants (employee_id, device_id, sync_state, synced_at) VALUES (?,?,'synced',SYSDATETIME())", [e.id, devId]);
+      added++;
+    }
+    for (const g of have) {
+      if (g.sync_state === 'synced' && snapped.has(g.device_id) && !on.has(g.device_id)) {
+        await run('DELETE FROM dbo.WN_HIK_AccessGrants WHERE id=?', [g.id]);
+        removed++;
+      }
+    }
+  }
+  return { added, removed };
+}
+
 // Cloud-safe slice of credential auto-sync: push VAULTED face/fingerprint
 // templates to machines where the person has none. Works entirely from
 // roster snapshots + the vaults (no fleet-wide reads) and is bounded per
@@ -603,6 +642,7 @@ export function startScheduler() {
     try { await archiveEvents(); } catch (e) { console.error('[scheduler] event archive failed:', e); }
     try { await sweepFaceVault(); } catch (e) { console.error('[scheduler] face vault sweep failed:', e); }
     try { await syncUsersTable(); } catch (e) { console.error('[scheduler] users table sync failed:', e); }
+    try { await syncCardGrants(); } catch (e) { console.error('[scheduler] card grants sync failed:', e); }
     try {
       const r = await migrateRenewedBookings();
       if (r.migrated) console.log(`[scheduler] booking renewal carried over ${r.migrated} attendee(s)`);
