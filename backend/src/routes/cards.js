@@ -120,7 +120,7 @@ cardsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const row = await getRow(`SELECT * FROM dbo.WN_HIK_Employees WHERE id=? AND kind='card'`, [id]);
   if (!row) return res.status(404).json({ error: 'not found' });
-  const map = { card_no: 'card_no', label: 'name', valid_begin: 'valid_begin', valid_end: 'valid_end', auto_delete: 'auto_delete' };
+  const map = { card_no: 'card_no', label: 'name', valid_begin: 'valid_begin', valid_end: 'valid_end', auto_delete: 'auto_delete', notes: 'notes' };
   const updates = [];
   const vals = [];
   for (const [key, col] of Object.entries(map)) {

@@ -4955,7 +4955,8 @@ async function cards() {
         ? `<span class="${isExpired ? 'badge error' : 'hint'}">${esc(c.valid_end.replace('T', ' ').slice(0, 16))}</span>`
         : '<span class="muted">no expiry</span>';
 
-      const customLabel = c.name && c.name !== `Card ${c.card_no}` ? ` <small class="hint">${esc(c.name)}</small>` : '';
+      const customLabel = (c.name && c.name !== `Card ${c.card_no}` ? ` <small class="hint">${esc(c.name)}</small>` : '')
+        + (c.notes ? `<br><small class="hint" title="${esc(c.notes)}">📝 ${esc(String(c.notes).slice(0, 60))}${String(c.notes).length > 60 ? '…' : ''}</small>` : '');
       return `<tr>
         <td class="nowrap"><b>${esc(c.card_no || '—')}</b>${customLabel}</td>
         <td class="nowrap">${validityBadge}</td>
@@ -5161,6 +5162,11 @@ function cardModal(c = null, devs = []) {
           <div class="field-help">Optional.</div>
         </div>
       </div>
+      <div class="field">
+        <label for="c_notes">Notes</label>
+        <textarea id="c_notes" rows="2" placeholder="e.g. spare card kept at reception; deposit paid">${esc(c.notes || '')}</textarea>
+        <div class="field-help">Optional — internal remarks, shown only on the dashboard.</div>
+      </div>
     </div>
     <div class="form-section">
       <div class="form-section-head">Access window</div>
@@ -5190,6 +5196,7 @@ function cardModal(c = null, devs = []) {
     const r = await api.put(`/cards/${c.id}`, {
       card_no,
       label: $('#c_label').value.trim() || null,
+      notes: $('#c_notes').value.trim() || null,
       valid_begin: fromLocalInput($('#c_begin').value),
       valid_end: fromLocalInput($('#c_end').value),
       auto_delete: $('#c_autodel').checked,
