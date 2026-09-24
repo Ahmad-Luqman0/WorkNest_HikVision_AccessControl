@@ -61,6 +61,9 @@ export async function removeEmployeeFromDevice(emp, dev) {
 export async function syncEmployee(employeeId) {
   const emp = await employee(employeeId);
   if (!emp) throw new Error('employee not found');
+  // An unassigned card has no person number — there is nothing to push to a
+  // machine until it is assigned to someone.
+  if (!emp.employee_no) return [];
   const grants = await getRows('SELECT * FROM dbo.WN_HIK_AccessGrants WHERE employee_id = ?', [Number(employeeId)]);
   const results = [];
   for (const g of grants) {

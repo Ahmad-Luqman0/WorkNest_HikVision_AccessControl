@@ -19,10 +19,7 @@ async function withGrants(row) {
   return { ...row, grants };
 }
 
-async function nextEmployeeNo() {
-  const rows = await sp('WN_HIK_Employee_NextNumber', { floor: 1001 });
-  return Number(rows[0]?.next_no) || 1001;
-}
+
 
 async function cardRows() {
   const rows = await getRows(`SELECT * FROM dbo.WN_HIK_Employees WHERE kind='card' ORDER BY id DESC`);
@@ -96,10 +93,11 @@ cardsRouter.post('/', async (req, res) => {
   if (!card_no) return res.status(400).json({ error: 'card_no required' });
   const deviceIds = [...new Set((req.body.device_ids || []).map(Number))].filter(Boolean);
   try {
-    const empNo = await nextEmployeeNo();
+    // No person number until the card is assigned to someone — employee_no
+    // then mirrors the holder (kept current by the reconciler).
     const name = (label && label.trim()) || `Card ${card_no}`;
     const created = await sp('WN_HIK_Card_Register', {
-      employee_no: String(empNo), name, card_no: String(card_no),
+      employee_no: null, name, card_no: String(card_no),
       valid_begin: valid_begin || null, valid_end: valid_end || null,
       auto_delete: auto_delete ? 1 : 0,
     });
@@ -107,7 +105,7 @@ cardsRouter.post('/', async (req, res) => {
     for (const did of deviceIds) {
       await sp('WN_HIK_Grant_Ensure', { employee_id: newId, device_id: did });
     }
-    res.json({ id: newId, employee_no: String(empNo) });
+    res.json({ id: newId });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
   }

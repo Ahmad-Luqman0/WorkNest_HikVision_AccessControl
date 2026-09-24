@@ -118,11 +118,7 @@ async function ensureEventsTable() {
       END`);
     // card records mirror who actually holds the card on the machines
     await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','employee_name') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD employee_name NVARCHAR(128) NULL`);
-    // standalone_no preserves the card's own registration number; employee_no
-    // then shows the HOLDER's number (falls back to standalone_no when the
-    // card is unassigned) — kept current by the grants reconciler.
-    await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','standalone_no') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD standalone_no NVARCHAR(32) NULL`);
-    await run(`UPDATE dbo.WN_HIK_Cards SET standalone_no = employee_no WHERE standalone_no IS NULL`);
+
     // existing installs: 'minor' was renamed to the clearer name in place
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event_category', 'COLUMN'`);
     await ensureEventCategories();

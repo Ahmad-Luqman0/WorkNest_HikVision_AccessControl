@@ -366,13 +366,9 @@ export async function syncCardGrants() {
   for (const e of emps) {
     const on = byCard.get(String(e.card_no)) || new Set();
     // keep the real holder mirrored on the card record: employee_no IS the
-    // holder's number while assigned, and reverts to the card's own
-    // standalone_no when unassigned.
+    // holder's number while assigned, NULL when the card is unassigned.
     const holder = holderByCard.get(String(e.card_no)) || null;
-    await run(`UPDATE dbo.WN_HIK_Cards SET
-        employee_name=?,
-        employee_no = COALESCE(?, standalone_no, employee_no)
-      WHERE id=?`,
+    await run('UPDATE dbo.WN_HIK_Cards SET employee_name=?, employee_no=? WHERE id=?',
       [holder ? (nameByEmp.get(holder) || null) : null, holder, e.id]).catch(() => {});
     const have = await getRows('SELECT id, device_id, sync_state FROM dbo.WN_HIK_AccessGrants WHERE employee_id=?', [e.id]);
     const haveIds = new Set(have.map((g) => g.device_id));
