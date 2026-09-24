@@ -276,7 +276,7 @@ app.get('/api/events', async (req, res) => {
   } catch { /* refresh is best-effort */ }
   try {
     let dbEvents = await getRows(
-      `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, serial_no AS serialNo, event_time AS time
+      `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, machine_event_no AS serialNo, event_time AS time
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
        ORDER BY id DESC`
     );
@@ -284,7 +284,7 @@ app.get('/api/events', async (req, res) => {
       // first run ever — fill the archive synchronously once
       await archiveEvents().catch(() => {});
       dbEvents = await getRows(
-        `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, serial_no AS serialNo, event_time AS time
+        `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, machine_event_no AS serialNo, event_time AS time
          FROM dbo.WN_HIK_Events WITH (NOLOCK)
          ORDER BY id DESC`
       );
@@ -1079,7 +1079,7 @@ app.get('/api/analytics/hourly-details', async (req, res) => {
          COALESCE(NULLIF(e.name, ''), emp.name, '') AS name,
          e.card_no AS cardNo,
          e.access_event, access_event_details, access_event AS minor,
-         e.serial_no AS serialNo,
+         e.machine_event_no AS serialNo,
          e.event_time AS time
        FROM dbo.WN_HIK_Events e WITH (NOLOCK)
        LEFT JOIN dbo.WN_HIK_Employees emp WITH (NOLOCK) ON emp.employee_no = e.employee_no

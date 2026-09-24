@@ -555,7 +555,7 @@ export async function archiveEvents() {
         recent.push(...page.list);
         pos += page.list.length;
       }
-      const maxRow = await getRow(`SELECT MAX(serial_no) AS m, CONVERT(varchar(19), MAX(event_time), 126) AS mt FROM dbo.WN_HIK_Events WHERE device_id=?`, [dev.id]);
+      const maxRow = await getRow(`SELECT MAX(machine_event_no) AS m, CONVERT(varchar(19), MAX(event_time), 126) AS mt FROM dbo.WN_HIK_Events WHERE device_id=?`, [dev.id]);
       const lastSerial = Number(maxRow?.m) || 0;
       const lastTime = maxRow?.mt ? String(maxRow.mt).slice(0, 19) : null;
       for (const e of recent) {
@@ -569,7 +569,7 @@ export async function archiveEvents() {
         if (serial && serial <= lastSerial && lastTime && t <= lastTime) continue;
         try {
           await run(
-            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event, access_event_details, serial_no, event_time) VALUES (?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO dbo.WN_HIK_Events (device_id, device_name, employee_no, name, card_no, access_event, access_event_details, machine_event_no, event_time) VALUES (?,?,?,?,?,?,?,?,?)',
             [dev.id, dev.name, e.employeeNoString ? String(e.employeeNoString) : null, e.name || null,
              e.cardNo ? String(e.cardNo) : null, Number(e.minor) || null, categoryLabel(e.minor), serial, t]
           );

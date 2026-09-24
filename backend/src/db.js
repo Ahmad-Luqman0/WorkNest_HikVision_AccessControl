@@ -109,13 +109,13 @@ async function ensureEventsTable() {
           card_no NVARCHAR(32) NULL,
           access_event INT NULL, -- Hikvision 'minor' event-type code
           access_event_details NVARCHAR(64) NULL, -- label from WN_HIK_EventCategories
-          serial_no BIGINT NULL,
+          machine_event_no BIGINT NULL,
           event_time DATETIME2(0) NOT NULL,
           created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Events_created DEFAULT (SYSDATETIME())
         );
         CREATE INDEX IX_WN_HIK_Events_time ON dbo.WN_HIK_Events (event_time);
         CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
-        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no, event_time) WHERE serial_no IS NOT NULL;
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, machine_event_no, event_time) WHERE machine_event_no IS NOT NULL;
       END`);
     // existing installs: widen the dedupe key so a factory-reset machine
     // (serials restart at 1) can't have its fresh events silently swallowed
@@ -124,7 +124,7 @@ async function ensureEventsTable() {
           AND (SELECT COUNT(*) FROM sys.index_columns ic WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id)=2)
       BEGIN
         DROP INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events;
-        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, serial_no, event_time) WHERE serial_no IS NOT NULL;
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, machine_event_no, event_time) WHERE machine_event_no IS NOT NULL;
       END`);
     // card records mirror who actually holds the card on the machines
     await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','employee_name') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD employee_name NVARCHAR(128) NULL`);
@@ -133,6 +133,14 @@ async function ensureEventsTable() {
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event', 'COLUMN'`);
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','access_event_category') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.access_event_category', 'access_event', 'COLUMN'`);
     await run(`IF COL_LENGTH('dbo.WN_HIK_Events','access_event_details') IS NULL ALTER TABLE dbo.WN_HIK_Events ADD access_event_details NVARCHAR(64) NULL`);
+    // machine_event_no rename (the filtered index must step aside first)
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','serial_no') IS NOT NULL
+      BEGIN
+        IF EXISTS (SELECT 1 FROM sys.indexes WHERE name='UX_WN_HIK_Events_dev_serial' AND object_id=OBJECT_ID('dbo.WN_HIK_Events'))
+          DROP INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events;
+        EXEC sp_rename 'dbo.WN_HIK_Events.serial_no', 'machine_event_no', 'COLUMN';
+        CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id, machine_event_no, event_time) WHERE machine_event_no IS NOT NULL;
+      END`);
     await ensureEventCategories();
   } catch (e) {
     console.error('[db] ensureEventsTable:', e.message);
