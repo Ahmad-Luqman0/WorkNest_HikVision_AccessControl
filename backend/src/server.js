@@ -276,7 +276,7 @@ app.get('/api/events', async (req, res) => {
   } catch { /* refresh is best-effort */ }
   try {
     let dbEvents = await getRows(
-      `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event_category AS minor, serial_no AS serialNo, event_time AS time
+      `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, serial_no AS serialNo, event_time AS time
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
        ORDER BY id DESC`
     );
@@ -284,7 +284,7 @@ app.get('/api/events', async (req, res) => {
       // first run ever — fill the archive synchronously once
       await archiveEvents().catch(() => {});
       dbEvents = await getRows(
-        `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event_category AS minor, serial_no AS serialNo, event_time AS time
+        `SELECT TOP (${limit}) device_id, device_name AS device, employee_no AS employeeNoString, name, card_no AS cardNo, access_event, access_event_details, access_event AS minor, serial_no AS serialNo, event_time AS time
          FROM dbo.WN_HIK_Events WITH (NOLOCK)
          ORDER BY id DESC`
       );
@@ -820,7 +820,7 @@ app.get('/api/stats', async (req, res) => {
       getRow("SELECT COUNT(DISTINCT employee_no) AS n FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time >= CAST(GETDATE() AS DATE) AND employee_no IS NOT NULL").catch(async () => {
         return getRow("SELECT COUNT(DISTINCT employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST(ts AS DATE) = ? AND employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
       }),
-      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no, access_event_category AS minor FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
+      getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no, access_event, access_event_details, access_event AS minor FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
     ]);
 
     const todayScans = todayRow?.n || 0;
@@ -1078,7 +1078,7 @@ app.get('/api/analytics/hourly-details', async (req, res) => {
          e.employee_no AS employeeNoString,
          COALESCE(NULLIF(e.name, ''), emp.name, '') AS name,
          e.card_no AS cardNo,
-         e.access_event_category AS minor,
+         e.access_event, access_event_details, access_event AS minor,
          e.serial_no AS serialNo,
          e.event_time AS time
        FROM dbo.WN_HIK_Events e WITH (NOLOCK)
@@ -1268,7 +1268,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
 
     // 6. Recent scan event log entries (latest 30 in range, or fallback to latest historical)
     let recentEvents = await getRows(
-      `SELECT TOP 30 id, device_name, event_time, card_no, access_event_category AS minor
+      `SELECT TOP 30 id, device_name, event_time, card_no, access_event, access_event_details, access_event AS minor
        FROM dbo.WN_HIK_Events WITH (NOLOCK)
        WHERE ${userWhere}
          AND event_time BETWEEN ? AND ?
@@ -1279,7 +1279,7 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
     let fallbackAllTime = false;
     if (recentEvents.length === 0) {
       recentEvents = await getRows(
-        `SELECT TOP 20 id, device_name, event_time, card_no, access_event_category AS minor
+        `SELECT TOP 20 id, device_name, event_time, card_no, access_event, access_event_details, access_event AS minor
          FROM dbo.WN_HIK_Events WITH (NOLOCK)
          WHERE ${userWhere}
          ORDER BY event_time DESC`,

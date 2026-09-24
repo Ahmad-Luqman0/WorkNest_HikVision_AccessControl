@@ -107,7 +107,8 @@ async function ensureEventsTable() {
           employee_no NVARCHAR(32) NULL,
           name NVARCHAR(128) NULL,
           card_no NVARCHAR(32) NULL,
-          access_event_category INT NULL, -- Hikvision 'minor' event-type code
+          access_event INT NULL, -- Hikvision 'minor' event-type code
+          access_event_details NVARCHAR(64) NULL, -- label from WN_HIK_EventCategories
           serial_no BIGINT NULL,
           event_time DATETIME2(0) NOT NULL,
           created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Events_created DEFAULT (SYSDATETIME())
@@ -128,8 +129,10 @@ async function ensureEventsTable() {
     // card records mirror who actually holds the card on the machines
     await run(`IF COL_LENGTH('dbo.WN_HIK_Cards','employee_name') IS NULL ALTER TABLE dbo.WN_HIK_Cards ADD employee_name NVARCHAR(128) NULL`);
 
-    // existing installs: 'minor' was renamed to the clearer name in place
-    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event_category', 'COLUMN'`);
+    // existing installs: 'minor' -> 'access_event_category' -> 'access_event'
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','minor') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.minor', 'access_event', 'COLUMN'`);
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','access_event_category') IS NOT NULL EXEC sp_rename 'dbo.WN_HIK_Events.access_event_category', 'access_event', 'COLUMN'`);
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Events','access_event_details') IS NULL ALTER TABLE dbo.WN_HIK_Events ADD access_event_details NVARCHAR(64) NULL`);
     await ensureEventCategories();
   } catch (e) {
     console.error('[db] ensureEventsTable:', e.message);
@@ -153,6 +156,10 @@ async function ensureEventCategories() {
         WHEN NOT MATCHED THEN INSERT (code, label, is_denied) VALUES (s.code, ?, ?);`,
         [Number(code), m.label, m.denied ? 1 : 0, m.label, m.denied ? 1 : 0]);
     }
+    // keep the denormalized details column in step with the mapping
+    await run(`UPDATE e SET e.access_event_details = c.label
+      FROM dbo.WN_HIK_Events e JOIN dbo.WN_HIK_EventCategories c ON c.code = e.access_event
+      WHERE e.access_event_details IS NULL OR e.access_event_details <> c.label`);
   } catch (e) {
     console.error('[db] ensureEventCategories:', e.message);
   }
