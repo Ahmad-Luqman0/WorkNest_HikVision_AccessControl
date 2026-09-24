@@ -40,12 +40,6 @@ export async function pushEmployeeToDevice(emp, dev) {
     logSync(emp.id, dev.id, 'face', f.ok, f);
   }
 
-  const prints = await getRows('SELECT * FROM dbo.WN_HIK_Fingerprints WHERE employee_id = ?', [emp.id]);
-  for (const fp of prints) {
-    const p = await isapi.addFingerprint(dev, emp.employee_no, fp.template, fp.finger_no);
-    logSync(emp.id, dev.id, 'fingerprint', p.ok, p);
-  }
-
   invalidateRoster(dev.id);
   return true;
 }
