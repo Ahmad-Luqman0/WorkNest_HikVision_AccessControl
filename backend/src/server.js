@@ -223,9 +223,10 @@ app.post('/api/online-check', async (req, res) => {
     // office router's port-scan protection); the local/PK side handles it.
     const cloudPassive = process.env.VERCEL && !process.env.CLOUD_CAN_SCAN;
     let replayed = 0;
-    if (!cloudPassive) {
-      try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
-    }
+    // Replay is targeted (one queued op -> one machine already flagged online),
+    // nothing like the fleet sweeps the router objects to — safe from the
+    // cloud, and without it queued work waited for the local dev server.
+    try { replayed = (await replayPendingOps()).applied; } catch { /* retried next round */ }
     try {
       const lastB = await sp('WN_HIK_Settings_Get', { key: 'backup_ran_at' });
       if (!(Number(lastB[0]?.value) > Date.now() - 300000)) {
