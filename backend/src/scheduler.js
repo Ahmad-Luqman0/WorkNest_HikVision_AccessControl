@@ -289,6 +289,39 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
   return { copied };
 }
 
+// Keep the machine snapshots themselves fresh WITHOUT anyone opening a
+// page: each pass re-scans the online machines whose roster/card snapshot
+// is the oldest (bounded so it fits a serverless request). Everything
+// derived from snapshots — WN_HIK_Users, AccessGrants, card holders,
+// credential gap-closing — then stays live automatically.
+export async function refreshSnapshots(maxMachines = 5) {
+  const devs = (await getAllDevices()).filter((d) => d.online);
+  if (!devs.length) return { refreshed: 0 };
+  const snaps = await getRows('SELECT device_id, roster_at, cards_at FROM dbo.WN_HIK_DevCache WITH (NOLOCK)');
+  const at = new Map(snaps.map((s) => [s.device_id, s]));
+  const age = (v) => {
+    if (!v) return Infinity;
+    const t = new Date(String(v).replace(' ', 'T')).getTime();
+    return Number.isFinite(t) ? Date.now() - t : Infinity;
+  };
+  const STALE = 10 * 60000; // refresh anything older than 10 minutes
+  const targets = devs
+    .map((d) => ({ d, oldest: Math.max(age(at.get(d.id)?.roster_at), age(at.get(d.id)?.cards_at)) }))
+    .filter((x) => x.oldest > STALE)
+    .sort((a, b) => b.oldest - a.oldest)
+    .slice(0, maxMachines);
+  let refreshed = 0;
+  for (const { d } of targets) {
+    try {
+      await getRoster(d, 1); // maxAge 1ms forces a live scan + snapshot save
+      const { getCardTable } = await import('./machineCache.js');
+      await getCardTable(d, 1);
+      refreshed++;
+    } catch { /* unreachable — next pass */ }
+  }
+  return { refreshed };
+}
+
 // Keep WN_HIK_AccessGrants mirroring reality for card records: one grant row
 // per machine that actually holds the card (per the card-table snapshots).
 // 'pending' rows (queued pushes) are never touched; only the mirrored
@@ -661,6 +694,7 @@ export function startScheduler() {
     try { await sweepFaceVault(); } catch (e) { console.error('[scheduler] face vault sweep failed:', e); }
     try { await syncUsersTable(); } catch (e) { console.error('[scheduler] users table sync failed:', e); }
     try { await syncCardGrants(); } catch (e) { console.error('[scheduler] card grants sync failed:', e); }
+    try { await refreshSnapshots(8); } catch (e) { console.error('[scheduler] snapshot refresh failed:', e); }
     try {
       const r = await migrateRenewedBookings();
       if (r.migrated) console.log(`[scheduler] booking renewal carried over ${r.migrated} attendee(s)`);
