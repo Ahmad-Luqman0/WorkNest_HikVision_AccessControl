@@ -55,8 +55,12 @@ cardsRouter.get('/', async (req, res) => {
     } catch {}
 
     // Resolve member names from DB once (sub-millisecond query, avoiding WAN roster scans)
-    const empRows = await getRows('SELECT employee_no, name FROM dbo.WN_HIK_Employees WHERE employee_no IS NOT NULL').catch(() => []);
-    const nameCache = new Map(empRows.map((u) => [String(u.employee_no), u.name || null]));
+    // Names for holders: members from WN_HIK_Users, visitors from their own
+    // records. Card rows are EXCLUDED — their employee_no mirrors the holder,
+    // and mapping it to the card's label would mislabel real members.
+    const memberRows = await getRows('SELECT employee_no, name FROM dbo.WN_HIK_Users').catch(() => []);
+    const visitorRows = await getRows("SELECT employee_no, name FROM dbo.WN_HIK_Employees WHERE kind='visitor' AND employee_no IS NOT NULL").catch(() => []);
+    const nameCache = new Map([...memberRows, ...visitorRows].map((u) => [String(u.employee_no), u.name || null]));
 
     // Read card assignments from fast snapshot cache (with a 2s per-device timeout guard)
     const devices = (await getAllDevices()).filter((d) => d.online);
@@ -78,8 +82,8 @@ cardsRouter.get('/', async (req, res) => {
 
     res.json(registry.map((r) => ({
       ...r,
-      // exclude the card's own backing person record — only real users count
-      assigned: (holders.get(String(r.card_no)) || []).filter((h) => h.employeeNo !== String(r.employee_no)),
+      // employee_no mirrors the holder, so every machine holder is real
+      assigned: holders.get(String(r.card_no)) || [],
     })));
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
@@ -147,7 +151,6 @@ cardsRouter.put('/:id', async (req, res) => {
           const all = await getCardTable(dev, 60000);
           for (const c of all) {
             if (String(c.cardNo) !== String(fresh.card_no)) continue;
-            if (String(c.employeeNo) === String(fresh.employee_no)) continue; // own backing record
             const p = await isapi.getPerson(dev, c.employeeNo);
             if (!p) continue;
             const r = await isapi.upsertPerson(dev, {
