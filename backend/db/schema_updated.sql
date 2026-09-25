@@ -42,17 +42,22 @@ ALTER TABLE dbo.WN_HIK_Cards ADD CONSTRAINT PK_WN_HIK_Cards PRIMARY KEY (Id);
 GO
 
 CREATE TABLE dbo.WN_HIK_DashboardUsers (
-  id INT IDENTITY(1,1) NOT NULL,
-  username NVARCHAR(64) NOT NULL,
-  password_hash NVARCHAR(256) NOT NULL,
-  created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  updated_at DATETIME2(0) NULL,
-  role NVARCHAR(16) NOT NULL DEFAULT ('user')
+  Id INT IDENTITY(1,1) NOT NULL,
+  Username NVARCHAR(64) NOT NULL,
+  Password_hash NVARCHAR(256) NOT NULL,
+  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  Updated_at DATETIME2(0) NULL,
+  Role NVARCHAR(16) NOT NULL DEFAULT ('user'),
+  Name NVARCHAR(128) NULL,
+  Display_password NVARCHAR(256) NULL,
+  Status INT NOT NULL DEFAULT ((1)),
+  Created_by INT NULL,
+  Updated_by INT NULL
 );
 GO
-ALTER TABLE dbo.WN_HIK_DashboardUsers ADD CONSTRAINT PK_WN_HIK_DashboardUsers PRIMARY KEY (id);
+ALTER TABLE dbo.WN_HIK_DashboardUsers ADD CONSTRAINT PK_WN_HIK_DashboardUsers PRIMARY KEY (Id);
 GO
-CREATE UNIQUE INDEX UQ_WN_HIK_DashboardUsers_username ON dbo.WN_HIK_DashboardUsers (username);
+CREATE UNIQUE INDEX UQ_WN_HIK_DashboardUsers_username ON dbo.WN_HIK_DashboardUsers (Username);
 GO
 
 CREATE TABLE dbo.WN_HIK_DevCache (
@@ -324,21 +329,26 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_DashUser_Get
-CREATE   PROCEDURE [dbo].[WN_HIK_DashUser_Get]
-  @username NVARCHAR(64)
-AS
+CREATE   PROCEDURE dbo.WN_HIK_DashUser_Get @username NVARCHAR(64) AS
 BEGIN
   SET NOCOUNT ON;
-  SELECT id, username, password_hash, role FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username;
+  SELECT Id AS id, Username AS username, Name AS name, Password_hash AS password_hash,
+         Role AS role, Status AS status
+  FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE Username = @username;
 END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_DashUser_List
-CREATE   PROCEDURE [dbo].[WN_HIK_DashUser_List]
-AS
+CREATE   PROCEDURE dbo.WN_HIK_DashUser_List AS
 BEGIN
   SET NOCOUNT ON;
-  SELECT id, username, role, created_at, updated_at FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) ORDER BY username;
+  SELECT u.Id AS id, u.Username AS username, u.Name AS name, u.Role AS role, u.Status AS status,
+         u.Created_at AS created_at, u.Updated_at AS updated_at,
+         cb.Username AS created_by_name, ub.Username AS updated_by_name
+  FROM dbo.WN_HIK_DashboardUsers u WITH (NOLOCK)
+  LEFT JOIN dbo.WN_HIK_DashboardUsers cb WITH (NOLOCK) ON cb.Id = u.Created_by
+  LEFT JOIN dbo.WN_HIK_DashboardUsers ub WITH (NOLOCK) ON ub.Id = u.Updated_by
+  ORDER BY u.Username;
 END
 GO
 
@@ -354,21 +364,32 @@ BEGIN
 END
 GO
 
--- SQL_STORED_PROCEDURE: WN_HIK_DashUser_Upsert
-CREATE   PROCEDURE [dbo].[WN_HIK_DashUser_Upsert]
-  @username NVARCHAR(64), @password_hash NVARCHAR(256), @role NVARCHAR(16) = NULL
-AS
+-- SQL_STORED_PROCEDURE: WN_HIK_DashUser_SetStatus
+CREATE   PROCEDURE dbo.WN_HIK_DashUser_SetStatus @username NVARCHAR(64), @status INT, @actor_id INT = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE username = @username)
+  UPDATE dbo.WN_HIK_DashboardUsers SET Status = @status, Updated_by = COALESCE(@actor_id, Updated_by), Updated_at = SYSDATETIME() WHERE Username = @username;
+END
+GO
+
+-- SQL_STORED_PROCEDURE: WN_HIK_DashUser_Upsert
+CREATE   PROCEDURE dbo.WN_HIK_DashUser_Upsert
+  @username NVARCHAR(64), @password_hash NVARCHAR(256), @role NVARCHAR(16) = NULL,
+  @name NVARCHAR(128) = NULL, @display_password NVARCHAR(256) = NULL, @actor_id INT = NULL AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE Username = @username)
     UPDATE dbo.WN_HIK_DashboardUsers
-       SET password_hash = @password_hash,
-           role = COALESCE(@role, role),
-           updated_at = SYSDATETIME()
-     WHERE username = @username;
+       SET Password_hash = @password_hash,
+           Display_password = COALESCE(@display_password, Display_password),
+           Role = COALESCE(@role, Role),
+           Name = COALESCE(@name, Name),
+           Updated_by = COALESCE(@actor_id, Updated_by),
+           Updated_at = SYSDATETIME()
+     WHERE Username = @username;
   ELSE
-    INSERT INTO dbo.WN_HIK_DashboardUsers (username, password_hash, role)
-    VALUES (@username, @password_hash, COALESCE(@role, 'user'));
+    INSERT INTO dbo.WN_HIK_DashboardUsers (Username, Name, Password_hash, Display_password, Role, Created_by)
+    VALUES (@username, COALESCE(@name, @username), @password_hash, @display_password, COALESCE(@role, 'user'), @actor_id);
 END
 GO
 
