@@ -1,5 +1,5 @@
 -- WorkNest Access Control — WN_HIK_* schema
--- GENERATED FROM THE LIVE DATABASE on 2026-09-24.
+-- GENERATED FROM THE LIVE DATABASE on 2026-09-25.
 -- The runtime creates/migrates everything itself (src/db.js ensure* functions
 -- + stored procedures); this file is reference documentation of the current
 -- state, regenerate it after schema changes rather than editing by hand.
@@ -23,6 +23,7 @@ GO
 CREATE TABLE dbo.WN_HIK_Cards (
   id INT IDENTITY(1,1) NOT NULL,
   employee_no NVARCHAR(32) NULL,
+  employee_name NVARCHAR(128) NULL,
   name NVARCHAR(128) NOT NULL,
   card_no NVARCHAR(32) NULL,
   valid_begin DATETIME2(7) NULL,
@@ -31,8 +32,7 @@ CREATE TABLE dbo.WN_HIK_Cards (
   status NVARCHAR(16) NOT NULL DEFAULT ('active'),
   notes NVARCHAR(MAX) NULL,
   booking_ref NVARCHAR(64) NULL,
-  created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime()),
-  employee_name NVARCHAR(128) NULL
+  created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_Cards ADD CONSTRAINT PK_WN_HIK_Cards PRIMARY KEY (id);
@@ -78,7 +78,8 @@ CREATE TABLE dbo.WN_HIK_Devices (
   last_seen DATETIME2(0) NULL,
   online BIT NOT NULL DEFAULT ((0)),
   created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  code NVARCHAR(32) NULL
+  code NVARCHAR(32) NULL,
+  host2 NVARCHAR(64) NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT PK_WN_HIK_Devices PRIMARY KEY (id);
