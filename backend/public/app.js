@@ -2828,6 +2828,11 @@ function deviceModal(d = null, all = []) {
         <div class="field"><label for="d_host">IP / host</label><input id="d_host" value="${esc(d?.host || '')}" placeholder="192.168.1.64"></div>
         <div class="field"><label for="d_port">Port</label><input id="d_port" type="number" value="${d?.port || 80}"></div>
       </div>
+      <div class="field">
+        <label for="d_host2">Failover IP / host</label>
+        <input id="d_host2" value="${esc(d?.host2 || '')}" placeholder="second WAN IP — same port">
+        <div class="field-help">Optional. Tried automatically when the primary link fails; the machine is offline only when both fail.</div>
+      </div>
       <div class="two-col">
         <div class="field"><label for="d_user">Username</label><input id="d_user" value="${esc(d?.username || 'admin')}"></div>
         <div class="field">
@@ -2851,7 +2856,7 @@ function deviceModal(d = null, all = []) {
   $('#d_save').addEventListener('click', async () => {
     const grpSel = $('#d_grp_sel').value;
     const body = {
-      name: $('#d_name').value.trim(), host: $('#d_host').value.trim(),
+      name: $('#d_name').value.trim(), host: $('#d_host').value.trim(), host2: $('#d_host2').value.trim() || null,
       port: Number($('#d_port').value), username: $('#d_user').value.trim(),
       location: $('#d_loc').value.trim(), use_https: $('#d_https').checked,
       grp: grpSel === '__new' ? ($('#d_grp_new').value.trim() || null) : (grpSel || null),

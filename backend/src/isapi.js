@@ -3,10 +3,28 @@
 // natively, so time-limited access is reliable even if this server is offline.
 import { digestRequest } from './digestClient.js';
 
-function deviceBaseUrl(device) {
+function deviceBaseUrl(device, host = device.host) {
   const proto = device.use_https ? 'https' : 'http';
   const port = device.port || (device.use_https ? 443 : 80);
-  return `${proto}://${device.host}:${port}`;
+  return `${proto}://${host}:${port}`;
+}
+
+// ---- WAN failover ----------------------------------------------------------
+// The site publishes every machine on two WAN links (device.host primary,
+// device.host2 failover — same port). Requests try the last-known-good link
+// first and fall over to the other on a NETWORK failure; a machine counts as
+// unreachable only when every link has failed. The preference is remembered
+// per machine for a few minutes so a dead primary doesn't cost a timeout on
+// every single request.
+const preferredWan = new Map(); // device.id -> { host, at }
+const WAN_PREFER_TTL = 5 * 60000;
+function candidateHosts(device) {
+  const hosts = [device.host, device.host2].filter(Boolean);
+  const pref = device.id != null ? preferredWan.get(device.id) : null;
+  if (pref && Date.now() - pref.at < WAN_PREFER_TTL && hosts.includes(pref.host) && hosts[0] !== pref.host) {
+    return [pref.host, ...hosts.filter((h) => h !== pref.host)];
+  }
+  return hosts;
 }
 
 // Hardware safety: limit concurrency to prevent saturating embedded Linux web servers on Hikvision units
@@ -75,31 +93,35 @@ async function req(device, method, path, { json, xml, headers, timeout, attempts
   try {
     let lastErr = null;
     const maxAttempts = Math.max(1, attempts || 2);
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const res = await digestRequest({
-          baseUrl: deviceBaseUrl(device),
-          username: device.username,
-          password: device.password,
-          method,
-          path,
-          body,
-          headers: h,
-          timeout,
-        });
-        return res;
-      } catch (err) {
-        lastErr = err;
-        const msg = String(err.message || err);
-        const isTransient = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|timeout/i.test(msg);
-        if (attempt < maxAttempts - 1 && isTransient) {
-          await new Promise((r) => setTimeout(r, 400));
-          continue;
+    const wans = candidateHosts(device);
+    for (const wanHost of wans) {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await digestRequest({
+            baseUrl: deviceBaseUrl(device, wanHost),
+            username: device.username,
+            password: device.password,
+            method,
+            path,
+            body,
+            headers: h,
+            timeout,
+          });
+          if (device.id != null) preferredWan.set(device.id, { host: wanHost, at: Date.now() });
+          return res;
+        } catch (err) {
+          lastErr = err;
+          const msg = String(err.message || err);
+          const isTransient = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|timeout/i.test(msg);
+          if (attempt < maxAttempts - 1 && isTransient) {
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          }
+          break; // give the next WAN a chance
         }
-        break;
       }
     }
-    const hostStr = device.name ? `${device.name} (${device.host})` : device.host;
+    const hostStr = device.name ? `${device.name} (${wans.join(' / ')})` : wans.join(' / ');
     throw new Error(`Device unreachable [${hostStr}]: ${lastErr.message || String(lastErr)}`);
   } finally {
     releaseSlot(host);

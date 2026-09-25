@@ -83,7 +83,7 @@ devicesRouter.get('/', async (req, res) => {
   // (host, port, model, serial, username) — those are admin-only.
   res.json(rows.map(({ password, username, online, ...d }) => {
     const out = { ...d, online: blocked ? 0 : (online ? 1 : 0) };
-    if (!isAdmin) { delete out.host; delete out.port; delete out.use_https; delete out.model; delete out.serial; }
+    if (!isAdmin) { delete out.host; delete out.host2; delete out.port; delete out.use_https; delete out.model; delete out.serial; }
     return out;
   }));
 });
@@ -126,7 +126,7 @@ devicesRouter.put('/:id', async (req, res) => {
   }
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
-  const fields = ['name', 'host', 'port', 'use_https', 'username', 'password', 'location', 'grp', 'code'];
+  const fields = ['name', 'host', 'host2', 'port', 'use_https', 'username', 'password', 'location', 'grp', 'code'];
   const updates = [];
   const vals = [];
   for (const f of fields) {

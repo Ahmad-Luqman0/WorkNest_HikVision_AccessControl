@@ -44,6 +44,8 @@ export async function initDb() {
       console.error('[db] pool error:', msg);
     }
   });
+  // second WAN link for failover (same port, different public IP)
+  await run(`IF COL_LENGTH('dbo.WN_HIK_Devices','host2') IS NULL ALTER TABLE dbo.WN_HIK_Devices ADD host2 NVARCHAR(64) NULL`).catch(() => {});
   await ensurePendingOps();
   await ensureFpVault();
   await ensureEventsTable();
