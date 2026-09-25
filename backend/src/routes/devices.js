@@ -126,18 +126,31 @@ devicesRouter.put('/:id', async (req, res) => {
   }
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
-  const fields = ['name', 'host', 'host2', 'port', 'use_https', 'username', 'password', 'location', 'grp', 'code'];
+  // API keeps accepting the historical field names; 'name' and 'grp' map to
+  // the renamed/normalized storage (Device_Name, Group_id via WN_HIK_Groups).
+  const colOf = { name: 'Device_Name', host: 'Host', host2: 'Host2', port: 'Port', use_https: 'Use_https', username: 'Username', password: 'Password', location: 'Location', code: 'Code' };
   const updates = [];
   const vals = [];
-  for (const f of fields) {
+  for (const [f, col] of Object.entries(colOf)) {
     if (req.body[f] !== undefined) {
-      updates.push(`${f}=?`);
+      updates.push(`${col}=?`);
       vals.push(f === 'use_https' ? (req.body[f] ? 1 : 0) : req.body[f]);
     }
   }
+  if (req.body.grp !== undefined) {
+    const gname = String(req.body.grp || '').trim();
+    let gid = null;
+    if (gname) {
+      const g = await getRow('SELECT Id FROM dbo.WN_HIK_Groups WHERE Name = ?', [gname]);
+      if (g) gid = g.Id;
+      else { const ins = await getRow('INSERT INTO dbo.WN_HIK_Groups (Name) OUTPUT inserted.Id AS Id VALUES (?)', [gname]); gid = ins?.Id ?? null; }
+    }
+    updates.push('Group_id=?');
+    vals.push(gid);
+  }
   if (!updates.length) return res.json({ ok: true });
   vals.push(req.params.id);
-  await run(`UPDATE dbo.WN_HIK_Devices SET ${updates.join(', ')} WHERE id=?`, vals);
+  await run(`UPDATE dbo.WN_HIK_Devices SET ${updates.join(', ')} WHERE Id=?`, vals);
   res.json({ ok: true });
 });
 

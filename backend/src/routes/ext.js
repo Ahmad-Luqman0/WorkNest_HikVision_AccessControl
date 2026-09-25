@@ -108,7 +108,7 @@ extRouter.get('/bookings/:ref', async (req, res) => {
   const attendees = [];
   for (const r of rows) {
     const grants = await getRows(
-      `SELECT g.device_id, g.sync_state, d.name AS device
+      `SELECT g.device_id, g.sync_state, d.Device_Name AS device
        FROM dbo.WN_HIK_AccessGrants g JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
        WHERE g.employee_id=?`,
       [r.id]
@@ -155,7 +155,7 @@ extRouter.post('/bookings/:ref/attendees/:employeeNo/capture-fingerprint', async
       if (!d) continue;
       const r = await isapi.addFingerprint(d, row.employee_no, cap.fingerData, fingerNo);
       logSync(null, d.id, 'store-fingerprint', r.ok, { employeeNo: row.employee_no });
-      results.push({ device: d.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
+      results.push({ device: d.Device_Name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
     }
     res.json({ ok: results.some((x) => x.ok), fingerNo, quality: cap.quality, results });
   } catch (e) {
@@ -185,7 +185,7 @@ extRouter.patch('/bookings/:ref', async (req, res) => {
       if (!d) continue;
       try {
         const p = await isapi.getPerson(d, row.employee_no);
-        if (!p) { results.push({ employeeNo: row.employee_no, device: d.name, ok: false, error: 'not on machine' }); continue; }
+        if (!p) { results.push({ employeeNo: row.employee_no, device: d.Device_Name, ok: false, error: 'not on machine' }); continue; }
         const r = await isapi.upsertPerson(d, {
           employeeNo: row.employee_no,
           name: p.name || row.name,
@@ -194,9 +194,9 @@ extRouter.patch('/bookings/:ref', async (req, res) => {
           validBegin: nb,
           validEnd: ne,
         }, 'modify');
-        results.push({ employeeNo: row.employee_no, device: d.name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
+        results.push({ employeeNo: row.employee_no, device: d.Device_Name, ok: r.ok, error: r.ok ? undefined : isapi.describe(r) });
       } catch (e) {
-        results.push({ employeeNo: row.employee_no, device: d.name, ok: false, error: String(e.message || e) });
+        results.push({ employeeNo: row.employee_no, device: d.Device_Name, ok: false, error: String(e.message || e) });
       }
     }
   }

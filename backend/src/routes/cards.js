@@ -20,7 +20,7 @@ async function dashUserId(req) {
 // employeeNo, so each card assignment is backed by a minimal person record.
 async function withGrants(row) {
   const grants = await getRows(
-    `SELECT g.device_id, g.sync_state, g.last_error, d.name AS device_name
+    `SELECT g.device_id, g.sync_state, g.last_error, d.Device_Name AS device_name
      FROM dbo.WN_HIK_AccessGrants g JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
      WHERE g.employee_id = ?`,
     [row.id]
@@ -53,7 +53,7 @@ cardsRouter.get('/', async (req, res) => {
     // Fast DB-backed holder resolution so the Cards page loads in ~10ms
     try {
       const holderRows = await getRows(
-        `SELECT e.employee_no AS employeeNo, e.name, e.card_no AS cardNo, d.name AS device, d.id AS device_id
+        `SELECT e.employee_no AS employeeNo, e.name, e.card_no AS cardNo, d.Device_Name AS device, d.id AS device_id
          FROM dbo.WN_HIK_Employees e
          JOIN dbo.WN_HIK_AccessGrants g ON g.employee_id = e.id
          JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id

@@ -72,27 +72,27 @@ ALTER TABLE dbo.WN_HIK_DevCache ADD CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY (d
 GO
 
 CREATE TABLE dbo.WN_HIK_Devices (
-  id INT IDENTITY(1,1) NOT NULL,
-  name NVARCHAR(100) NOT NULL,
-  host NVARCHAR(64) NOT NULL,
-  port INT NOT NULL DEFAULT ((80)),
-  use_https BIT NOT NULL DEFAULT ((0)),
-  username NVARCHAR(64) NOT NULL,
-  password NVARCHAR(128) NOT NULL,
-  location NVARCHAR(128) NULL,
-  grp NVARCHAR(64) NULL,
-  model NVARCHAR(64) NULL,
-  serial NVARCHAR(64) NULL,
-  last_seen DATETIME2(0) NULL,
-  online BIT NOT NULL DEFAULT ((0)),
-  created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  code NVARCHAR(32) NULL,
-  host2 NVARCHAR(64) NULL
+  Id INT IDENTITY(1,1) NOT NULL,
+  Device_Name NVARCHAR(100) NOT NULL,
+  Host NVARCHAR(64) NOT NULL,
+  Port INT NOT NULL DEFAULT ((80)),
+  Use_https BIT NOT NULL DEFAULT ((0)),
+  Username NVARCHAR(64) NOT NULL,
+  Password NVARCHAR(128) NOT NULL,
+  Location NVARCHAR(128) NULL,
+  Model NVARCHAR(64) NULL,
+  Serial NVARCHAR(64) NULL,
+  Last_seen DATETIME2(0) NULL,
+  Online BIT NOT NULL DEFAULT ((0)),
+  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  Code NVARCHAR(32) NULL,
+  Host2 NVARCHAR(64) NULL,
+  Group_id INT NULL
 );
 GO
-ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT PK_WN_HIK_Devices PRIMARY KEY (id);
+ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT PK_WN_HIK_Devices PRIMARY KEY (Id);
 GO
-CREATE UNIQUE INDEX UQ_WN_HIK_Devices_host_port ON dbo.WN_HIK_Devices (host, port);
+CREATE UNIQUE INDEX UQ_WN_HIK_Devices_host_port ON dbo.WN_HIK_Devices (Host, Port);
 GO
 
 CREATE TABLE dbo.WN_HIK_EventCategories (
@@ -152,6 +152,17 @@ GO
 ALTER TABLE dbo.WN_HIK_FpVault ADD CONSTRAINT PK_WN_HIK_FpVault PRIMARY KEY (id);
 GO
 CREATE UNIQUE INDEX UQ_WN_HIK_FpVault ON dbo.WN_HIK_FpVault (employee_no, name, finger_no);
+GO
+
+CREATE TABLE dbo.WN_HIK_Groups (
+  Id INT IDENTITY(1,1) NOT NULL,
+  Name NVARCHAR(64) NOT NULL,
+  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+);
+GO
+ALTER TABLE dbo.WN_HIK_Groups ADD CONSTRAINT PK_WN_HIK_Groups PRIMARY KEY (Id);
+GO
+CREATE UNIQUE INDEX UQ_WN_HIK_Groups_Name ON dbo.WN_HIK_Groups (Name);
 GO
 
 CREATE TABLE dbo.WN_HIK_PendingOps (
@@ -226,7 +237,9 @@ GO
 ALTER TABLE dbo.WN_HIK_Visitors ADD CONSTRAINT PK_WN_HIK_Visitors PRIMARY KEY (id);
 GO
 
-ALTER TABLE dbo.WN_HIK_AccessGrants ADD CONSTRAINT FK_WN_HIK_grants_device FOREIGN KEY (device_id) REFERENCES dbo.WN_HIK_Devices(id) ON DELETE CASCADE;
+ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT FK_WN_HIK_Devices_Group FOREIGN KEY (Group_id) REFERENCES dbo.WN_HIK_Groups(Id);
+GO
+ALTER TABLE dbo.WN_HIK_AccessGrants ADD CONSTRAINT FK_WN_HIK_grants_device FOREIGN KEY (device_id) REFERENCES dbo.WN_HIK_Devices(Id) ON DELETE CASCADE;
 GO
 
 -- ===================== VIEWS, PROCEDURES, TRIGGERS =====================
@@ -258,17 +271,14 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Activity_Recent
--- Recent activity for the dashboard.
-CREATE   PROCEDURE [dbo].[WN_HIK_Activity_Recent]
-  @limit INT = 200
-AS
+CREATE   PROCEDURE dbo.WN_HIK_Activity_Recent @limit INT = 200 AS
 BEGIN
   SET NOCOUNT ON;
   SELECT TOP (@limit)
-         l.*, e.name AS employee_name, d.name AS device_name
+         l.*, e.name AS employee_name, d.Device_Name AS device_name
   FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
-  LEFT JOIN dbo.WN_HIK_Employees e WITH (NOLOCK) ON e.id = l.employee_id
-  LEFT JOIN dbo.WN_HIK_Devices  d WITH (NOLOCK) ON d.id = l.device_id
+  LEFT JOIN dbo.WN_HIK_Employees e ON e.id = l.employee_id
+  LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.Id = l.device_id
   ORDER BY l.id DESC;
 END
 GO
@@ -410,25 +420,29 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Device_UpsertByHost
-CREATE   PROCEDURE [dbo].[WN_HIK_Device_UpsertByHost]
+CREATE   PROCEDURE dbo.WN_HIK_Device_UpsertByHost
   @name NVARCHAR(100), @host NVARCHAR(64), @port INT = 80, @use_https BIT = 0,
   @username NVARCHAR(64), @password NVARCHAR(128),
   @location NVARCHAR(128) = NULL, @grp NVARCHAR(64) = NULL
 AS
 BEGIN
   SET NOCOUNT ON;
-  -- keyed by host + port: several machines can share one public IP on
-  -- different forwarded ports
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host AND port = @port)
+  DECLARE @gid INT = NULL;
+  IF @grp IS NOT NULL AND LTRIM(RTRIM(@grp)) <> ''
+  BEGIN
+    SELECT @gid = Id FROM dbo.WN_HIK_Groups WHERE Name = @grp;
+    IF @gid IS NULL BEGIN INSERT INTO dbo.WN_HIK_Groups (Name) VALUES (@grp); SET @gid = SCOPE_IDENTITY(); END
+  END
+  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE Host = @host AND Port = @port)
     UPDATE dbo.WN_HIK_Devices
-       SET name = @name, use_https = @use_https,
-           username = @username, password = @password,
-           location = @location, grp = @grp
-     WHERE host = @host AND port = @port;
+       SET Device_Name = @name, Use_https = @use_https,
+           Username = @username, Password = @password,
+           Location = @location, Group_id = @gid
+     WHERE Host = @host AND Port = @port;
   ELSE
-    INSERT INTO dbo.WN_HIK_Devices (name, host, port, use_https, username, password, location, grp)
-    VALUES (@name, @host, @port, @use_https, @username, @password, @location, @grp);
-  SELECT id FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE host = @host AND port = @port;
+    INSERT INTO dbo.WN_HIK_Devices (Device_Name, Host, Port, Use_https, Username, Password, Location, Group_id)
+    VALUES (@name, @host, @port, @use_https, @username, @password, @location, @gid);
+  SELECT Id AS id FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE Host = @host AND Port = @port;
 END
 GO
 

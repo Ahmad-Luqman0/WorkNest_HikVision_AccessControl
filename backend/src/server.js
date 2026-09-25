@@ -688,7 +688,7 @@ app.get('/api/expiring', async (req, res) => {
   try {
     const horizonDays = Math.min(Number(req.query.days) || 7, 60);
     const rows = await getRows(
-      `SELECT e.employee_no AS employeeNo, e.name, e.valid_end AS validEnd, g.device_id, d.name AS device
+      `SELECT e.employee_no AS employeeNo, e.name, e.valid_end AS validEnd, g.device_id, d.Device_Name AS device
        FROM dbo.WN_HIK_Employees e
        JOIN dbo.WN_HIK_AccessGrants g ON g.employee_id = e.id
        JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
@@ -876,7 +876,7 @@ app.get('/api/audit-logs', async (req, res) => {
     if (employeeNo) {
       try {
         logs = await getRows(
-          `SELECT TOP (${limit}) l.*, d.name AS device_name
+          `SELECT TOP (${limit}) l.*, d.Device_Name AS device_name
            FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
            LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
            WHERE (l.employee_id = @empNo OR l.detail LIKE '%' + @empNo + '%' OR l.action LIKE '%' + @empNo + '%')
@@ -892,7 +892,7 @@ app.get('/api/audit-logs', async (req, res) => {
         logs = await sp('WN_HIK_Activity_Recent', { limit });
       } catch {
         logs = await getRows(
-          `SELECT TOP (${limit}) l.*, d.name AS device_name
+          `SELECT TOP (${limit}) l.*, d.Device_Name AS device_name
            FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
            LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
            ORDER BY l.id DESC`
@@ -1267,9 +1267,10 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
     let grants = [];
     if (emp?.id) {
       grants = await getRows(
-        `SELECT d.id, d.name, d.location, d.grp, d.online
+        `SELECT d.Id AS id, d.Device_Name AS name, d.Location AS location, gg.Name AS grp, d.Online AS online
          FROM dbo.WN_HIK_AccessGrants g
          JOIN dbo.WN_HIK_Devices d ON d.id = g.device_id
+         LEFT JOIN dbo.WN_HIK_Groups gg ON gg.Id = d.Group_id
          WHERE g.employee_id = ?`,
         [emp.id]
       ).catch(() => []);
@@ -1280,9 +1281,10 @@ app.get('/api/analytics/user/:employeeNo', async (req, res) => {
       // discover the gates/terminals they are authorized on from event logs
       const eventWhere = userWhere.replace(/\bemployee_no\b/g, 'e.employee_no').replace(/\bname\b/g, 'e.name');
       const activeDevs = await getRows(
-        `SELECT DISTINCT d.id, d.name, d.location, d.grp, d.online
+        `SELECT DISTINCT d.Id AS id, d.Device_Name AS name, d.Location AS location, gg.Name AS grp, d.Online AS online
          FROM dbo.WN_HIK_Events e WITH (NOLOCK)
-         JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = e.device_id OR d.name = e.device_name
+         JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = e.device_id OR d.Device_Name = e.device_name
+         LEFT JOIN dbo.WN_HIK_Groups gg ON gg.Id = d.Group_id
          WHERE ${eventWhere}`,
         userParams
       ).catch(() => []);

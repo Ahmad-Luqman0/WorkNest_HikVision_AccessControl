@@ -328,19 +328,29 @@ export async function sp(name, params = {}) {
 }
 
 // ---- Common lookups used across routes ----
+// Single choke point for reading devices: columns are Capitalized in the
+// table and the group lives in WN_HIK_Groups (Group_id FK) — aliased back
+// to the historical property names here so every consumer stays unchanged.
+const DEVICE_SELECT = `SELECT d.Id AS id, d.Device_Name AS name, d.Host AS host, d.Host2 AS host2,
+    d.Port AS port, d.Use_https AS use_https, d.Username AS username, d.Password AS password,
+    d.Location AS location, g.Name AS grp, d.Group_id AS group_id, d.Model AS model,
+    d.Serial AS serial, d.Last_seen AS last_seen, d.Online AS online, d.Created_at AS created_at,
+    d.Code AS code
+  FROM dbo.WN_HIK_Devices d
+  LEFT JOIN dbo.WN_HIK_Groups g ON g.Id = d.Group_id`;
 export async function getDeviceById(id) {
-  return getRow('SELECT * FROM dbo.WN_HIK_Devices WHERE id=?', [Number(id)]);
+  return getRow(`${DEVICE_SELECT} WHERE d.Id=?`, [Number(id)]);
 }
 export async function getAllDevices() {
   // Everywhere machines are listed (Machines page, pickers, checklists):
   // entrances first, then meeting rooms, then rooms in number order.
   return getRows(
-    `SELECT * FROM dbo.WN_HIK_Devices
+    `${DEVICE_SELECT}
      ORDER BY CASE
-       WHEN LOWER(grp) LIKE 'entrance%' THEN 0
-       WHEN name LIKE 'Meeting%' THEN 1
+       WHEN LOWER(g.Name) LIKE 'entrance%' THEN 0
+       WHEN d.Device_Name LIKE 'Meeting%' THEN 1
        ELSE 2
-     END, TRY_CAST(code AS INT), name, id`
+     END, TRY_CAST(d.Code AS INT), d.Device_Name, d.Id`
   );
 }
 
