@@ -21,21 +21,24 @@ CREATE UNIQUE INDEX UQ_WN_HIK_grants_emp_dev ON dbo.WN_HIK_AccessGrants (employe
 GO
 
 CREATE TABLE dbo.WN_HIK_Cards (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_no NVARCHAR(32) NULL,
-  employee_name NVARCHAR(128) NULL,
-  name NVARCHAR(128) NOT NULL,
-  card_no NVARCHAR(32) NULL,
-  valid_begin DATETIME2(7) NULL,
-  valid_end DATETIME2(7) NULL,
-  auto_delete BIT NOT NULL DEFAULT ((0)),
-  status NVARCHAR(16) NOT NULL DEFAULT ('active'),
-  notes NVARCHAR(MAX) NULL,
-  booking_ref NVARCHAR(64) NULL,
-  created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime())
+  Id INT IDENTITY(1,1) NOT NULL,
+  Employee_no NVARCHAR(MAX) NULL,
+  Employee_name NVARCHAR(128) NULL,
+  Name NVARCHAR(MAX) NOT NULL,
+  Card_no NVARCHAR(32) NULL,
+  Valid_begin DATETIME2(7) NULL,
+  Valid_end DATETIME2(7) NULL,
+  Auto_delete BIT NOT NULL DEFAULT ((0)),
+  Notes NVARCHAR(MAX) NULL,
+  Booking_ref NVARCHAR(MAX) NULL,
+  Created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime()),
+  Status INT NOT NULL DEFAULT ((1)),
+  Created_by INT NULL,
+  Updated_by INT NULL,
+  Updated_on DATETIME2(0) NULL
 );
 GO
-ALTER TABLE dbo.WN_HIK_Cards ADD CONSTRAINT PK_WN_HIK_Cards PRIMARY KEY (id);
+ALTER TABLE dbo.WN_HIK_Cards ADD CONSTRAINT PK_WN_HIK_Cards PRIMARY KEY (Id);
 GO
 
 CREATE TABLE dbo.WN_HIK_DashboardUsers (
@@ -225,17 +228,26 @@ GO
 
 -- VIEW: WN_HIK_Employees
 CREATE   VIEW dbo.WN_HIK_Employees AS
-  SELECT id, employee_no, name, card_no, CAST(NULL AS NVARCHAR(260)) AS face_path, valid_begin, valid_end, auto_delete, status, notes, CAST('card' AS NVARCHAR(16)) AS kind, booking_ref, created_at FROM dbo.WN_HIK_Cards
+  SELECT Id AS id, Employee_no AS employee_no, Name AS name, Card_no AS card_no,
+         CAST(NULL AS NVARCHAR(260)) AS face_path, Valid_begin AS valid_begin, Valid_end AS valid_end,
+         Auto_delete AS auto_delete,
+         CAST(CASE WHEN Status = 1 THEN 'active' ELSE 'expired' END AS NVARCHAR(16)) AS status,
+         Notes AS notes, CAST('card' AS NVARCHAR(16)) AS kind, Booking_ref AS booking_ref, Created_at AS created_at,
+         Created_by AS created_by, Updated_by AS updated_by, Updated_on AS updated_on
+  FROM dbo.WN_HIK_Cards
   UNION ALL
-  SELECT id, employee_no, name, card_no, face_path, valid_begin, valid_end, auto_delete, status, notes, CAST('visitor' AS NVARCHAR(16)) AS kind, booking_ref, created_at FROM dbo.WN_HIK_Visitors
+  SELECT id, employee_no, name, card_no, face_path, valid_begin, valid_end, auto_delete, status, notes,
+         CAST('visitor' AS NVARCHAR(16)) AS kind, booking_ref, created_at,
+         CAST(NULL AS INT), CAST(NULL AS INT), CAST(NULL AS DATETIME2(0))
+  FROM dbo.WN_HIK_Visitors
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Access_Extend
 CREATE   PROCEDURE dbo.WN_HIK_Access_Extend
-  @employee_no NVARCHAR(32), @valid_end DATETIME2(0), @valid_begin DATETIME2(0) = NULL AS
+  @employee_no NVARCHAR(MAX), @valid_end DATETIME2(0), @valid_begin DATETIME2(0) = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  UPDATE dbo.WN_HIK_Cards SET valid_end = @valid_end, valid_begin = COALESCE(@valid_begin, valid_begin), status = 'active' WHERE employee_no = @employee_no;
+  UPDATE dbo.WN_HIK_Cards SET Valid_end = @valid_end, Valid_begin = COALESCE(@valid_begin, Valid_begin), Status = 1 WHERE Employee_no = @employee_no;
   UPDATE dbo.WN_HIK_Visitors SET valid_end = @valid_end, valid_begin = COALESCE(@valid_begin, valid_begin), status = 'active' WHERE employee_no = @employee_no;
 END
 GO
@@ -281,12 +293,13 @@ GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Card_Register
 CREATE   PROCEDURE dbo.WN_HIK_Card_Register
-  @employee_no NVARCHAR(32) = NULL, @name NVARCHAR(128), @card_no NVARCHAR(32),
-  @valid_begin DATETIME2(0) = NULL, @valid_end DATETIME2(0) = NULL, @auto_delete BIT = 0 AS
+  @employee_no NVARCHAR(MAX) = NULL, @name NVARCHAR(MAX), @card_no NVARCHAR(32),
+  @valid_begin DATETIME2(0) = NULL, @valid_end DATETIME2(0) = NULL, @auto_delete BIT = 0,
+  @created_by INT = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  INSERT INTO dbo.WN_HIK_Cards (employee_no, name, card_no, valid_begin, valid_end, auto_delete)
-  VALUES (@employee_no, @name, @card_no, @valid_begin, @valid_end, @auto_delete);
+  INSERT INTO dbo.WN_HIK_Cards (Employee_no, Name, Card_no, Valid_begin, Valid_end, Auto_delete, Created_by)
+  VALUES (@employee_no, @name, @card_no, @valid_begin, @valid_end, @auto_delete, @created_by);
   SELECT SCOPE_IDENTITY() AS id;
 END
 GO
@@ -414,10 +427,10 @@ GO
 CREATE   PROCEDURE dbo.WN_HIK_Expiry_Run @now DATETIME2(0) AS
 BEGIN
   SET NOCOUNT ON;
-  DECLARE @expired TABLE (id INT, employee_no NVARCHAR(32), auto_delete BIT);
-  UPDATE dbo.WN_HIK_Cards SET status = 'expired'
-  OUTPUT inserted.id, inserted.employee_no, inserted.auto_delete INTO @expired
-   WHERE valid_end IS NOT NULL AND valid_end <= @now AND status = 'active';
+  DECLARE @expired TABLE (id INT, employee_no NVARCHAR(MAX), auto_delete BIT);
+  UPDATE dbo.WN_HIK_Cards SET Status = 0
+  OUTPUT inserted.Id, inserted.Employee_no, inserted.Auto_delete INTO @expired
+   WHERE Valid_end IS NOT NULL AND Valid_end <= @now AND Status = 1;
   UPDATE dbo.WN_HIK_Visitors SET status = 'expired'
   OUTPUT inserted.id, inserted.employee_no, inserted.auto_delete INTO @expired
    WHERE valid_end IS NOT NULL AND valid_end <= @now AND status = 'active';

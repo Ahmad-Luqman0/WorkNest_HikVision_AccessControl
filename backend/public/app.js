@@ -5369,6 +5369,10 @@ function cardModal(c = null, devs = []) {
       <div class="field check"><input id="c_autodel" type="checkbox" ${c.auto_delete ? 'checked' : ''}><label>Auto-delete from machines after expiry</label></div>
       <div class="field-help">If this card is assigned to a user, the access period applies to that user on every machine holding the card — machines enforce validity per person, so it covers all their credentials there.</div>
     </div>
+    <div class="field-help" style="margin-top:4px">
+      ${c.created_at ? `Created ${esc(String(c.created_at).replace('T', ' ').slice(0, 16))}${c.created_by_name ? ' by ' + esc(c.created_by_name) : ''}.` : ''}
+      ${c.updated_on ? ` Last updated ${esc(String(c.updated_on).replace('T', ' ').slice(0, 16))}${c.updated_by_name ? ' by ' + esc(c.updated_by_name) : ''}.` : ''}
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="c_cancel">Cancel</button>
       <button class="btn primary" id="c_save">Save</button>

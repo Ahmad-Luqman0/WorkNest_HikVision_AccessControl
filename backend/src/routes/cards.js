@@ -6,6 +6,15 @@ import { getRoster, getCardTable } from '../machineCache.js';
 
 export const cardsRouter = Router();
 
+// id of the logged-in dashboard account (the session cookie carries the
+// username) — recorded on card create/update as Created_by / Updated_by.
+async function dashUserId(req) {
+  try {
+    const r = await getRow('SELECT id FROM dbo.WN_HIK_DashboardUsers WHERE username = ?', [String(req.auth?.username || '')]);
+    return r?.id ?? null;
+  } catch { return null; }
+}
+
 // A "card" is a person record on the device (kind='card') whose purpose is to
 // carry one RFID card. Hik machines require every card to attach to an
 // employeeNo, so each card assignment is backed by a minimal person record.
@@ -23,6 +32,14 @@ async function withGrants(row) {
 
 async function cardRows() {
   const rows = await getRows(`SELECT * FROM dbo.WN_HIK_Employees WHERE kind='card' ORDER BY id DESC`);
+  try {
+    const dash = await getRows('SELECT id, username FROM dbo.WN_HIK_DashboardUsers');
+    const uname = new Map(dash.map((u) => [u.id, u.username]));
+    for (const r of rows) {
+      r.created_by_name = uname.get(r.created_by) || null;
+      r.updated_by_name = uname.get(r.updated_by) || null;
+    }
+  } catch { /* names best-effort */ }
   return Promise.all(rows.map(withGrants));
 }
 
@@ -104,6 +121,7 @@ cardsRouter.post('/', async (req, res) => {
       employee_no: null, name, card_no: String(card_no),
       valid_begin: valid_begin || null, valid_end: valid_end || null,
       auto_delete: auto_delete ? 1 : 0,
+      created_by: await dashUserId(req),
     });
     const newId = Number(created[0]?.id);
     for (const did of deviceIds) {
@@ -130,6 +148,8 @@ cardsRouter.put('/:id', async (req, res) => {
     }
   }
   if (updates.length) {
+    updates.push('Updated_by=?', 'Updated_on=SYSDATETIME()');
+    vals.push(await dashUserId(req));
     vals.push(id);
     await run(`UPDATE dbo.WN_HIK_Cards SET ${updates.join(', ')} WHERE id=?`, vals);
   }
