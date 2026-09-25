@@ -22,15 +22,29 @@ function freshEnough(at, ttl) {
   const t = new Date(String(at).replace(' ', 'T')).getTime();
   return Number.isFinite(t) && Date.now() - t < ttl;
 }
+// Columns are Capitalized in the table (Users_snapshot / Users_UpdatedOn,
+// Cards_snapshot / Cards_UpdatedOn) — aliased back to the historical
+// property names so the cache logic reads unchanged.
+const SNAP_COLS = {
+  roster: { data: 'Users_snapshot', at: 'Users_UpdatedOn' },
+  cards: { data: 'Cards_snapshot', at: 'Cards_UpdatedOn' },
+};
 async function dbSnapshot(devId) {
-  try { return await getRow('SELECT roster, roster_at, cards, cards_at FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE device_id=?', [Number(devId)]); }
+  try {
+    return await getRow(
+      `SELECT Users_snapshot AS roster, Users_UpdatedOn AS roster_at,
+              Cards_snapshot AS cards, Cards_UpdatedOn AS cards_at
+       FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Device_id=?`, [Number(devId)]);
+  }
   catch { return null; }
 }
 function dbSaveSnapshot(devId, field, data) {
+  const col = SNAP_COLS[field];
+  if (!col) return;
   const json = JSON.stringify(data);
-  run(`MERGE dbo.WN_HIK_DevCache AS t USING (SELECT ? AS id) s ON t.device_id = s.id
-       WHEN MATCHED THEN UPDATE SET ${field} = ?, ${field}_at = SYSDATETIME()
-       WHEN NOT MATCHED THEN INSERT (device_id, ${field}, ${field}_at) VALUES (s.id, ?, SYSDATETIME());`,
+  run(`MERGE dbo.WN_HIK_DevCache AS t USING (SELECT ? AS id) s ON t.Device_id = s.id
+       WHEN MATCHED THEN UPDATE SET ${col.data} = ?, ${col.at} = SYSDATETIME()
+       WHEN NOT MATCHED THEN INSERT (Device_id, ${col.data}, ${col.at}) VALUES (s.id, ?, SYSDATETIME());`,
     [Number(devId), json, json]).catch(() => {});
 }
 
@@ -155,10 +169,10 @@ export function invalidateRoster(deviceId) {
   if (deviceId == null) {
     entries.clear();
     cardEntries.clear();
-    run('UPDATE dbo.WN_HIK_DevCache SET roster_at=NULL, cards_at=NULL').catch(() => {});
+    run('UPDATE dbo.WN_HIK_DevCache SET Users_UpdatedOn=NULL, Cards_UpdatedOn=NULL').catch(() => {});
   } else {
     entries.delete(Number(deviceId));
     cardEntries.delete(Number(deviceId));
-    run('UPDATE dbo.WN_HIK_DevCache SET roster_at=NULL, cards_at=NULL WHERE device_id=?', [Number(deviceId)]).catch(() => {});
+    run('UPDATE dbo.WN_HIK_DevCache SET Users_UpdatedOn=NULL, Cards_UpdatedOn=NULL WHERE Device_id=?', [Number(deviceId)]).catch(() => {});
   }
 }

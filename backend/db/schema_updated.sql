@@ -61,14 +61,15 @@ CREATE UNIQUE INDEX UQ_WN_HIK_DashboardUsers_username ON dbo.WN_HIK_DashboardUse
 GO
 
 CREATE TABLE dbo.WN_HIK_DevCache (
-  device_id INT NOT NULL,
-  roster NVARCHAR(MAX) NULL,
-  roster_at DATETIME2(0) NULL,
-  cards NVARCHAR(MAX) NULL,
-  cards_at DATETIME2(0) NULL
+  Device_id INT NOT NULL,
+  Users_snapshot NVARCHAR(MAX) NULL,
+  Users_UpdatedOn DATETIME2(0) NULL,
+  Cards_snapshot NVARCHAR(MAX) NULL,
+  Cards_UpdatedOn DATETIME2(0) NULL,
+  Status INT NOT NULL DEFAULT ((1))
 );
 GO
-ALTER TABLE dbo.WN_HIK_DevCache ADD CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY (device_id);
+ALTER TABLE dbo.WN_HIK_DevCache ADD CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY (Device_id);
 GO
 
 CREATE TABLE dbo.WN_HIK_Devices (
@@ -404,18 +405,19 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Device_SetOnline
--- Record a connectivity result (Test button / online watchdog).
-CREATE   PROCEDURE [dbo].[WN_HIK_Device_SetOnline]
-  @device_id INT, @online BIT, @model NVARCHAR(64) = NULL, @serial NVARCHAR(64) = NULL
-AS
+CREATE   PROCEDURE dbo.WN_HIK_Device_SetOnline
+  @device_id INT, @online BIT, @model NVARCHAR(64) = NULL, @serial NVARCHAR(64) = NULL AS
 BEGIN
   SET NOCOUNT ON;
   UPDATE dbo.WN_HIK_Devices
-     SET online   = @online,
-         last_seen = CASE WHEN @online = 1 THEN SYSDATETIME() ELSE last_seen END,
-         model    = COALESCE(@model,  model),
-         serial   = COALESCE(@serial, serial)
-   WHERE id = @device_id;
+     SET Online = @online,
+         Last_seen = CASE WHEN @online = 1 THEN SYSDATETIME() ELSE Last_seen END,
+         Model = COALESCE(@model, Model),
+         Serial = COALESCE(@serial, Serial)
+   WHERE Id = @device_id;
+  -- convenience mirror so the cache table reads standalone; Devices.Online
+  -- remains the authority
+  UPDATE dbo.WN_HIK_DevCache SET Status = CASE WHEN @online = 1 THEN 1 ELSE 0 END WHERE Device_id = @device_id;
 END
 GO
 

@@ -305,7 +305,7 @@ export async function syncCredentialGroup(members, onlyDeviceIds = null) {
 export async function refreshSnapshots(maxMachines = 5) {
   const devs = (await getAllDevices()).filter((d) => d.online);
   if (!devs.length) return { refreshed: 0 };
-  const snaps = await getRows('SELECT device_id, roster_at, cards_at FROM dbo.WN_HIK_DevCache WITH (NOLOCK)');
+  const snaps = await getRows('SELECT Device_id AS device_id, Users_UpdatedOn AS roster_at, Cards_UpdatedOn AS cards_at FROM dbo.WN_HIK_DevCache WITH (NOLOCK)');
   const at = new Map(snaps.map((s) => [s.device_id, s]));
   const age = (v) => {
     if (!v) return Infinity;
@@ -338,7 +338,7 @@ export async function refreshSnapshots(maxMachines = 5) {
 export async function syncCardGrants() {
   const emps = await getRows("SELECT id, card_no FROM dbo.WN_HIK_Employees WHERE kind='card' AND status='active' AND card_no IS NOT NULL");
   if (!emps.length) return { added: 0, removed: 0 };
-  const snaps = await getRows('SELECT device_id, cards FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE cards IS NOT NULL');
+  const snaps = await getRows('SELECT Device_id AS device_id, Cards_snapshot AS cards FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Cards_snapshot IS NOT NULL');
   const snapped = new Set(snaps.map((x) => x.device_id));
   const byCard = new Map(); // card_no -> Set(device_id)
   for (const snap of snaps) {
@@ -358,7 +358,7 @@ export async function syncCardGrants() {
     for (const c of list) if (!holderByCard.has(String(c.cardNo))) holderByCard.set(String(c.cardNo), String(c.employeeNo));
   }
   try {
-    for (const r of await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL')) {
+    for (const r of await getRows('SELECT Device_id AS device_id, Users_snapshot AS roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Users_snapshot IS NOT NULL')) {
       let users; try { users = JSON.parse(r.roster); } catch { continue; }
       for (const u of users) if (!nameByEmp.has(String(u.employeeNo))) nameByEmp.set(String(u.employeeNo), String(u.name || '').trim());
     }
@@ -396,7 +396,7 @@ export async function syncCardGrants() {
 export async function closeCredentialGaps(maxWrites = 10) {
   const devs = await getAllDevices();
   const meta = new Map(devs.map((d) => [d.id, d]));
-  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  const snaps = await getRows('SELECT Device_id AS device_id, Users_snapshot AS roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Users_snapshot IS NOT NULL');
   const groups = new Map();
   for (const snap of snaps) {
     const dev = meta.get(snap.device_id);
@@ -462,7 +462,7 @@ export async function closeCredentialGaps(maxWrites = 10) {
 // their machines. After one full sweep every face survives a dead machine.
 export async function sweepFaceVault() {
   const devs = await getAllDevices();
-  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  const snaps = await getRows('SELECT Device_id AS device_id, Users_snapshot AS roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Users_snapshot IS NOT NULL');
   const people = new Map();
   for (const s of snaps) {
     let users; try { users = JSON.parse(s.roster); } catch { continue; }
@@ -496,7 +496,7 @@ export async function sweepFaceVault() {
 export async function syncUsersTable() {
   const devs = await getAllDevices();
   const meta = new Map(devs.map((d) => [d.id, d]));
-  const snaps = await getRows('SELECT device_id, roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE roster IS NOT NULL');
+  const snaps = await getRows('SELECT Device_id AS device_id, Users_snapshot AS roster FROM dbo.WN_HIK_DevCache WITH (NOLOCK) WHERE Users_snapshot IS NOT NULL');
   if (!snaps.length) return { users: 0 };
   const people = new Map();
   for (const s of snaps) {

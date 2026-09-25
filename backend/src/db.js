@@ -84,11 +84,12 @@ async function ensureDevCache() {
   try {
     await run(`IF OBJECT_ID('dbo.WN_HIK_DevCache','U') IS NULL
       CREATE TABLE dbo.WN_HIK_DevCache (
-        device_id INT NOT NULL CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY,
-        roster NVARCHAR(MAX) NULL,
-        roster_at DATETIME2(0) NULL,
-        cards NVARCHAR(MAX) NULL,
-        cards_at DATETIME2(0) NULL
+        Device_id INT NOT NULL CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY,
+        Users_snapshot NVARCHAR(MAX) NULL,
+        Users_UpdatedOn DATETIME2(0) NULL,
+        Cards_snapshot NVARCHAR(MAX) NULL,
+        Cards_UpdatedOn DATETIME2(0) NULL,
+        Status INT NOT NULL CONSTRAINT DF_WN_HIK_DevCache_Status DEFAULT (1)
       )`);
   } catch (e) {
     console.error('[db] ensureDevCache:', e.message);
