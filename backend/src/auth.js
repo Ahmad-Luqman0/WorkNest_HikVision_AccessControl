@@ -166,6 +166,10 @@ authRouter.post('/login', async (req, res) => {
       try { logAudit('guest', 'LOGIN_FAILED', userTrimmed, getClientIp(req), 'Invalid credentials'); } catch {}
       return res.status(401).json({ ok: false, error: 'Wrong username or password' });
     }
+    if (user.status !== undefined && Number(user.status) === 0) {
+      try { logAudit('guest', 'LOGIN_DISABLED', userTrimmed, getClientIp(req), 'Account disabled'); } catch {}
+      return res.status(403).json({ ok: false, error: 'This account is disabled — contact an admin.' });
+    }
     setCookie(res, req, await makeToken(user), SESSION_DAYS * 86400);
     try { logAudit(user.username, 'LOGIN_SUCCESS', user.username, getClientIp(req), `Logged in as ${user.role}`); } catch {}
     res.json({ ok: true, username: user.username, role: user.role });
@@ -215,7 +219,9 @@ authRouter.post('/change-password', async (req, res) => {
     if (isSelf && !verifyPassword(String(current || ''), user.password_hash)) {
       return res.status(401).json({ ok: false, error: 'Current password is wrong' });
     }
-    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(String(nextPassword)), role: null });
+    const actor = await getDashUser(auth.username).catch(() => null);
+    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(String(nextPassword)), role: null,
+      name: null, display_password: String(nextPassword), actor_id: actor?.id ?? null });
     logAudit(auth.username, 'CHANGE_PASSWORD', username, getClientIp(req), `Password updated for account ${username}`);
     res.json({ ok: true });
   } catch (e) {
@@ -244,6 +250,7 @@ authRouter.post('/users', async (req, res) => {
   const auth = await requireAdmin(req, res);
   if (!auth) return;
   const username = String(req.body?.username || '').trim();
+  const name = String(req.body?.name || '').trim() || null;
   const password = String(req.body?.password || '');
   const role = ROLES.includes(req.body?.role) ? req.body.role : 'user';
   if (!username) return res.status(400).json({ ok: false, error: 'Username required' });
@@ -252,9 +259,31 @@ authRouter.post('/users', async (req, res) => {
     if (await getDashUser(username)) {
       return res.status(409).json({ ok: false, error: `User "${username}" already exists` });
     }
-    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password), role });
+    const actor = await getDashUser(auth.username).catch(() => null);
+    await sp('WN_HIK_DashUser_Upsert', { username, password_hash: hashPassword(password), role,
+      name, display_password: password, actor_id: actor?.id ?? null });
     logAudit(auth.username, 'CREATE_DASH_USER', username, getClientIp(req), `Created dashboard account (${role})`);
     res.json({ ok: true, username, role });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// Enable / disable an account (admin; never your own — no self-lockout).
+authRouter.post('/users/:username/status', async (req, res) => {
+  const auth = await requireAdmin(req, res);
+  if (!auth) return;
+  const username = String(req.params.username);
+  const status = Number(req.body?.status) === 0 ? 0 : 1;
+  if (username === auth.username && status === 0) {
+    return res.status(400).json({ ok: false, error: 'You cannot disable the account you are signed in with' });
+  }
+  try {
+    if (!(await getDashUser(username))) return res.status(404).json({ ok: false, error: `No account "${username}"` });
+    const actor = await getDashUser(auth.username).catch(() => null);
+    await sp('WN_HIK_DashUser_SetStatus', { username, status, actor_id: actor?.id ?? null });
+    logAudit(auth.username, status ? 'ENABLE_DASH_USER' : 'DISABLE_DASH_USER', username, getClientIp(req), `Account ${status ? 'enabled' : 'disabled'}`);
+    res.json({ ok: true, status });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }

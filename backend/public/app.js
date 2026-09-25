@@ -5885,26 +5885,42 @@ async function dashusers() {
   }
   $('#viewActions').innerHTML = '<button class="btn primary" id="du_add">+ Add user</button>';
   $('#du_add').addEventListener('click', () => addDashUserModal());
-  content.innerHTML = skeletonTable(['Username', 'Role', 'Created', '']);
+  content.innerHTML = skeletonTable(['Username', 'Name', 'Role', 'Status', 'Created', '']);
   const r = await api.get('/auth/users');
   if (current !== 'dashusers') return; // view changed while loading
   if (!r.ok) { if (!r.__auth) content.innerHTML = `<div class="empty">${esc(r.error || 'Failed to load accounts')}</div>`; return; }
   const rows = (r.users || []).map((u) => `
     <tr>
       <td><b>${esc(u.username)}</b> ${u.username === me.username ? '<small class="hint">(you)</small>' : ''}</td>
+      <td>${esc(u.name || '—')}</td>
       <td><span class="badge ${u.role === 'admin' ? 'admin' : ''}">${esc(u.role)}</span></td>
-      <td class="nowrap"><small class="hint">${esc(String(u.created_at || '—').replace('T', ' ').slice(0, 16))}</small></td>
-      <td class="nowrap"><small class="hint">${esc(String(u.updated_at || '—').replace('T', ' ').slice(0, 16))}</small></td>
+      <td>${Number(u.status) === 0 ? '<span class="badge blocked">disabled</span>' : '<span class="badge synced">active</span>'}</td>
+      <td class="nowrap"><small class="hint">${esc(String(u.created_at || '—').replace('T', ' ').slice(0, 16))}${u.created_by_name ? ' · by ' + esc(u.created_by_name) : ''}</small></td>
       <td class="row-actions">
         <button class="btn sm" data-reset="${esc(u.username)}">Reset password</button>
-        ${u.username === me.username ? '' : `<button class="btn sm danger" data-deluser="${esc(u.username)}">Delete</button>`}
+        ${u.username === me.username ? '' : `<button class="btn sm" data-togglestatus="${esc(u.username)}" data-newstatus="${Number(u.status) === 0 ? 1 : 0}">${Number(u.status) === 0 ? 'Enable' : 'Disable'}</button>
+        <button class="btn sm danger" data-deluser="${esc(u.username)}">Delete</button>`}
       </td>
     </tr>`).join('');
   content.innerHTML = `<div class="table-wrapper"><table><thead><tr>
-      <th>Username</th><th>Role</th><th>Created</th><th>Updated</th><th></th>
+      <th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
     <p class="hint" style="margin-top:14px">Admins manage machines, people and these accounts. Users can operate the dashboard but cannot manage accounts.</p>`;
   content.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => resetDashPasswordModal(b.dataset.reset, me)));
+  content.querySelectorAll('[data-togglestatus]').forEach((b) => b.addEventListener('click', async () => {
+    const disabling = b.dataset.newstatus === '0';
+    if (disabling) {
+      const ok = await confirmDialog({
+        title: 'Disable Account',
+        message: `Disable "${b.dataset.togglestatus}"? They will not be able to sign in until re-enabled.`,
+        confirmText: 'Disable', danger: true,
+      });
+      if (!ok) return;
+    }
+    const rr = await api.post(`/auth/users/${encodeURIComponent(b.dataset.togglestatus)}/status`, { status: Number(b.dataset.newstatus) });
+    if (rr.ok) { toast(disabling ? 'Account disabled' : 'Account enabled', 'ok'); dashusers(); }
+    else if (!rr.__auth) toast(rr.error || 'Failed', 'err');
+  }));
   content.querySelectorAll('[data-deluser]').forEach((b) => b.addEventListener('click', async () => {
     const ok = await confirmDialog({
       title: 'Delete Dashboard Login',
@@ -5924,8 +5940,9 @@ function addDashUserModal() {
     <h2>Add dashboard user</h2>
     <div class="two-col">
       <div class="field"><label>Username</label><input id="du_user" autocomplete="off" placeholder="e.g. frontdesk"></div>
-      <div class="field"><label>Password</label><input id="du_pass" type="password" autocomplete="new-password"><div class="field-help">Minimum 6 characters.</div></div>
+      <div class="field"><label>Name</label><input id="du_name" autocomplete="off" placeholder="e.g. Front Desk — Morning"></div>
     </div>
+    <div class="field"><label>Password</label><input id="du_pass" type="password" autocomplete="new-password"><div class="field-help">Minimum 6 characters.</div></div>
     <div class="field"><label>Role</label>
       <select id="du_role"><option value="user">User (dashboard access)</option><option value="admin">Admin (can manage accounts)</option></select>
     </div>
@@ -5939,7 +5956,7 @@ function addDashUserModal() {
     const password = $('#du_pass').value;
     if (!username) { toast('Username required', 'err'); return; }
     if (password.length < 6) { toast('Password must be at least 6 characters', 'err'); return; }
-    const r = await api.post('/auth/users', { username, password, role: $('#du_role').value });
+    const r = await api.post('/auth/users', { username, name: $('#du_name').value.trim() || undefined, password, role: $('#du_role').value });
     if (r.ok) { closeModal(); toast(`User "${username}" (${r.role}) can now sign in`, 'ok'); dashusers(); }
     else if (!r.__auth) toast(r.error || 'Failed', 'err');
   });
