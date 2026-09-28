@@ -29,31 +29,45 @@ const config = {
 };
 
 let pool = null;
+let initPromise = null;
 let _lastPoolError = 0;
 let _lastPoolErrorMsg = '';
 
 export async function initDb() {
   if (pool) return pool;
-  pool = await new sql.ConnectionPool(config).connect();
-  pool.on('error', (e) => {
-    const now = Date.now();
-    const msg = e.message || String(e);
-    if (msg !== _lastPoolErrorMsg || now - _lastPoolError > 30000) {
-      _lastPoolError = now;
-      _lastPoolErrorMsg = msg;
-      console.error('[db] pool error:', msg);
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    try {
+      const p = await new sql.ConnectionPool(config).connect();
+      p.on('error', (e) => {
+        const now = Date.now();
+        const msg = e.message || String(e);
+        if (msg !== _lastPoolErrorMsg || now - _lastPoolError > 30000) {
+          _lastPoolError = now;
+          _lastPoolErrorMsg = msg;
+          console.error('[db] pool error:', msg);
+        }
+      });
+      pool = p;
+      // second WAN link for failover (same port, different public IP)
+      await run(`IF COL_LENGTH('dbo.WN_HIK_Devices','host2') IS NULL ALTER TABLE dbo.WN_HIK_Devices ADD host2 NVARCHAR(64) NULL`).catch(() => {});
+      await ensurePendingOps();
+      await ensureFpVault();
+      await ensureEventsTable();
+      await ensureDevCache();
+      await ensureFaceVault();
+      await ensureUsersTable();
+      await migrateFromSqliteIfEmpty();
+      return pool;
+    } catch (err) {
+      initPromise = null;
+      pool = null;
+      throw err;
     }
-  });
-  // second WAN link for failover (same port, different public IP)
-  await run(`IF COL_LENGTH('dbo.WN_HIK_Devices','host2') IS NULL ALTER TABLE dbo.WN_HIK_Devices ADD host2 NVARCHAR(64) NULL`).catch(() => {});
-  await ensurePendingOps();
-  await ensureFpVault();
-  await ensureEventsTable();
-  await ensureDevCache();
-  await ensureFaceVault();
-  await ensureUsersTable();
-  await migrateFromSqliteIfEmpty();
-  return pool;
+  })();
+
+  return initPromise;
 }
 
 // Operations aimed at a machine that was offline are queued here and replayed

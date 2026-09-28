@@ -52,8 +52,7 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 // exists before any request is handled. initDb() caches, so this is a no-op
 // after the first call.
 app.use(async (req, res, next) => {
-  // Allow auth endpoints to proceed so login can validate and respond cleanly
-  if (!req.path.startsWith('/api') || req.path.startsWith('/api/auth')) {
+  if (!req.path.startsWith('/api')) {
     return next();
   }
   try {

@@ -1,9 +1,12 @@
 // No-build SPA for the Hik co-working dashboard.
 // Every API response goes through handle(): a 401 anywhere pops the login
 // screen instead of failing silently.
+let _loggingInOrReloading = false;
 async function handle(res) {
   if (res.status === 401) {
-    showLogin();
+    if (!_loggingInOrReloading) {
+      showLogin();
+    }
     return { error: 'authentication required', __auth: true };
   }
   return res.json();
@@ -29,6 +32,7 @@ const api = {
 // ---- Login overlay ----
 function showLogin() {
   if ($('#loginOverlay')) return;
+  clearInterval(_autoTimer);
   const overlay = el(`<div id="loginOverlay" class="login-overlay">
     <form class="login-card" id="loginForm">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
@@ -36,7 +40,7 @@ function showLogin() {
           <img src="/logo-mark.png?v=2" alt="WorkNest" style="width:100%;height:100%;display:block;object-fit:cover" />
         </div>
         <div>
-          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:-0.03em;">WorkNest Access</h2>
+          <h2 style="margin:0;font-size:20px;font-weight:800;letter-spacing:-0.03em;color:var(--text-main);">WorkNest Access</h2>
           <p class="hint" style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;">Centralized Control</p>
         </div>
       </div>
@@ -80,6 +84,10 @@ function showLogin() {
       });
       const r = await res.json().catch(() => ({ ok: false, error: 'Service temporarily unreachable.' }));
       if (r.ok) {
+        _loggingInOrReloading = true;
+        clearInterval(_autoTimer);
+        const overlayEl = $('#loginOverlay');
+        if (overlayEl) overlayEl.remove();
         location.reload();
       } else {
         let msg = r.error || 'Sign-in failed. Please check your credentials.';
@@ -1766,10 +1774,10 @@ async function dashboard() {
       '<div class="stat"><div class="stat-head"><span class="skel-cell" style="width:60%"></span></div><div class="value"><span class="skel-cell" style="width:40%;height:22px"></span></div></div>').join('')}</div>
       ${skeletonTable(['', '', ''], 4)}</div>`;
   }
-  // Live view: refresh every 30s while the dashboard is open (not over modals).
+  // Live view: refresh every 30s while the dashboard is open (not over modals or login).
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
-    if (current === 'dashboard' && $('#modalBackdrop').hidden) dashboard();
+    if (current === 'dashboard' && $('#modalBackdrop').hidden && !$('#loginOverlay')) dashboard();
   }, 30000);
 
   const [sRaw, devsRaw, logsListRaw, expiringRaw, bookingsSummaryRaw, analyticsDataRaw] = await Promise.all([
@@ -2344,7 +2352,7 @@ async function devices() {
   // Live view: machine online/offline status refreshes on its own.
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
-    if (current === 'devices' && $('#modalBackdrop').hidden) devices();
+    if (current === 'devices' && $('#modalBackdrop').hidden && !$('#loginOverlay')) devices();
   }, 30000);
   if (!content.querySelector('table') && !content.querySelector('.devices-kpi-grid')) {
     content.innerHTML = skeletonTable(['Name', 'Address', 'Model', 'Status', ''], 4);
@@ -5447,7 +5455,7 @@ async function logs() {
   // Live view: entries refresh silently so the table never blanks out.
   clearInterval(_autoTimer);
   _autoTimer = setInterval(() => {
-    if (current === 'logs' && $('#modalBackdrop').hidden) loadLogTable(true);
+    if (current === 'logs' && $('#modalBackdrop').hidden && !$('#loginOverlay')) loadLogTable(true);
   }, 15000);
   content.innerHTML = '';
   content.appendChild(el(`<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">

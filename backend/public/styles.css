@@ -1666,7 +1666,7 @@ select option {
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-lg), 0 0 60px rgba(99, 102, 241, 0.15);
 }
-.login-card h2 { margin: 0 0 8px; font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.03em; }
+.login-card h2 { margin: 0 0 8px; font-size: 22px; font-weight: 800; color: var(--text-main); letter-spacing: -0.03em; }
 .login-card .field { margin-top: 16px; }
 .login-card .field input {
   width: 100%; padding: 11px 14px; border-radius: var(--radius-md, 12px);

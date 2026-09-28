@@ -13,7 +13,7 @@
 // admin override (e.g. reset access from Vercel settings).
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import { sp, logAudit } from './db.js';
+import { sp, logAudit, initDb } from './db.js';
 
 const COOKIE = 'wn_auth';
 const SESSION_DAYS = 7;
@@ -48,21 +48,32 @@ async function setSetting(key, value) {
 }
 
 let _secret = null;
+let _secretPromise = null;
 async function authSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   if (_secret) return _secret;
-  let s = null;
-  try {
-    s = await getSetting('auth_secret');
-  } catch {
-    // If DB is offline, continue without throwing
-  }
-  if (!s) {
-    s = crypto.randomBytes(32).toString('hex');
-    try { await setSetting('auth_secret', s); } catch {}
-  }
-  _secret = s;
-  return s;
+  if (_secretPromise) return _secretPromise;
+
+  _secretPromise = (async () => {
+    try {
+      await initDb();
+      const s = await getSetting('auth_secret');
+      if (s) {
+        _secret = s;
+        return _secret;
+      }
+      const newSecret = crypto.randomBytes(32).toString('hex');
+      try { await setSetting('auth_secret', newSecret); } catch {}
+      _secret = newSecret;
+      return _secret;
+    } catch (e) {
+      console.warn('[auth] DB unavailable in authSecret:', e.message);
+      _secretPromise = null;
+      return _secret || 'worknest_auth_fallback_stable_secret_2026';
+    }
+  })();
+
+  return _secretPromise;
 }
 
 // Seed a default admin account when the table is empty.
@@ -122,10 +133,10 @@ async function tokenInfo(token) {
   }
 }
 
-function readCookie(req) {
+function readCookies(req) {
   const raw = req.headers.cookie || '';
-  const m = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`));
-  return m ? decodeURIComponent(m[1]) : null;
+  const matches = [...raw.matchAll(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`, 'g'))];
+  return matches.map((m) => decodeURIComponent(m[1]));
 }
 function setCookie(res, req, value, maxAgeSeconds) {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
@@ -135,7 +146,13 @@ function setCookie(res, req, value, maxAgeSeconds) {
 
 async function sessionOf(req) {
   try {
-    return await tokenInfo(readCookie(req));
+    const tokens = readCookies(req);
+    if (!tokens.length) return null;
+    for (const token of tokens) {
+      const info = await tokenInfo(token);
+      if (info) return info;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -161,6 +178,7 @@ authRouter.post('/login', async (req, res) => {
   }
 
   try {
+    await initDb();
     const user = await checkCredentials(userTrimmed, passStr);
     if (!user) {
       try { logAudit('guest', 'LOGIN_FAILED', userTrimmed, getClientIp(req), 'Invalid credentials'); } catch {}
