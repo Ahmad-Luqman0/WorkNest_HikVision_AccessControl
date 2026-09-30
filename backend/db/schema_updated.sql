@@ -1,5 +1,5 @@
 -- WorkNest Access Control — WN_HIK_* schema
--- GENERATED FROM THE LIVE DATABASE on 2026-09-25.
+-- GENERATED FROM THE LIVE DATABASE on 2026-09-30.
 -- The runtime creates/migrates everything itself (src/db.js ensure* functions
 -- + stored procedures); this file is reference documentation of the current
 -- state, regenerate it after schema changes rather than editing by hand.
@@ -97,12 +97,16 @@ CREATE UNIQUE INDEX UQ_WN_HIK_Devices_host_port ON dbo.WN_HIK_Devices (Host, Por
 GO
 
 CREATE TABLE dbo.WN_HIK_EventCategories (
-  code INT NOT NULL,
-  label NVARCHAR(64) NOT NULL,
-  is_denied BIT NOT NULL DEFAULT ((0))
+  Id INT IDENTITY(1,1) NOT NULL,
+  Code INT NOT NULL,
+  Label NVARCHAR(64) NOT NULL,
+  Is_denied BIT NOT NULL DEFAULT ((0)),
+  Status INT NOT NULL DEFAULT ((1))
 );
 GO
-ALTER TABLE dbo.WN_HIK_EventCategories ADD CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY (code);
+ALTER TABLE dbo.WN_HIK_EventCategories ADD CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY (Id);
+GO
+CREATE UNIQUE INDEX UQ_WN_HIK_EventCategories_Code ON dbo.WN_HIK_EventCategories (Code);
 GO
 
 CREATE TABLE dbo.WN_HIK_Events (

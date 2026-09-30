@@ -164,27 +164,30 @@ async function ensureEventsTable() {
   }
 }
 
-// Readable lookup for access_event_category codes — mirrored from
-// ACCESS_EVENT_CATEGORY_MAPPING so SQL queries can JOIN to labels.
+// Readable lookup for access_event codes — labels/denied flags mirror
+// ACCESS_EVENT_CATEGORY_MAPPING on every start; the manually-managed
+// Status column (1=active, 0=disabled — informational) is PRESERVED.
 async function ensureEventCategories() {
   try {
     const { ACCESS_EVENT_CATEGORY_MAPPING } = await import('./eventCategories.js');
     await run(`IF OBJECT_ID('dbo.WN_HIK_EventCategories','U') IS NULL
       CREATE TABLE dbo.WN_HIK_EventCategories (
-        code INT NOT NULL CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY,
-        label NVARCHAR(64) NOT NULL,
-        is_denied BIT NOT NULL CONSTRAINT DF_WN_HIK_EvCat_denied DEFAULT (0)
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY,
+        Code INT NOT NULL CONSTRAINT UQ_WN_HIK_EventCategories_Code UNIQUE,
+        Label NVARCHAR(64) NOT NULL,
+        Is_denied BIT NOT NULL CONSTRAINT DF_WN_HIK_EvCat_denied DEFAULT (0),
+        Status INT NOT NULL CONSTRAINT DF_WN_HIK_EvCat_Status DEFAULT (1)
       )`);
     for (const [code, m] of Object.entries(ACCESS_EVENT_CATEGORY_MAPPING)) {
-      await run(`MERGE dbo.WN_HIK_EventCategories AS t USING (SELECT ? AS code) s ON t.code = s.code
-        WHEN MATCHED THEN UPDATE SET label = ?, is_denied = ?
-        WHEN NOT MATCHED THEN INSERT (code, label, is_denied) VALUES (s.code, ?, ?);`,
+      await run(`MERGE dbo.WN_HIK_EventCategories AS t USING (SELECT ? AS code) s ON t.Code = s.code
+        WHEN MATCHED THEN UPDATE SET Label = ?, Is_denied = ?
+        WHEN NOT MATCHED THEN INSERT (Code, Label, Is_denied) VALUES (s.code, ?, ?);`,
         [Number(code), m.label, m.denied ? 1 : 0, m.label, m.denied ? 1 : 0]);
     }
     // keep the denormalized details column in step with the mapping
-    await run(`UPDATE e SET e.access_event_details = c.label
-      FROM dbo.WN_HIK_Events e JOIN dbo.WN_HIK_EventCategories c ON c.code = e.access_event
-      WHERE e.access_event_details IS NULL OR e.access_event_details <> c.label`);
+    await run(`UPDATE e SET e.access_event_details = c.Label
+      FROM dbo.WN_HIK_Events e JOIN dbo.WN_HIK_EventCategories c ON c.Code = e.access_event
+      WHERE e.access_event_details IS NULL OR e.access_event_details <> c.Label`);
   } catch (e) {
     console.error('[db] ensureEventCategories:', e.message);
   }
