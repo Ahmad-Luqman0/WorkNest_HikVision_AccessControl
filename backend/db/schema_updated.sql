@@ -5,12 +5,12 @@
 -- state, regenerate it after schema changes rather than editing by hand.
 
 CREATE TABLE dbo.WN_HIK_AccessGrants (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_id INT NOT NULL,
-  device_id INT NOT NULL,
-  sync_state NVARCHAR(16) NOT NULL DEFAULT ('pending'),
-  last_error NVARCHAR(MAX) NULL,
-  synced_at DATETIME2(0) NULL
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [employee_id] INT NOT NULL,
+  [device_id] INT NOT NULL,
+  [sync_state] NVARCHAR(16) NOT NULL DEFAULT ('pending'),
+  [last_error] NVARCHAR(MAX) NULL,
+  [synced_at] DATETIME2(0) NULL
 );
 GO
 CREATE INDEX IX_WN_HIK_grants_state ON dbo.WN_HIK_AccessGrants (sync_state);
@@ -21,38 +21,38 @@ CREATE UNIQUE INDEX UQ_WN_HIK_grants_emp_dev ON dbo.WN_HIK_AccessGrants (employe
 GO
 
 CREATE TABLE dbo.WN_HIK_Cards (
-  Id INT IDENTITY(1,1) NOT NULL,
-  Employee_no NVARCHAR(MAX) NULL,
-  Employee_name NVARCHAR(128) NULL,
-  Name NVARCHAR(MAX) NOT NULL,
-  Card_no NVARCHAR(32) NULL,
-  Valid_begin DATETIME2(7) NULL,
-  Valid_end DATETIME2(7) NULL,
-  Auto_delete BIT NOT NULL DEFAULT ((0)),
-  Notes NVARCHAR(MAX) NULL,
-  Booking_ref NVARCHAR(MAX) NULL,
-  Created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime()),
-  Status INT NOT NULL DEFAULT ((1)),
-  Created_by INT NULL,
-  Updated_by INT NULL,
-  Updated_on DATETIME2(0) NULL
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Employee_no] NVARCHAR(MAX) NULL,
+  [Employee_name] NVARCHAR(128) NULL,
+  [Name] NVARCHAR(MAX) NOT NULL,
+  [Card_no] NVARCHAR(32) NULL,
+  [Valid_begin] DATETIME2(7) NULL,
+  [Valid_end] DATETIME2(7) NULL,
+  [Auto_delete] BIT NOT NULL DEFAULT ((0)),
+  [Notes] NVARCHAR(MAX) NULL,
+  [Booking_ref] NVARCHAR(MAX) NULL,
+  [Created_at] DATETIME2(7) NOT NULL DEFAULT (sysdatetime()),
+  [Status] INT NOT NULL DEFAULT ((1)),
+  [Created_by] INT NULL,
+  [Updated_by] INT NULL,
+  [Updated_on] DATETIME2(0) NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Cards ADD CONSTRAINT PK_WN_HIK_Cards PRIMARY KEY (Id);
 GO
 
 CREATE TABLE dbo.WN_HIK_DashboardUsers (
-  Id INT IDENTITY(1,1) NOT NULL,
-  Username NVARCHAR(64) NOT NULL,
-  Password_hash NVARCHAR(256) NOT NULL,
-  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  Updated_at DATETIME2(0) NULL,
-  Role NVARCHAR(16) NOT NULL DEFAULT ('user'),
-  Name NVARCHAR(128) NULL,
-  Display_password NVARCHAR(256) NULL,
-  Status INT NOT NULL DEFAULT ((1)),
-  Created_by INT NULL,
-  Updated_by INT NULL
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Username] NVARCHAR(64) NOT NULL,
+  [Password_hash] NVARCHAR(256) NOT NULL,
+  [Created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  [Updated_at] DATETIME2(0) NULL,
+  [Role] NVARCHAR(16) NOT NULL DEFAULT ('user'),
+  [Name] NVARCHAR(128) NULL,
+  [Display_password] NVARCHAR(256) NULL,
+  [Status] INT NOT NULL DEFAULT ((1)),
+  [Created_by] INT NULL,
+  [Updated_by] INT NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_DashboardUsers ADD CONSTRAINT PK_WN_HIK_DashboardUsers PRIMARY KEY (Id);
@@ -61,34 +61,34 @@ CREATE UNIQUE INDEX UQ_WN_HIK_DashboardUsers_username ON dbo.WN_HIK_DashboardUse
 GO
 
 CREATE TABLE dbo.WN_HIK_DevCache (
-  Device_id INT NOT NULL,
-  Users_snapshot NVARCHAR(MAX) NULL,
-  Users_UpdatedOn DATETIME2(0) NULL,
-  Cards_snapshot NVARCHAR(MAX) NULL,
-  Cards_UpdatedOn DATETIME2(0) NULL,
-  Status INT NOT NULL DEFAULT ((1))
+  [Device_id] INT NOT NULL,
+  [Users_snapshot] NVARCHAR(MAX) NULL,
+  [Users_UpdatedOn] DATETIME2(0) NULL,
+  [Cards_snapshot] NVARCHAR(MAX) NULL,
+  [Cards_UpdatedOn] DATETIME2(0) NULL,
+  [Status] INT NOT NULL DEFAULT ((1))
 );
 GO
 ALTER TABLE dbo.WN_HIK_DevCache ADD CONSTRAINT PK_WN_HIK_DevCache PRIMARY KEY (Device_id);
 GO
 
 CREATE TABLE dbo.WN_HIK_Devices (
-  Id INT IDENTITY(1,1) NOT NULL,
-  Device_Name NVARCHAR(100) NOT NULL,
-  Host NVARCHAR(64) NOT NULL,
-  Port INT NOT NULL DEFAULT ((80)),
-  Use_https BIT NOT NULL DEFAULT ((0)),
-  Username NVARCHAR(64) NOT NULL,
-  Password NVARCHAR(128) NOT NULL,
-  Location NVARCHAR(128) NULL,
-  Model NVARCHAR(64) NULL,
-  Serial NVARCHAR(64) NULL,
-  Last_seen DATETIME2(0) NULL,
-  Online BIT NOT NULL DEFAULT ((0)),
-  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  Code NVARCHAR(32) NULL,
-  Host2 NVARCHAR(64) NULL,
-  Group_id INT NULL
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Device_Name] NVARCHAR(100) NOT NULL,
+  [Host] NVARCHAR(64) NOT NULL,
+  [Port] INT NOT NULL DEFAULT ((80)),
+  [Use_https] BIT NOT NULL DEFAULT ((0)),
+  [Username] NVARCHAR(64) NOT NULL,
+  [Password] NVARCHAR(128) NOT NULL,
+  [Location] NVARCHAR(128) NULL,
+  [Model] NVARCHAR(64) NULL,
+  [Serial] NVARCHAR(64) NULL,
+  [Last_seen] DATETIME2(0) NULL,
+  [Online] BIT NOT NULL DEFAULT ((0)),
+  [Created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  [Code] NVARCHAR(32) NULL,
+  [Host2] NVARCHAR(64) NULL,
+  [Group_id] INT NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT PK_WN_HIK_Devices PRIMARY KEY (Id);
@@ -97,11 +97,11 @@ CREATE UNIQUE INDEX UQ_WN_HIK_Devices_host_port ON dbo.WN_HIK_Devices (Host, Por
 GO
 
 CREATE TABLE dbo.WN_HIK_EventCategories (
-  Id INT IDENTITY(1,1) NOT NULL,
-  Code INT NOT NULL,
-  Label NVARCHAR(64) NOT NULL,
-  Is_denied BIT NOT NULL DEFAULT ((0)),
-  Status INT NOT NULL DEFAULT ((1))
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Code] INT NOT NULL,
+  [Label] NVARCHAR(64) NOT NULL,
+  [Is_denied] BIT NOT NULL DEFAULT ((0)),
+  [Status] INT NOT NULL DEFAULT ((1))
 );
 GO
 ALTER TABLE dbo.WN_HIK_EventCategories ADD CONSTRAINT PK_WN_HIK_EventCategories PRIMARY KEY (Id);
@@ -110,17 +110,17 @@ CREATE UNIQUE INDEX UQ_WN_HIK_EventCategories_Code ON dbo.WN_HIK_EventCategories
 GO
 
 CREATE TABLE dbo.WN_HIK_Events (
-  id INT IDENTITY(1,1) NOT NULL,
-  device_id INT NOT NULL,
-  device_name NVARCHAR(100) NULL,
-  employee_no NVARCHAR(32) NULL,
-  name NVARCHAR(128) NULL,
-  card_no NVARCHAR(32) NULL,
-  access_event INT NULL,
-  machine_event_no BIGINT NULL,
-  event_time DATETIME2(0) NOT NULL,
-  created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  access_event_details NVARCHAR(64) NULL
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [device_id] INT NOT NULL,
+  [device_name] NVARCHAR(100) NULL,
+  [employee_no] NVARCHAR(32) NULL,
+  [name] NVARCHAR(128) NULL,
+  [card_no] NVARCHAR(32) NULL,
+  [access_event] INT NULL,
+  [machine_event_no] BIGINT NULL,
+  [event_time] DATETIME2(0) NOT NULL,
+  [created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  [access_event_details] NVARCHAR(64) NULL
 );
 GO
 CREATE INDEX IX_WN_HIK_Events_emp ON dbo.WN_HIK_Events (employee_no, event_time);
@@ -133,11 +133,11 @@ CREATE UNIQUE INDEX UX_WN_HIK_Events_dev_serial ON dbo.WN_HIK_Events (device_id,
 GO
 
 CREATE TABLE dbo.WN_HIK_FaceVault (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_no NVARCHAR(32) NOT NULL,
-  name NVARCHAR(128) NOT NULL,
-  model_data NVARCHAR(MAX) NOT NULL,
-  updated_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [employee_no] NVARCHAR(32) NOT NULL,
+  [name] NVARCHAR(128) NOT NULL,
+  [model_data] NVARCHAR(MAX) NOT NULL,
+  [updated_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_FaceVault ADD CONSTRAINT PK_WN_HIK_FaceVault PRIMARY KEY (id);
@@ -146,12 +146,12 @@ CREATE UNIQUE INDEX UQ_WN_HIK_FaceVault ON dbo.WN_HIK_FaceVault (employee_no, na
 GO
 
 CREATE TABLE dbo.WN_HIK_FpVault (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_no NVARCHAR(32) NOT NULL,
-  name NVARCHAR(128) NOT NULL,
-  finger_no INT NOT NULL DEFAULT ((1)),
-  template NVARCHAR(MAX) NOT NULL,
-  updated_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [employee_no] NVARCHAR(32) NOT NULL,
+  [name] NVARCHAR(128) NOT NULL,
+  [finger_no] INT NOT NULL DEFAULT ((1)),
+  [template] NVARCHAR(MAX) NOT NULL,
+  [updated_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_FpVault ADD CONSTRAINT PK_WN_HIK_FpVault PRIMARY KEY (id);
@@ -160,9 +160,9 @@ CREATE UNIQUE INDEX UQ_WN_HIK_FpVault ON dbo.WN_HIK_FpVault (employee_no, name, 
 GO
 
 CREATE TABLE dbo.WN_HIK_Groups (
-  Id INT IDENTITY(1,1) NOT NULL,
-  Name NVARCHAR(64) NOT NULL,
-  Created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Name] NVARCHAR(64) NOT NULL,
+  [Created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_Groups ADD CONSTRAINT PK_WN_HIK_Groups PRIMARY KEY (Id);
@@ -171,52 +171,52 @@ CREATE UNIQUE INDEX UQ_WN_HIK_Groups_Name ON dbo.WN_HIK_Groups (Name);
 GO
 
 CREATE TABLE dbo.WN_HIK_PendingOps (
-  id INT IDENTITY(1,1) NOT NULL,
-  device_id INT NOT NULL,
-  op NVARCHAR(32) NOT NULL,
-  employee_no NVARCHAR(32) NULL,
-  payload NVARCHAR(MAX) NULL,
-  attempts INT NOT NULL DEFAULT ((0)),
-  last_error NVARCHAR(MAX) NULL,
-  created_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [device_id] INT NOT NULL,
+  [op] NVARCHAR(32) NOT NULL,
+  [employee_no] NVARCHAR(32) NULL,
+  [payload] NVARCHAR(MAX) NULL,
+  [attempts] INT NOT NULL DEFAULT ((0)),
+  [last_error] NVARCHAR(MAX) NULL,
+  [created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_PendingOps ADD CONSTRAINT PK_WN_HIK_PendingOps PRIMARY KEY (id);
 GO
 
 CREATE TABLE dbo.WN_HIK_Settings (
-  key NVARCHAR(64) NOT NULL,
-  value NVARCHAR(256) NULL
+  [key] NVARCHAR(64) NOT NULL,
+  [value] NVARCHAR(256) NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Settings ADD CONSTRAINT PK_WN_HIK_Settings PRIMARY KEY (key);
 GO
 
 CREATE TABLE dbo.WN_HIK_SyncLog (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_id INT NULL,
-  device_id INT NULL,
-  action NVARCHAR(64) NULL,
-  ok BIT NULL,
-  detail NVARCHAR(MAX) NULL,
-  ts DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Employee_id] INT NULL,
+  [Device_id] INT NULL,
+  [Action] NVARCHAR(64) NULL,
+  [Ok] BIT NULL,
+  [Detail] NVARCHAR(MAX) NULL,
+  [Timestamp] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
 );
 GO
-CREATE INDEX IX_WN_HIK_SyncLog_action ON dbo.WN_HIK_SyncLog (action);
+CREATE INDEX IX_WN_HIK_SyncLog_action ON dbo.WN_HIK_SyncLog (Action);
 GO
-ALTER TABLE dbo.WN_HIK_SyncLog ADD CONSTRAINT PK_WN_HIK_SyncLog PRIMARY KEY (id);
+ALTER TABLE dbo.WN_HIK_SyncLog ADD CONSTRAINT PK_WN_HIK_SyncLog PRIMARY KEY (Id);
 GO
 
 CREATE TABLE dbo.WN_HIK_Users (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_no NVARCHAR(32) NOT NULL,
-  name NVARCHAR(128) NOT NULL,
-  room NVARCHAR(256) NULL,
-  role NVARCHAR(16) NOT NULL DEFAULT ('user'),
-  machines NVARCHAR(MAX) NULL,
-  machine_count INT NOT NULL DEFAULT ((0)),
-  updated_at DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  cnic NVARCHAR(20) NULL
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [employee_no] NVARCHAR(32) NOT NULL,
+  [name] NVARCHAR(128) NOT NULL,
+  [room] NVARCHAR(256) NULL,
+  [role] NVARCHAR(16) NOT NULL DEFAULT ('user'),
+  [machines] NVARCHAR(MAX) NULL,
+  [machine_count] INT NOT NULL DEFAULT ((0)),
+  [updated_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
+  [cnic] NVARCHAR(20) NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Users ADD CONSTRAINT PK_WN_HIK_Users PRIMARY KEY (id);
@@ -225,18 +225,18 @@ CREATE UNIQUE INDEX UQ_WN_HIK_Users ON dbo.WN_HIK_Users (employee_no, name);
 GO
 
 CREATE TABLE dbo.WN_HIK_Visitors (
-  id INT IDENTITY(1,1) NOT NULL,
-  employee_no NVARCHAR(32) NOT NULL,
-  name NVARCHAR(128) NOT NULL,
-  card_no NVARCHAR(32) NULL,
-  face_path NVARCHAR(260) NULL,
-  valid_begin DATETIME2(7) NULL,
-  valid_end DATETIME2(7) NULL,
-  auto_delete BIT NOT NULL DEFAULT ((0)),
-  status NVARCHAR(16) NOT NULL DEFAULT ('active'),
-  notes NVARCHAR(MAX) NULL,
-  booking_ref NVARCHAR(64) NULL,
-  created_at DATETIME2(7) NOT NULL DEFAULT (sysdatetime())
+  [id] INT IDENTITY(1,1) NOT NULL,
+  [employee_no] NVARCHAR(32) NOT NULL,
+  [name] NVARCHAR(128) NOT NULL,
+  [card_no] NVARCHAR(32) NULL,
+  [face_path] NVARCHAR(260) NULL,
+  [valid_begin] DATETIME2(7) NULL,
+  [valid_end] DATETIME2(7) NULL,
+  [auto_delete] BIT NOT NULL DEFAULT ((0)),
+  [status] NVARCHAR(16) NOT NULL DEFAULT ('active'),
+  [notes] NVARCHAR(MAX) NULL,
+  [booking_ref] NVARCHAR(64) NULL,
+  [created_at] DATETIME2(7) NOT NULL DEFAULT (sysdatetime())
 );
 GO
 ALTER TABLE dbo.WN_HIK_Visitors ADD CONSTRAINT PK_WN_HIK_Visitors PRIMARY KEY (id);
@@ -282,11 +282,13 @@ CREATE   PROCEDURE dbo.WN_HIK_Activity_Recent @limit INT = 200 AS
 BEGIN
   SET NOCOUNT ON;
   SELECT TOP (@limit)
-         l.*, e.name AS employee_name, d.Device_Name AS device_name
+         l.Id AS id, l.Employee_id AS employee_id, l.Device_id AS device_id,
+         l.Action AS action, l.Ok AS ok, l.Detail AS detail, l.[Timestamp] AS ts,
+         e.name AS employee_name, d.Device_Name AS device_name
   FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
-  LEFT JOIN dbo.WN_HIK_Employees e ON e.id = l.employee_id
-  LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.Id = l.device_id
-  ORDER BY l.id DESC;
+  LEFT JOIN dbo.WN_HIK_Employees e ON e.id = l.Employee_id
+  LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.Id = l.Device_id
+  ORDER BY l.Id DESC;
 END
 GO
 
@@ -529,14 +531,12 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Log_Write
--- Write an activity-log entry.
-CREATE   PROCEDURE [dbo].[WN_HIK_Log_Write]
+CREATE   PROCEDURE dbo.WN_HIK_Log_Write
   @employee_id INT = NULL, @device_id INT = NULL,
-  @action NVARCHAR(64), @ok BIT, @detail NVARCHAR(MAX) = NULL
-AS
+  @action NVARCHAR(64), @ok BIT, @detail NVARCHAR(MAX) = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  INSERT INTO dbo.WN_HIK_SyncLog (employee_id, device_id, action, ok, detail)
+  INSERT INTO dbo.WN_HIK_SyncLog (Employee_id, Device_id, Action, Ok, Detail)
   VALUES (@employee_id, @device_id, @action, @ok, @detail);
 END
 GO

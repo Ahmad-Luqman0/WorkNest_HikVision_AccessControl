@@ -819,10 +819,10 @@ app.get('/api/stats', async (req, res) => {
     const yestStr = `${yest.getFullYear()}-${p2(yest.getMonth() + 1)}-${p2(yest.getDate())}`;
 
     const [todayRow, yestRow, uniqueTodayRow, lastEventRow] = await Promise.all([
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
-      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST(ts AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST([Timestamp] AS DATE) = ?', [todayStr]).catch(() => ({ n: 0 })),
+      getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_SyncLog WHERE CAST([Timestamp] AS DATE) = ?', [yestStr]).catch(() => ({ n: 0 })),
       getRow("SELECT COUNT(DISTINCT employee_no) AS n FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE event_time >= CAST(GETDATE() AS DATE) AND employee_no IS NOT NULL").catch(async () => {
-        return getRow("SELECT COUNT(DISTINCT employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST(ts AS DATE) = ? AND employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
+        return getRow("SELECT COUNT(DISTINCT Employee_id) AS n FROM dbo.WN_HIK_SyncLog WITH (NOLOCK) WHERE CAST([Timestamp] AS DATE) = ? AND Employee_id IS NOT NULL", [todayStr]).catch(() => ({ n: 0 }));
       }),
       getRow("SELECT TOP 1 employee_no, name, device_name, event_time, card_no, access_event, access_event_details, access_event AS minor FROM dbo.WN_HIK_Events WITH (NOLOCK) WHERE name IS NOT NULL AND name <> '' AND event_time >= CAST(GETDATE() AS DATE) ORDER BY event_time DESC").catch(() => null),
     ]);
@@ -875,11 +875,11 @@ app.get('/api/audit-logs', async (req, res) => {
     if (employeeNo) {
       try {
         logs = await getRows(
-          `SELECT TOP (${limit}) l.*, d.Device_Name AS device_name
+          `SELECT TOP (${limit}) l.Id AS id, l.Employee_id AS employee_id, l.Device_id AS device_id, l.Action AS action, l.Ok AS ok, l.Detail AS detail, l.[Timestamp] AS ts, d.Device_Name AS device_name
            FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
-           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
-           WHERE (l.employee_id = @empNo OR l.detail LIKE '%' + @empNo + '%' OR l.action LIKE '%' + @empNo + '%')
-           ORDER BY l.id DESC`,
+           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.Id = l.Device_id
+           WHERE (l.Employee_id = @empNo OR l.Detail LIKE '%' + @empNo + '%' OR l.Action LIKE '%' + @empNo + '%')
+           ORDER BY l.Id DESC`,
           { empNo: employeeNo }
         );
       } catch {
@@ -891,10 +891,10 @@ app.get('/api/audit-logs', async (req, res) => {
         logs = await sp('WN_HIK_Activity_Recent', { limit });
       } catch {
         logs = await getRows(
-          `SELECT TOP (${limit}) l.*, d.Device_Name AS device_name
+          `SELECT TOP (${limit}) l.Id AS id, l.Employee_id AS employee_id, l.Device_id AS device_id, l.Action AS action, l.Ok AS ok, l.Detail AS detail, l.[Timestamp] AS ts, d.Device_Name AS device_name
            FROM dbo.WN_HIK_SyncLog l WITH (NOLOCK)
-           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.id = l.device_id
-           ORDER BY l.id DESC`
+           LEFT JOIN dbo.WN_HIK_Devices d WITH (NOLOCK) ON d.Id = l.Device_id
+           ORDER BY l.Id DESC`
         ).catch(() => []);
       }
     }
