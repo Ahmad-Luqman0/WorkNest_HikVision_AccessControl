@@ -261,8 +261,13 @@ async function ensureUsersTable() {
 export async function saveFaceTemplate(employee_no, name, model_data) {
   const emp = String(employee_no);
   const nm = String(name || '').trim();
-  await run('DELETE FROM dbo.WN_HIK_FaceVault WHERE employee_no=? AND name=?', [emp, nm]);
-  await run('INSERT INTO dbo.WN_HIK_FaceVault (employee_no, name, model_data) VALUES (?,?,?)', [emp, nm, String(model_data)]);
+  // single atomic MERGE — a DELETE+INSERT pair had a crash window that
+  // could lose the template and a race window under concurrent writers
+  await run(`MERGE dbo.WN_HIK_FaceVault WITH (HOLDLOCK) AS t
+    USING (SELECT ? AS emp, ? AS nm) s ON t.employee_no = s.emp AND t.name = s.nm
+    WHEN MATCHED THEN UPDATE SET model_data = ?, updated_at = SYSDATETIME()
+    WHEN NOT MATCHED THEN INSERT (employee_no, name, model_data) VALUES (s.emp, s.nm, ?);`,
+    [emp, nm, String(model_data), String(model_data)]);
 }
 
 export async function getFaceTemplate(employee_no, name) {
@@ -274,9 +279,12 @@ export async function getFaceTemplate(employee_no, name) {
 export async function saveFpTemplate(employee_no, name, finger_no, template) {
   const emp = String(employee_no);
   const nm = String(name || '').trim();
-  await run('DELETE FROM dbo.WN_HIK_FpVault WHERE employee_no=? AND name=? AND finger_no=?', [emp, nm, Number(finger_no) || 1]);
-  await run('INSERT INTO dbo.WN_HIK_FpVault (employee_no, name, finger_no, template) VALUES (?,?,?,?)',
-    [emp, nm, Number(finger_no) || 1, String(template)]);
+  const fno = Number(finger_no) || 1;
+  await run(`MERGE dbo.WN_HIK_FpVault WITH (HOLDLOCK) AS t
+    USING (SELECT ? AS emp, ? AS nm, ? AS fno) s ON t.employee_no = s.emp AND t.name = s.nm AND t.finger_no = s.fno
+    WHEN MATCHED THEN UPDATE SET template = ?, updated_at = SYSDATETIME()
+    WHEN NOT MATCHED THEN INSERT (employee_no, name, finger_no, template) VALUES (s.emp, s.nm, s.fno, ?);`,
+    [emp, nm, fno, String(template), String(template)]);
 }
 
 export async function getFpTemplates(employee_no, name) {
@@ -317,6 +325,31 @@ async function request(sqlText, params = []) {
   const text = sqlText.replace(/\?/g, () => `@p${i++}`);
   params.forEach((v, n) => req.input(`p${n}`, v === undefined ? null : v));
   return req.query(text);
+}
+
+// Run several statements as ONE all-or-nothing transaction. The pooled
+// helpers each grab their own connection, so multi-statement atomicity
+// needs this explicit wrapper: everything inside fn() commits together
+// or rolls back together.
+export async function withTransaction(fn) {
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+  const q = async (sqlText, params = []) => {
+    const req = new sql.Request(tx);
+    let i = 0;
+    const text = sqlText.replace(/\?/g, () => { const k = 'p' + i++; return '@' + k; });
+    params.forEach((v, idx) => req.input('p' + idx, v));
+    const r = await req.query(text);
+    return r.recordset || [];
+  };
+  try {
+    const out = await fn(q);
+    await tx.commit();
+    return out;
+  } catch (e) {
+    try { await tx.rollback(); } catch { /* already rolled back */ }
+    throw e;
+  }
 }
 
 export async function getRow(sqlText, params = []) {

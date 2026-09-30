@@ -269,9 +269,11 @@ GO
 CREATE   PROCEDURE dbo.WN_HIK_Access_Extend
   @employee_no NVARCHAR(MAX), @valid_end DATETIME2(0), @valid_begin DATETIME2(0) = NULL AS
 BEGIN
-  SET NOCOUNT ON;
-  UPDATE dbo.WN_HIK_Cards SET Valid_end = @valid_end, Valid_begin = COALESCE(@valid_begin, Valid_begin), Status = 1 WHERE Employee_no = @employee_no;
-  UPDATE dbo.WN_HIK_Visitors SET valid_end = @valid_end, valid_begin = COALESCE(@valid_begin, valid_begin), status = 'active' WHERE employee_no = @employee_no;
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+  BEGIN TRAN;
+    UPDATE dbo.WN_HIK_Cards SET Valid_end = @valid_end, Valid_begin = COALESCE(@valid_begin, Valid_begin), Status = 1 WHERE Employee_no = @employee_no;
+    UPDATE dbo.WN_HIK_Visitors SET valid_end = @valid_end, valid_begin = COALESCE(@valid_begin, valid_begin), status = 'active' WHERE employee_no = @employee_no;
+  COMMIT;
 END
 GO
 
@@ -393,18 +395,16 @@ CREATE   PROCEDURE dbo.WN_HIK_DashUser_Upsert
   @name NVARCHAR(128) = NULL, @display_password NVARCHAR(256) = NULL, @actor_id INT = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_DashboardUsers WITH (NOLOCK) WHERE Username = @username)
-    UPDATE dbo.WN_HIK_DashboardUsers
-       SET Password_hash = @password_hash,
-           Display_password = COALESCE(@display_password, Display_password),
-           Role = COALESCE(@role, Role),
-           Name = COALESCE(@name, Name),
-           Updated_by = COALESCE(@actor_id, Updated_by),
-           Updated_at = SYSDATETIME()
-     WHERE Username = @username;
-  ELSE
-    INSERT INTO dbo.WN_HIK_DashboardUsers (Username, Name, Password_hash, Display_password, Role, Created_by)
-    VALUES (@username, COALESCE(@name, @username), @password_hash, @display_password, COALESCE(@role, 'user'), @actor_id);
+  MERGE dbo.WN_HIK_DashboardUsers WITH (HOLDLOCK) AS t USING (SELECT @username AS u) s ON t.Username = s.u
+  WHEN MATCHED THEN UPDATE SET
+    Password_hash = @password_hash,
+    Display_password = COALESCE(@display_password, t.Display_password),
+    Role = COALESCE(@role, t.Role),
+    Name = COALESCE(@name, t.Name),
+    Updated_by = COALESCE(@actor_id, t.Updated_by),
+    Updated_at = SYSDATETIME()
+  WHEN NOT MATCHED THEN INSERT (Username, Name, Password_hash, Display_password, Role, Created_by)
+    VALUES (s.u, COALESCE(@name, s.u), @password_hash, @display_password, COALESCE(@role, 'user'), @actor_id);
 END
 GO
 
@@ -429,25 +429,26 @@ GO
 CREATE   PROCEDURE dbo.WN_HIK_Device_UpsertByHost
   @name NVARCHAR(100), @host NVARCHAR(64), @port INT = 80, @use_https BIT = 0,
   @username NVARCHAR(64), @password NVARCHAR(128),
-  @location NVARCHAR(128) = NULL, @grp NVARCHAR(64) = NULL
-AS
+  @location NVARCHAR(128) = NULL, @grp NVARCHAR(64) = NULL AS
 BEGIN
-  SET NOCOUNT ON;
-  DECLARE @gid INT = NULL;
-  IF @grp IS NOT NULL AND LTRIM(RTRIM(@grp)) <> ''
-  BEGIN
-    SELECT @gid = Id FROM dbo.WN_HIK_Groups WHERE Name = @grp;
-    IF @gid IS NULL BEGIN INSERT INTO dbo.WN_HIK_Groups (Name) VALUES (@grp); SET @gid = SCOPE_IDENTITY(); END
-  END
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE Host = @host AND Port = @port)
-    UPDATE dbo.WN_HIK_Devices
-       SET Device_Name = @name, Use_https = @use_https,
-           Username = @username, Password = @password,
-           Location = @location, Group_id = @gid
-     WHERE Host = @host AND Port = @port;
-  ELSE
-    INSERT INTO dbo.WN_HIK_Devices (Device_Name, Host, Port, Use_https, Username, Password, Location, Group_id)
-    VALUES (@name, @host, @port, @use_https, @username, @password, @location, @gid);
+  SET NOCOUNT ON; SET XACT_ABORT ON;
+  BEGIN TRAN;
+    DECLARE @gid INT = NULL;
+    IF @grp IS NOT NULL AND LTRIM(RTRIM(@grp)) <> ''
+    BEGIN
+      SELECT @gid = Id FROM dbo.WN_HIK_Groups WITH (UPDLOCK, HOLDLOCK) WHERE Name = @grp;
+      IF @gid IS NULL BEGIN INSERT INTO dbo.WN_HIK_Groups (Name) VALUES (@grp); SET @gid = SCOPE_IDENTITY(); END
+    END
+    IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Devices WITH (UPDLOCK, HOLDLOCK) WHERE Host = @host AND Port = @port)
+      UPDATE dbo.WN_HIK_Devices
+         SET Device_Name = @name, Use_https = @use_https,
+             Username = @username, Password = @password,
+             Location = @location, Group_id = @gid
+       WHERE Host = @host AND Port = @port;
+    ELSE
+      INSERT INTO dbo.WN_HIK_Devices (Device_Name, Host, Port, Use_https, Username, Password, Location, Group_id)
+      VALUES (@name, @host, @port, @use_https, @username, @password, @location, @gid);
+  COMMIT;
   SELECT Id AS id FROM dbo.WN_HIK_Devices WITH (NOLOCK) WHERE Host = @host AND Port = @port;
 END
 GO
@@ -467,29 +468,27 @@ GO
 -- SQL_STORED_PROCEDURE: WN_HIK_Expiry_Run
 CREATE   PROCEDURE dbo.WN_HIK_Expiry_Run @now DATETIME2(0) AS
 BEGIN
-  SET NOCOUNT ON;
+  SET NOCOUNT ON; SET XACT_ABORT ON;
   DECLARE @expired TABLE (id INT, employee_no NVARCHAR(MAX), auto_delete BIT);
-  UPDATE dbo.WN_HIK_Cards SET Status = 0
-  OUTPUT inserted.Id, inserted.Employee_no, inserted.Auto_delete INTO @expired
-   WHERE Valid_end IS NOT NULL AND Valid_end <= @now AND Status = 1;
-  UPDATE dbo.WN_HIK_Visitors SET status = 'expired'
-  OUTPUT inserted.id, inserted.employee_no, inserted.auto_delete INTO @expired
-   WHERE valid_end IS NOT NULL AND valid_end <= @now AND status = 'active';
+  BEGIN TRAN;
+    UPDATE dbo.WN_HIK_Cards SET Status = 0
+    OUTPUT inserted.Id, inserted.Employee_no, inserted.Auto_delete INTO @expired
+     WHERE Valid_end IS NOT NULL AND Valid_end <= @now AND Status = 1;
+    UPDATE dbo.WN_HIK_Visitors SET status = 'expired'
+    OUTPUT inserted.id, inserted.employee_no, inserted.auto_delete INTO @expired
+     WHERE valid_end IS NOT NULL AND valid_end <= @now AND status = 'active';
+  COMMIT;
   SELECT * FROM @expired;
 END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Grant_Ensure
--- Grant a machine to a person (idempotent; pending until pushed).
-CREATE   PROCEDURE [dbo].[WN_HIK_Grant_Ensure]
-  @employee_id INT, @device_id INT
-AS
+CREATE   PROCEDURE dbo.WN_HIK_Grant_Ensure @employee_id INT, @device_id INT AS
 BEGIN
   SET NOCOUNT ON;
-  IF NOT EXISTS (SELECT 1 FROM dbo.WN_HIK_AccessGrants WITH (NOLOCK)
-                 WHERE employee_id = @employee_id AND device_id = @device_id)
-    INSERT INTO dbo.WN_HIK_AccessGrants (employee_id, device_id, sync_state)
-    VALUES (@employee_id, @device_id, 'pending');
+  MERGE dbo.WN_HIK_AccessGrants WITH (HOLDLOCK) AS t
+  USING (SELECT @employee_id AS e, @device_id AS d) s ON t.employee_id = s.e AND t.device_id = s.d
+  WHEN NOT MATCHED THEN INSERT (employee_id, device_id, sync_state) VALUES (s.e, s.d, 'pending');
 END
 GO
 
@@ -554,15 +553,12 @@ END
 GO
 
 -- SQL_STORED_PROCEDURE: WN_HIK_Settings_Set
-CREATE   PROCEDURE [dbo].[WN_HIK_Settings_Set]
-  @key NVARCHAR(64), @value NVARCHAR(256)
-AS
+CREATE   PROCEDURE dbo.WN_HIK_Settings_Set @key NVARCHAR(64), @value NVARCHAR(256) AS
 BEGIN
   SET NOCOUNT ON;
-  IF EXISTS (SELECT 1 FROM dbo.WN_HIK_Settings WITH (NOLOCK) WHERE [key] = @key)
-    UPDATE dbo.WN_HIK_Settings SET value = @value WHERE [key] = @key;
-  ELSE
-    INSERT INTO dbo.WN_HIK_Settings ([key], value) VALUES (@key, @value);
+  MERGE dbo.WN_HIK_Settings WITH (HOLDLOCK) AS t USING (SELECT @key AS k) s ON t.[key] = s.k
+  WHEN MATCHED THEN UPDATE SET value = @value
+  WHEN NOT MATCHED THEN INSERT ([key], value) VALUES (s.k, @value);
 END
 GO
 

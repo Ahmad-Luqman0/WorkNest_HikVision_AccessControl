@@ -3,7 +3,7 @@
 // Period natively — these jobs handle the extras (status flips, auto-delete,
 // keeping credentials identical everywhere).
 import cron from 'node-cron';
-import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates, saveFpTemplate, saveFaceTemplate, getFaceTemplate } from './db.js';
+import { getRow, getRows, getAllDevices, getDeviceById, sp, run, logSync, isUnreachableErr, getFpTemplates, saveFpTemplate, saveFaceTemplate, getFaceTemplate, withTransaction } from './db.js';
 import * as isapi from './isapi.js';
 import { syncAllPending } from './sync.js';
 import { getRoster, invalidateRoster } from './machineCache.js';
@@ -520,19 +520,22 @@ export async function syncUsersTable() {
     for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
       cnics.set(`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`, { emp: String(r.employee_no), name: String(r.name || '').trim(), cnic: r.cnic });
   } catch { /* column may not exist yet on first run */ }
-  await run('DELETE FROM dbo.WN_HIK_Users');
-  for (const [key, p] of people.entries()) {
-    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count, cnic) VALUES (?,?,?,?,?,?,?)',
-      [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length, cnics.get(key)?.cnic || null]);
-  }
-  // A person with a CNIC who isn't in any roster snapshot yet (just created,
-  // or all their machines are offline) keeps a minimal row so the CNIC is
-  // never lost — it fills out once their roster snapshot catches up.
-  for (const [key, c] of cnics.entries()) {
-    if (people.has(key)) continue;
-    await run('INSERT INTO dbo.WN_HIK_Users (employee_no, name, machines, machine_count, cnic) VALUES (?,?,?,?,?)',
-      [c.emp, c.name, '[]', 0, c.cnic]).catch(() => {});
-  }
+  await withTransaction(async (q) => {
+    // all-or-nothing: no reader ever sees a half-empty members table
+    await q('DELETE FROM dbo.WN_HIK_Users');
+    for (const [key, p] of people.entries()) {
+      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count, cnic) VALUES (?,?,?,?,?,?,?)',
+        [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length, cnics.get(key)?.cnic || null]);
+    }
+    // A person with a CNIC who isn't in any roster snapshot yet (just created,
+    // or all their machines are offline) keeps a minimal row so the CNIC is
+    // never lost — it fills out once their roster snapshot catches up.
+    for (const [key, c] of cnics.entries()) {
+      if (people.has(key)) continue;
+      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, machines, machine_count, cnic) VALUES (?,?,?,?,?)',
+        [c.emp, c.name, '[]', 0, c.cnic]);
+    }
+  });
   return { users: people.size };
 }
 
