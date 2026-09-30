@@ -378,6 +378,14 @@ export async function sp(name, params = {}) {
   return (r.recordset || []).map(normalizeRow);
 }
 
+// id of a dashboard account by username — for Created_by / Updated_by stamps
+export async function dashUserIdByUsername(username) {
+  try {
+    const r = await getRow('SELECT Id FROM dbo.WN_HIK_DashboardUsers WHERE Username = ?', [String(username || '')]);
+    return r?.Id ?? null;
+  } catch { return null; }
+}
+
 // ---- Common lookups used across routes ----
 // Single choke point for reading devices: columns are Capitalized in the
 // table and the group lives in WN_HIK_Groups (Group_id FK) — aliased back

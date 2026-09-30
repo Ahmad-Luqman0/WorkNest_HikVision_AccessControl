@@ -225,21 +225,22 @@ CREATE UNIQUE INDEX UQ_WN_HIK_Users ON dbo.WN_HIK_Users (employee_no, name);
 GO
 
 CREATE TABLE dbo.WN_HIK_Visitors (
-  [id] INT IDENTITY(1,1) NOT NULL,
-  [employee_no] NVARCHAR(32) NOT NULL,
-  [name] NVARCHAR(128) NOT NULL,
-  [card_no] NVARCHAR(32) NULL,
-  [face_path] NVARCHAR(260) NULL,
-  [valid_begin] DATETIME2(7) NULL,
-  [valid_end] DATETIME2(7) NULL,
-  [auto_delete] BIT NOT NULL DEFAULT ((0)),
-  [status] NVARCHAR(16) NOT NULL DEFAULT ('active'),
-  [notes] NVARCHAR(MAX) NULL,
-  [booking_ref] NVARCHAR(64) NULL,
-  [created_at] DATETIME2(7) NOT NULL DEFAULT (sysdatetime())
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Employee_no] NVARCHAR(32) NOT NULL,
+  [Name] NVARCHAR(128) NOT NULL,
+  [Card_no] NVARCHAR(32) NULL,
+  [Face_path] NVARCHAR(260) NULL,
+  [Valid_begin] DATETIME2(7) NULL,
+  [Valid_end] DATETIME2(7) NULL,
+  [Auto_delete] BIT NOT NULL DEFAULT ((0)),
+  [Status] NVARCHAR(16) NOT NULL DEFAULT ('active'),
+  [Notes] NVARCHAR(MAX) NULL,
+  [Booking_ref] NVARCHAR(64) NULL,
+  [Created_at] DATETIME2(7) NOT NULL DEFAULT (sysdatetime()),
+  [Created_by] INT NULL
 );
 GO
-ALTER TABLE dbo.WN_HIK_Visitors ADD CONSTRAINT PK_WN_HIK_Visitors PRIMARY KEY (id);
+ALTER TABLE dbo.WN_HIK_Visitors ADD CONSTRAINT PK_WN_HIK_Visitors PRIMARY KEY (Id);
 GO
 
 ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT FK_WN_HIK_Devices_Group FOREIGN KEY (Group_id) REFERENCES dbo.WN_HIK_Groups(Id);
@@ -582,11 +583,12 @@ GO
 -- SQL_STORED_PROCEDURE: WN_HIK_Visitor_Create
 CREATE   PROCEDURE dbo.WN_HIK_Visitor_Create
   @employee_no NVARCHAR(32), @name NVARCHAR(128), @card_no NVARCHAR(32) = NULL,
-  @valid_begin DATETIME2(0), @valid_end DATETIME2(0), @booking_ref NVARCHAR(64) = NULL AS
+  @valid_begin DATETIME2(0), @valid_end DATETIME2(0), @booking_ref NVARCHAR(64) = NULL,
+  @created_by INT = NULL AS
 BEGIN
   SET NOCOUNT ON;
-  INSERT INTO dbo.WN_HIK_Visitors (employee_no, name, card_no, valid_begin, valid_end, auto_delete, booking_ref)
-  VALUES (@employee_no, @name, @card_no, @valid_begin, @valid_end, 1, @booking_ref);
+  INSERT INTO dbo.WN_HIK_Visitors (Employee_no, Name, Card_no, Valid_begin, Valid_end, Auto_delete, Booking_ref, Created_by)
+  VALUES (@employee_no, @name, @card_no, @valid_begin, @valid_end, 1, @booking_ref, @created_by);
   SELECT SCOPE_IDENTITY() AS id;
 END
 GO

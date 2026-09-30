@@ -10,7 +10,7 @@
 //   - the machine whose `code` equals the space's Code (the room's own door).
 // The booking tables are treated as READ-ONLY.
 import { Router } from 'express';
-import { getRow, getRows, run, sp, getAllDevices, getDeviceById, logSync } from '../db.js';
+import { getRow, getRows, run, sp, getAllDevices, getDeviceById, logSync, dashUserIdByUsername } from '../db.js';
 import * as isapi from '../isapi.js';
 import { syncEmployee } from '../sync.js';
 import { getRoster } from '../machineCache.js';
@@ -296,6 +296,7 @@ bookingsRouter.post('/:id/attendees', async (req, res) => {
       valid_begin: b.StartOn,
       valid_end: payEnd,
       booking_ref: REF(b.Id),
+      created_by: await dashUserIdByUsername(req.auth?.username),
     });
     const empId = Number(created[0]?.id);
     for (const dev of targets) {

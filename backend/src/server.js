@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync, logAudit, setLogSyncSubscriber } from './db.js';
+import { initDb, getRow, getRows, run, sp, getAllDevices, getDeviceById, seedDevices, logSync, logAudit, setLogSyncSubscriber, dashUserIdByUsername } from './db.js';
 import * as isapi from './isapi.js';
 import { devicesRouter } from './routes/devices.js';
 import { cardsRouter } from './routes/cards.js';
@@ -327,6 +327,7 @@ app.post('/api/visitors', async (req, res) => {
       valid_begin: beginStr,
       valid_end: endStr,
       booking_ref: null,
+      created_by: await dashUserIdByUsername(req.auth?.username),
     });
     const empId = Number(created[0]?.id);
     for (const dev of devices) {
