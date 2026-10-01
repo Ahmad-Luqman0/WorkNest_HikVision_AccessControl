@@ -4864,11 +4864,16 @@ function addUserModal(srcDev, devs, checkAll = false) {
         </div>
         <div class="field">
           <label for="au_no">Employee ID</label>
+          ${dashRole === 'admin' ? `
+          <input id="au_no" inputmode="numeric" autocomplete="off">
+          <div class="field-help">Auto-generated — as admin you may change it (digits, below 8500, must be unused).</div>
+          ` : `
           <div class="input-wrap">
             <input id="au_no" readonly tabindex="-1" class="locked">
             <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           </div>
           <div class="field-help">Auto-generated — first free number across all machines.</div>
+          `}
         </div>
       </div>
       <div class="two-col">
@@ -5012,7 +5017,17 @@ function addUserModal(srcDev, devs, checkAll = false) {
     const saveBtn = $('#au_save');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Creating…';
-    const first = await api.post('/devices/users', { ...body, only_ids: chunks[0] }).catch((e) => ({ error: String(e.message || e) }));
+    // Admins may have edited the auto-generated number — send it with hard
+    // uniqueness enforcement on the first batch; user-level stays auto.
+    const typedNo = dashRole === 'admin' ? $('#au_no').value.trim() : '';
+    if (typedNo && !/^\d+$/.test(typedNo)) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Create user';
+      toast('Employee ID must be digits only', 'err'); $('#au_no').focus(); return;
+    }
+    const first = await api.post('/devices/users', {
+      ...body, only_ids: chunks[0],
+      ...(typedNo ? { employeeNo: typedNo, enforce_unique: true } : {}),
+    }).catch((e) => ({ error: String(e.message || e) }));
     if (!first?.results) {
       saveBtn.disabled = false;
       saveBtn.textContent = 'Create user';

@@ -421,7 +421,18 @@ devicesRouter.post('/users', async (req, res) => {
     const { taken, next } = await nextFreeEmployeeNo();
 
     let employeeNo = req.body.employeeNo ? String(req.body.employeeNo).trim() : '';
-    if (employeeNo) {
+    if (employeeNo && req.body.enforce_unique) {
+      // an ADMIN typed a custom number on the first batch — validate hard
+      if ((req.auth?.role || 'user') !== 'admin') {
+        return res.status(403).json({ error: 'Only admins can set the employee # manually.' });
+      }
+      if (!/^\d+$/.test(employeeNo) || Number(employeeNo) >= 8500) {
+        return res.status(400).json({ error: 'Employee # must be a number below 8500 (8500+ is reserved for cards and visitors).' });
+      }
+      if (taken.has(employeeNo)) {
+        return res.status(409).json({ error: `Employee #${employeeNo} already exists on a machine — pick another or leave it blank for auto.` });
+      }
+    } else if (employeeNo) {
       // a continuation batch reuses the number the first batch assigned
       if (!onlyIds && taken.has(employeeNo))
         return res.status(409).json({ error: `Employee #${employeeNo} already exists on a machine — pick another or leave it blank.` });
