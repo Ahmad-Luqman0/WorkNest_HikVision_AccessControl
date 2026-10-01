@@ -392,6 +392,34 @@ devicesRouter.get('/next-employee-no', async (req, res) => {
 // typed RFID card attached on each. The employee # is chosen to be free on ALL
 // selected machines so the same person keeps one number everywhere.
 // body: { device_ids: [...], employeeNo?, name, role?, valid_begin?, valid_end?, card_no? }
+// Set/correct a member's CNIC in WN_HIK_Users (admin only). Keyed by
+// employee # + name, matching how the members table is built.
+devicesRouter.post('/users/:employeeNo/cnic', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') {
+    return res.status(403).json({ error: 'Only admins can edit CNIC.' });
+  }
+  const emp = String(req.params.employeeNo).trim();
+  const name = String(req.body?.name || '').trim();
+  const cnic = String(req.body?.cnic || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  if (!/^\d{13}$/.test(cnic)) {
+    return res.status(400).json({ error: 'CNIC must be exactly 13 digits — numbers only, no dashes.' });
+  }
+  try {
+    // upsert so a member not yet in the backup table still gets their CNIC
+    await run(
+      `MERGE dbo.WN_HIK_Users AS t USING (SELECT ? AS emp, ? AS nm) s ON t.employee_no=s.emp AND t.name=s.nm
+       WHEN MATCHED THEN UPDATE SET cnic=?
+       WHEN NOT MATCHED THEN INSERT (employee_no, name, cnic) VALUES (s.emp, s.nm, ?);`,
+      [emp, name, cnic, cnic]
+    );
+    logAudit(req.auth?.username || 'admin', 'CNIC_SET', `User ${emp}`, getClientIp(req), { employeeNo: emp, name });
+    res.json({ ok: true, cnic });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
 devicesRouter.post('/users', async (req, res) => {
   const { name, card_no } = req.body || {};
   const ids = [...new Set((req.body?.device_ids || []).map(Number))].filter(Boolean);

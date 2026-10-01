@@ -3166,7 +3166,9 @@ async function loadUsersTable(devs) {
             </div>
           </div>
         </td>
-        ${showCnic ? `<td class="nowrap">${cnic ? `<small class="hint">${esc(cnic)}</small>` : '<small class="hint">—</small>'}</td>` : ''}
+        ${showCnic ? `<td class="nowrap">${cnic
+          ? `<small class="hint mono">${esc(cnic)}</small>`
+          : `<button class="btn sm cnic-missing" data-cnic-edit="${i}" title="CNIC missing — click to add">⚠ Add CNIC</button>`}</td>` : ''}
         <td class="nowrap">${roomCell}</td>
         <td>${admin ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
         ${machineCell}
@@ -3562,6 +3564,7 @@ async function loadUsersTable(devs) {
     showRowMenu(b, [
       ['View profile', () => userProfileModal(e)],
       ['Monthly statement…', () => statementModal(e)],
+      ...(dashRole === 'admin' ? [['Edit CNIC', () => editCnicModal(e, devs)]] : []),
       ['Edit name / #', () => editUserModal(e, devs)],
       ['Machine access', () => accessModal(e.on[0], e.u.employeeNo, e.u.name || '', devs)],
       ...(dashRole === 'admin' ? [[admin ? 'Change role: Admin → User' : 'Change role: User → Admin', () => setRole(e.on, e.u.employeeNo, admin ? 'user' : 'admin', devs)]] : []),
@@ -3572,6 +3575,7 @@ async function loadUsersTable(devs) {
       ['Delete user', () => deleteUser(e.on, e.u.employeeNo, e.u.name || '', devs), true],
     ]);
   }));
+  holder.querySelectorAll('[data-cnic-edit]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); editCnicModal(entries[Number(b.dataset.cnicEdit)], devs); }));
   holder.querySelectorAll('[data-cards]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userCardsModal(entries[Number(b.dataset.cards)], devs); }));
   // The whole credentials cell (including the 'differs' badge and padding)
   // opens the credentials manager — not the profile.
@@ -5359,6 +5363,40 @@ function assignCardModal(card, devs) {
       : `Card ${card.card_no} attached to ${info.name} (#${info.employeeNo}) on ${targets.length} machine${targets.length === 1 ? '' : 's'}`,
       fails.length ? 'err' : 'ok');
     if (current === 'cards') cards();
+  });
+}
+
+// Quick CNIC editor from the Users table (admin). Keyed by employee # + name.
+function editCnicModal(entry, devs) {
+  const { u } = entry;
+  const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+  const current = _cnicMap[key] || '';
+  openModal(`
+    <h2>${current ? 'Edit' : 'Add'} CNIC — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field">
+      <label for="cn_val">CNIC</label>
+      <input id="cn_val" inputmode="numeric" maxlength="13" placeholder="3520212345671" autocomplete="off" value="${esc(current)}">
+      <div class="field-help">13 digits, numbers only — dashes are stripped as you type. Stored on the dashboard, not pushed to machines.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="cn_cancel">Cancel</button>
+      <button class="btn primary" id="cn_save">Save CNIC</button>
+    </div>`);
+  $('#cn_cancel').addEventListener('click', closeModal);
+  $('#cn_val').addEventListener('input', () => {
+    const el = $('#cn_val'); const clean = el.value.replace(/\D/g, '').slice(0, 13);
+    if (el.value !== clean) el.value = clean;
+  });
+  $('#cn_val').focus();
+  $('#cn_save').addEventListener('click', async () => {
+    const cnic = $('#cn_val').value.trim();
+    if (!/^\d{13}$/.test(cnic)) { toast('CNIC must be exactly 13 digits', 'err'); return; }
+    const r = await api.post(`/devices/users/${encodeURIComponent(u.employeeNo)}/cnic`, { name: u.name || '', cnic });
+    if (!r?.ok) { if (!r?.__auth) toast(r?.error || 'Failed', 'err'); return; }
+    _cnicMap[key] = cnic; // reflect immediately without a full reload
+    closeModal();
+    toast('CNIC saved', 'ok');
+    if ($('#u_table')) loadUsersTable(devs);
   });
 }
 

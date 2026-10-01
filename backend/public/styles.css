@@ -5827,3 +5827,15 @@ input.locked:focus { box-shadow: none !important; border-color: var(--border-str
   }
 }
 
+
+/* "Add CNIC" marker for members missing a CNIC */
+.btn.cnic-missing {
+  color: var(--amber, #b45309);
+  border-color: color-mix(in srgb, var(--amber, #f59e0b) 45%, transparent);
+  background: color-mix(in srgb, var(--amber, #f59e0b) 10%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn.cnic-missing:hover {
+  background: color-mix(in srgb, var(--amber, #f59e0b) 20%, transparent);
+}
