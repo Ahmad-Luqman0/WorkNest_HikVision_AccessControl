@@ -5227,6 +5227,7 @@ async function cards() {
       const fails = (r.results || []).filter((x) => !x.ok);
       toast(fails.length ? `Failed on ${fails.map((f) => f.device).join(', ')}${fails[0].error ? ': ' + fails[0].error : ''}`
         : 'Card removed from all machines', fails.length ? 'err' : 'ok');
+      if (current === 'cards') cards();
     }));
     tableContainer.querySelectorAll('[data-sync]').forEach((b) => b.addEventListener('click', async () => {
       toast('Pushing to machines…');
@@ -5357,6 +5358,7 @@ function assignCardModal(card, devs) {
     toast(fails.length ? `Attached on ${targets.length - fails.length}/${targets.length} — ${fails[0]}`
       : `Card ${card.card_no} attached to ${info.name} (#${info.employeeNo}) on ${targets.length} machine${targets.length === 1 ? '' : 's'}`,
       fails.length ? 'err' : 'ok');
+    if (current === 'cards') cards();
   });
 }
 

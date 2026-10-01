@@ -992,6 +992,12 @@ devicesRouter.post('/card/delete', liveOnly, async (req, res) => {
       return { device: dev.name, ok: false, error: String(e.message || e) };
     }
   }))).filter(Boolean);
+  // reflect immediately on the Cards/Users pages
+  for (const id of ids) invalidateRoster(id);
+  if (!Array.isArray(req.body?.device_ids) || !req.body.device_ids.length) {
+    // removed everywhere -> the card is unassigned now
+    await run('UPDATE dbo.WN_HIK_Cards SET Employee_no = NULL, Employee_name = NULL WHERE Card_no = ?', [cardNo]).catch(() => {});
+  }
   res.json({ ok: results.some((x) => x.ok), results });
 });
 
@@ -1117,6 +1123,12 @@ devicesRouter.post('/:id/users/:employeeNo/card', liveOnly, async (req, res) => 
       cardNo,
       device: dev.name,
     });
+    // reflect immediately: stale card-table snapshots made a successful
+    // assign look like nothing happened for up to an hour
+    invalidateRoster(dev.id);
+    const holderName = await getRow('SELECT TOP 1 name FROM dbo.WN_HIK_Users WHERE employee_no = ?', [String(req.params.employeeNo)]).catch(() => null);
+    await run('UPDATE dbo.WN_HIK_Cards SET Employee_no = ?, Employee_name = ? WHERE Card_no = ?',
+      [String(req.params.employeeNo), holderName?.name || null, cardNo]).catch(() => {});
     res.json({ ok: true, cardNo });
   } catch (e) {
     res.status(502).json({ ok: false, error: String(e.message || e) });
