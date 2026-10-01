@@ -532,6 +532,22 @@ devicesRouter.delete('/:id/users/:employeeNo', async (req, res) => {
       if (isUnreachableErr(e)) {
         await queueOp(dev.id, 'delete-user', String(req.params.employeeNo), {}).catch(() => {});
         r = { ok: true, queued: true };
+        // The machine is offline, so its stored roster snapshot (served to the
+        // dashboard while offline) still lists this person — remove them from
+        // it now so the Users page reflects the delete immediately; the real
+        // machine delete replays automatically on reconnect.
+        try {
+          const emp = String(req.params.employeeNo);
+          const snap = await getRow('SELECT Users_snapshot, Cards_snapshot FROM dbo.WN_HIK_DevCache WHERE Device_id=?', [dev.id]);
+          if (snap?.Users_snapshot) {
+            const users = JSON.parse(snap.Users_snapshot).filter((u) => String(u.employeeNo) !== emp);
+            await run('UPDATE dbo.WN_HIK_DevCache SET Users_snapshot=? WHERE Device_id=?', [JSON.stringify(users), dev.id]);
+          }
+          if (snap?.Cards_snapshot) {
+            const cards = JSON.parse(snap.Cards_snapshot).filter((c) => String(c.employeeNo) !== emp);
+            await run('UPDATE dbo.WN_HIK_DevCache SET Cards_snapshot=? WHERE Device_id=?', [JSON.stringify(cards), dev.id]);
+          }
+        } catch { /* best-effort — replay still performs the delete */ }
       } else throw e;
     }
     logSync(null, dev.id, 'delete-user', r.ok, { employeeNo: req.params.employeeNo, ...r });
