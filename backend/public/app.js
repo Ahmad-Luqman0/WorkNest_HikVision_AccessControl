@@ -195,10 +195,42 @@ function formatHourRange12(hr) {
   return `${disp1}:00 ${ampm1} – ${disp2}:00 ${ampm2}`;
 }
 
+// Stacked toasts with per-type icon + color. Repeated identical messages
+// bump a counter instead of piling up; each dismisses on its own timer or click.
+const TOAST_ICONS = {
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+  err: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+};
 function toast(msg, kind = '') {
-  const t = $('#toast');
-  t.textContent = msg; t.className = 'toast ' + kind; t.hidden = false;
-  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 3200);
+  const type = kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : 'info';
+  const stack = $('#toastStack');
+  if (!stack) return;
+  // collapse an identical message already on screen into a xN counter
+  const existing = [...stack.children].find((el) => el.dataset.msg === msg && el.dataset.type === type);
+  if (existing) {
+    const n = (Number(existing.dataset.count) || 1) + 1;
+    existing.dataset.count = n;
+    existing.querySelector('.toast-count').textContent = '×' + n;
+    existing.querySelector('.toast-count').hidden = false;
+    clearTimeout(existing._t);
+    existing._t = setTimeout(() => existing.remove(), 3600);
+    return;
+  }
+  const t = el(`<div class="toast ${type}" data-type="${type}" role="status">
+    <span class="toast-ico">${TOAST_ICONS[type]}</span>
+    <span class="toast-msg"></span>
+    <span class="toast-count" hidden></span>
+  </div>`);
+  t.dataset.msg = msg;
+  t.querySelector('.toast-msg').textContent = msg;
+  t.addEventListener('click', () => t.remove());
+  stack.appendChild(t);
+  while (stack.children.length > 4) stack.firstElementChild.remove(); // cap the pile
+  t._t = setTimeout(() => {
+    t.classList.add('toast-out');
+    setTimeout(() => t.remove(), 250);
+  }, type === 'err' ? 5000 : 3600);
 }
 
 // Persistent warning shown when the HOSTED server cannot reach the machines
@@ -1958,7 +1990,7 @@ async function dashboard() {
           <button class="btn sm primary" id="heroDayPass">+ Day Pass</button>
           <button class="btn sm" id="heroQuickUnlock">${ICONS.unlock} Quick Unlock</button>
           <button class="btn sm" id="heroAnalytics">${ICONS.analytics} Live Analytics →</button>
-          <span class="fleet-telemetry-badge"><span class="latency-dot"></span> LAN Latency: ~12ms · ISAPI Direct</span>
+          <span class="fleet-telemetry-badge"><span class="latency-dot"></span> ${onlineMachines}/${totalMachines} terminals · ISAPI Direct</span>
         </div>
       </div>
 
@@ -3605,11 +3637,12 @@ async function deleteFaceAction(e, devs) {
 }
 
 async function deleteUser(devsOn, employeeNo, name, devs) {
+  const n = devsOn.length;
   const where = devsOn.map((d) => d.name).join(', ');
   const ok = await confirmDialog({
-    title: 'Delete User from Fleet',
-    message: `Delete “${name || 'user ' + employeeNo}” (#${employeeNo}) from: ${where}? This removes them from the machine${devsOn.length > 1 ? 's' : ''}.`,
-    confirmText: 'Delete User',
+    title: `Delete ${name || 'user ' + employeeNo} from ${n} machine${n === 1 ? '' : 's'}?`,
+    message: `#${employeeNo} will be removed from: ${where}.\n\nTheir fingerprints, cards and face on ${n === 1 ? 'this machine' : 'these machines'} are erased with them — re-enrollment is needed to restore access.`,
+    confirmText: `Delete from ${n} machine${n === 1 ? '' : 's'}`,
     danger: true
   });
   if (!ok) return;

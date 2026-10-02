@@ -250,7 +250,7 @@
 
 [data-theme="light"] .modal,
 [data-theme="light"] .toast {
-  background: #ffffff;
+  background: rgba(255,255,255,0.97);
   color: #0f172a;
   box-shadow: var(--shadow-lg);
 }
@@ -1465,30 +1465,56 @@ td:last-child {
 }
 
 /* ---- Toast Notifications ---- */
-.toast {
+.toast-stack {
   position: fixed;
-  bottom: 30px;
-  right: 30px;
-  background: rgba(22, 31, 52, 0.95);
+  bottom: 24px;
+  right: 24px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  background: rgba(22, 31, 52, 0.96);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-strong);
   border-left: 4px solid var(--accent);
-  padding: 15px 22px;
+  padding: 13px 16px;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
-  z-index: 200;
   box-shadow: var(--shadow-lg), 0 8px 30px rgba(0, 0, 0, 0.3);
-  color: #ffffff;
-  animation: toastSlide 0.3s cubic-bezier(0.2, 0.8, 0.3, 1);
+  color: #fff;
+  animation: toastSlide 0.28s cubic-bezier(0.2, 0.8, 0.3, 1);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
+  line-height: 1.4;
 }
-
+.toast.toast-out { animation: toastOut 0.25s ease forwards; }
+.toast .toast-ico { flex-shrink: 0; width: 18px; height: 18px; display: flex; }
+.toast .toast-ico svg { width: 18px; height: 18px; }
+.toast .toast-msg { flex: 1; }
+.toast .toast-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.toast.info { border-left-color: var(--blue); }
+.toast.info .toast-ico { color: var(--blue); }
 .toast.ok { border-left-color: var(--green); }
+.toast.ok .toast-ico { color: #34d399; }
 .toast.err { border-left-color: var(--red); }
+.toast.err .toast-ico { color: #f87171; }
+@keyframes toastOut { to { opacity: 0; transform: translateX(16px); } }
 
 /* ---- Empty States ---- */
 .empty {
@@ -2222,7 +2248,7 @@ select option {
 
   .login-card { width: min(400px, 92vw); }
 
-  .toast { left: 16px; right: 16px; max-width: none; }
+  .toast-stack { left: 16px; right: 16px; max-width: none; }
 }
 
 @media (max-width: 480px) {
@@ -5839,3 +5865,24 @@ input.locked:focus { box-shadow: none !important; border-color: var(--border-str
 .btn.cnic-missing:hover {
   background: color-mix(in srgb, var(--amber, #f59e0b) 20%, transparent);
 }
+
+/* ===== Density & typography pass ===== */
+/* Numeric data aligns column-to-column; IDs/counts/dates use lining figures */
+table td, table th,
+.mono, .copyable-badge, .dev-host,
+.badge, .kpi-value, .exec-greeting-sub b,
+.stat-value, .chip-count {
+  font-variant-numeric: tabular-nums;
+}
+/* Even table rhythm: one row height, vertically centered, hairline separators */
+table tbody td { height: 52px; }
+table th {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+/* Tighter, consistent copyable-badge so Emp#/Card# columns line up */
+.copyable-badge { letter-spacing: 0; }
+/* Headings share one scale */
+.modal h2 { letter-spacing: -0.03em; }
+h2, h3 { letter-spacing: -0.02em; }
