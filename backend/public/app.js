@@ -4735,8 +4735,17 @@ async function statementModal(entry) {
     const r = await fetchStatement();
     if (!r) return;
     const monthName = new Date(r.month + '-01T00:00:00').toLocaleString('en', { month: 'long', year: 'numeric' });
-    const rows = r.days.map((d) => `<tr><td>${esc(d.day)}</td><td>${esc(d.first_in)}</td><td>${esc(d.last_seen)}</td><td style="text-align:right">${d.scans}</td><td>${esc(d.doors.join(', '))}</td></tr>`).join('')
-      || '<tr><td colspan="5" style="text-align:center;color:#888">No visits recorded this month</td></tr>';
+    // Each day: a summary row, then an indented time-by-time breakdown of
+    // every scan (time · door · event).
+    const rows = r.days.map((d) => {
+      const summary = `<tr class="day-row"><td>${esc(d.day)}</td><td>${esc(d.first_in)}</td><td>${esc(d.last_seen)}</td><td style="text-align:right">${d.scans}</td><td>${esc(d.doors.join(', '))}</td></tr>`;
+      const breakdown = (d.events && d.events.length)
+        ? `<tr class="detail-row"><td></td><td colspan="4" style="padding:0">
+             <table class="breakdown"><tbody>${d.events.map((ev) => `<tr><td style="width:70px">${esc(ev.time)}</td><td style="width:200px">${esc(ev.door)}</td><td>${esc(ev.label)}</td></tr>`).join('')}</tbody></table>
+           </td></tr>`
+        : '';
+      return summary + breakdown;
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">No visits recorded this month</td></tr>';
     const w = window.open('', '_blank');
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Statement ${esc(r.member.name)} ${esc(r.month)}</title>
       <style>
@@ -4750,8 +4759,12 @@ async function statementModal(entry) {
         th,td{border:1px solid #ddd;padding:7px 9px;text-align:left}
         th{background:#f4f5f7;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
         .totals{margin-top:14px;font-size:13px} .totals b{font-weight:700}
+        .day-row td{background:#fafbfc;font-weight:600}
+        .breakdown{font-size:11.5px;border:none}
+        .breakdown td{border:none;border-bottom:1px solid #f0f0f0;padding:4px 9px;color:#555;font-weight:400}
+        .breakdown tr:last-child td{border-bottom:none}
         .foot{margin-top:26px;color:#999;font-size:11px}
-        @media print{ .noprint{display:none} }
+        @media print{ .noprint{display:none} .breakdown td{color:#333} }
       </style></head><body>
       <div class="head"><img src="${location.origin}/logo-mark.png"><div><h1>WorkNest Access Control</h1><div class="sub">Monthly Member Statement — ${esc(monthName)}</div></div></div>
       <div class="meta">

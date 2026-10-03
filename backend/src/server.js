@@ -1205,12 +1205,29 @@ app.get('/api/statement', async (req, res) => {
     for (const d of devRows) {
       (doorsByDay[d.day] ??= []).push(d.device_name);
     }
+    // Per-scan timeline: every individual scan with its time, door and event
+    // label — the detailed breakdown under each day.
+    const eventRows = await getRows(
+      `SELECT CONVERT(varchar(10), e.event_time, 126) AS day,
+              CONVERT(varchar(8), e.event_time, 108) AS time,
+              e.device_name, e.access_event_details AS label, e.access_event AS code
+       FROM dbo.WN_HIK_Events e WITH (NOLOCK)
+       WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
+         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+       ORDER BY e.event_time`,
+      [emp, from, to]
+    );
+    const eventsByDay = {};
+    for (const ev of eventRows) {
+      (eventsByDay[ev.day] ??= []).push({ time: String(ev.time).slice(0, 5), door: ev.device_name, label: ev.label || `Event ${ev.code}` });
+    }
     const days = rows.map((r) => ({
       day: r.day,
       first_in: String(r.first_in).slice(11, 16),
       last_seen: String(r.last_seen).slice(11, 16),
       scans: r.scans,
       doors: (doorsByDay[r.day] || []).sort(),
+      events: eventsByDay[r.day] || [],
     }));
     const allDoors = [...new Set(devRows.map((d) => d.device_name))].sort();
     // CNIC + room from the members table for the header
