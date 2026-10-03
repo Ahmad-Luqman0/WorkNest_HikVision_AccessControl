@@ -437,6 +437,21 @@ devicesRouter.post('/users/:employeeNo/tag', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
+// Purge a member's dashboard metadata row (CNIC/tag) from WN_HIK_Users after
+// they've been fully deleted from every machine — otherwise the rebuild's
+// "preserve metadata" rule keeps a ghost row forever. Called by the Users-page
+// delete flow once all per-machine deletes have succeeded.
+devicesRouter.post('/users/:employeeNo/purge', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') return res.status(403).json({ error: 'admin only' });
+  const emp = String(req.params.employeeNo).trim();
+  const name = String(req.body?.name || '').trim();
+  try {
+    if (name) await run('DELETE FROM dbo.WN_HIK_Users WHERE employee_no=? AND name=?', [emp, name]);
+    else await run('DELETE FROM dbo.WN_HIK_Users WHERE employee_no=?', [emp]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
+});
+
 devicesRouter.post('/users/:employeeNo/cnic', async (req, res) => {
   if ((req.auth?.role || 'user') !== 'admin') {
     return res.status(403).json({ error: 'Only admins can edit CNIC.' });

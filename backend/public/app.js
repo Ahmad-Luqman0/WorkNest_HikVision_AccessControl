@@ -3677,6 +3677,12 @@ async function deleteUser(devsOn, employeeNo, name, devs) {
     if (!r.ok) fails.push(`${d.name}: ${r.error || 'error'}`);
   }, bar, 6);
   bar.close();
+  // Fully removed from every machine → purge their dashboard metadata
+  // (CNIC/tag) so the rebuild doesn't keep a ghost row. Only on a clean
+  // delete; if some machine failed, they still exist there, so keep it.
+  if (!fails.length) {
+    await api.post(`/devices/users/${encodeURIComponent(employeeNo)}/purge`, { name: name || '' }).catch(() => {});
+  }
   toast(fails.length ? `Failed on ${fails.length} machine(s): ${fails[0]}` : `User deleted from ${devsOn.length} machine${devsOn.length > 1 ? 's' : ''}`, fails.length ? 'err' : 'ok');
   if ($('#u_table')) loadUsersTable(devs);
 }
