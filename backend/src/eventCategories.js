@@ -24,7 +24,7 @@ export const ACCESS_EVENT_CATEGORY_MAPPING = {
   8: { label: 'Card verify failed', denied: false },
   9: { label: 'Unregistered card', denied: true },
   24: { label: 'Door forced open (alarm)', denied: false },
-  104: { label: 'Face recognition failed', denied: true },
+  104: { label: 'Face OK', denied: false }, // always tied to an identified person — a recognized face, not a failure
   151: { label: 'Machine event 151', denied: false },
 };
 

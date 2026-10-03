@@ -1187,7 +1187,7 @@ app.get('/api/statement', async (req, res) => {
               COUNT(*) AS scans
        FROM dbo.WN_HIK_Events e WITH (NOLOCK)
        WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
-         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+         AND e.access_event NOT IN (9, 23, 24, 39, 76, 112)
        GROUP BY CONVERT(varchar(10), e.event_time, 126)
        ORDER BY day`,
       [emp, from, to]
@@ -1197,7 +1197,7 @@ app.get('/api/statement', async (req, res) => {
       `SELECT CONVERT(varchar(10), e.event_time, 126) AS day, e.device_name, COUNT(*) AS n
        FROM dbo.WN_HIK_Events e WITH (NOLOCK)
        WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
-         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+         AND e.access_event NOT IN (9, 23, 24, 39, 76, 112)
        GROUP BY CONVERT(varchar(10), e.event_time, 126), e.device_name`,
       [emp, from, to]
     );
@@ -1213,7 +1213,7 @@ app.get('/api/statement', async (req, res) => {
               e.device_name, e.access_event_details AS label, e.access_event AS code
        FROM dbo.WN_HIK_Events e WITH (NOLOCK)
        WHERE e.employee_no = ? AND e.event_time BETWEEN ? AND ?
-         AND (e.access_event IN (1, 2, 38, 75) OR e.card_no IS NOT NULL)
+         AND e.access_event NOT IN (9, 23, 24, 39, 76, 112)
        ORDER BY e.event_time`,
       [emp, from, to]
     );
