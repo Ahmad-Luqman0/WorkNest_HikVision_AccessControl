@@ -1,8 +1,6 @@
 -- WorkNest Access Control — WN_HIK_* schema
--- GENERATED FROM THE LIVE DATABASE on 2026-09-30.
--- The runtime creates/migrates everything itself (src/db.js ensure* functions
--- + stored procedures); this file is reference documentation of the current
--- state, regenerate it after schema changes rather than editing by hand.
+-- GENERATED FROM THE LIVE DATABASE on 2026-10-03.
+-- The runtime creates/migrates everything itself; reference only.
 
 CREATE TABLE dbo.WN_HIK_AccessGrants (
   [id] INT IDENTITY(1,1) NOT NULL,
@@ -207,6 +205,18 @@ GO
 ALTER TABLE dbo.WN_HIK_SyncLog ADD CONSTRAINT PK_WN_HIK_SyncLog PRIMARY KEY (Id);
 GO
 
+CREATE TABLE dbo.WN_HIK_Tags (
+  [Id] INT IDENTITY(1,1) NOT NULL,
+  [Name] NVARCHAR(48) NOT NULL,
+  [Status] INT NOT NULL DEFAULT ((1)),
+  [Created_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime())
+);
+GO
+ALTER TABLE dbo.WN_HIK_Tags ADD CONSTRAINT PK_WN_HIK_Tags PRIMARY KEY (Id);
+GO
+CREATE UNIQUE INDEX UQ_WN_HIK_Tags_Name ON dbo.WN_HIK_Tags (Name);
+GO
+
 CREATE TABLE dbo.WN_HIK_Users (
   [id] INT IDENTITY(1,1) NOT NULL,
   [employee_no] NVARCHAR(32) NOT NULL,
@@ -216,7 +226,8 @@ CREATE TABLE dbo.WN_HIK_Users (
   [machines] NVARCHAR(MAX) NULL,
   [machine_count] INT NOT NULL DEFAULT ((0)),
   [updated_at] DATETIME2(0) NOT NULL DEFAULT (sysdatetime()),
-  [cnic] NVARCHAR(20) NULL
+  [cnic] NVARCHAR(20) NULL,
+  [tag_id] INT NULL
 );
 GO
 ALTER TABLE dbo.WN_HIK_Users ADD CONSTRAINT PK_WN_HIK_Users PRIMARY KEY (id);
@@ -245,10 +256,10 @@ GO
 
 ALTER TABLE dbo.WN_HIK_Devices ADD CONSTRAINT FK_WN_HIK_Devices_Group FOREIGN KEY (Group_id) REFERENCES dbo.WN_HIK_Groups(Id);
 GO
-ALTER TABLE dbo.WN_HIK_AccessGrants ADD CONSTRAINT FK_WN_HIK_grants_device FOREIGN KEY (device_id) REFERENCES dbo.WN_HIK_Devices(Id) ON DELETE CASCADE;
+ALTER TABLE dbo.WN_HIK_AccessGrants ADD CONSTRAINT FK_WN_HIK_grants_device FOREIGN KEY (device_id) REFERENCES dbo.WN_HIK_Devices(Id);
 GO
 
--- ===================== VIEWS, PROCEDURES, TRIGGERS =====================
+-- ===== VIEWS, PROCEDURES, TRIGGERS =====
 
 -- VIEW: WN_HIK_Employees
 CREATE   VIEW dbo.WN_HIK_Employees AS

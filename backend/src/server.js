@@ -492,7 +492,15 @@ app.get('/api/roster', async (req, res) => {
         cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
     } catch { cnics = undefined; }
   }
-  res.json({ ok: true, rosters, ...(cnics ? { cnics } : {}) });
+  // Job tags: a map of person -> tag name, plus the active tag list for pickers.
+  let tags, tagList;
+  try {
+    tagList = (await getRows("SELECT Id, Name FROM dbo.WN_HIK_Tags WHERE Status = 1 ORDER BY Name")).map((t) => ({ id: t.Id, name: t.Name }));
+    tags = {};
+    for (const r of await getRows("SELECT u.employee_no, u.name, t.Name AS tag FROM dbo.WN_HIK_Users u JOIN dbo.WN_HIK_Tags t ON t.Id = u.tag_id"))
+      tags[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.tag;
+  } catch { tags = undefined; tagList = undefined; }
+  res.json({ ok: true, rosters, ...(cnics ? { cnics } : {}), ...(tags ? { tags } : {}), ...(tagList ? { tagList } : {}) });
 });
 
 // Fix one person's credential gaps NOW: copy the union of their cards,

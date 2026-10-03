@@ -58,6 +58,7 @@ export async function initDb() {
       await ensureDevCache();
       await ensureFaceVault();
       await ensureUsersTable();
+      await ensureTags();
       await migrateFromSqliteIfEmpty();
       return pool;
     } catch (err) {
@@ -253,8 +254,30 @@ async function ensureUsersTable() {
       )`);
     // existing installs: add the column in place
     await run(`IF COL_LENGTH('dbo.WN_HIK_Users','cnic') IS NULL ALTER TABLE dbo.WN_HIK_Users ADD cnic NVARCHAR(20) NULL`);
+    await run(`IF COL_LENGTH('dbo.WN_HIK_Users','tag_id') IS NULL ALTER TABLE dbo.WN_HIK_Users ADD tag_id INT NULL`);
   } catch (e) {
     console.error('[db] ensureUsersTable:', e.message);
+  }
+}
+
+// Managed list of job tags (Office Boy, Janitor, Admin…) applied to members.
+async function ensureTags() {
+  try {
+    await run(`IF OBJECT_ID('dbo.WN_HIK_Tags','U') IS NULL
+      CREATE TABLE dbo.WN_HIK_Tags (
+        Id INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_WN_HIK_Tags PRIMARY KEY,
+        Name NVARCHAR(48) NOT NULL CONSTRAINT UQ_WN_HIK_Tags_Name UNIQUE,
+        Status INT NOT NULL CONSTRAINT DF_WN_HIK_Tags_Status DEFAULT (1),
+        Created_at DATETIME2(0) NOT NULL CONSTRAINT DF_WN_HIK_Tags_ca DEFAULT (SYSDATETIME())
+      )`);
+    // seed a sensible starter set only when the table is empty
+    const n = await getRow('SELECT COUNT(*) AS n FROM dbo.WN_HIK_Tags');
+    if (!Number(n?.n)) {
+      for (const t of ['Admin', 'Manager', 'Member', 'Office Boy', 'Janitor', 'Guard', 'Receptionist', 'Guest'])
+        await run('INSERT INTO dbo.WN_HIK_Tags (Name) VALUES (?)', [t]).catch(() => {});
+    }
+  } catch (e) {
+    console.error('[db] ensureTags:', e.message);
   }
 }
 

@@ -1635,6 +1635,9 @@ let _autoTimer = null; // live-refresh timer for dashboard / activity views
 let _cmdCachedEntries = [];
 let _cmdCachedUsers = [];
 let _cnicMap = {}; // "emp||name" -> cnic (admins only — server withholds otherwise)
+let _tagMap = {};  // "emp||name" -> tag name
+let _tagList = [];  // [{id, name}] active tags for pickers/filter
+let _userTagFilter = 'all'; // selected tag filter on the Users page
 let _cmdCachedDevs = [];
 let _deviceFilter = 'all';
 let _deviceSearch = '';
@@ -3076,7 +3079,7 @@ async function loadUsersTable(devs) {
   const all = _usersDevId === 'all';
   const showCnic = dashRole === 'admin';
   holder.innerHTML = skeletonTable(showCnic
-    ? ['Emp #', 'Name', 'CNIC', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']
+    ? ['Emp #', 'Name', 'Tag', 'CNIC', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']
     : ['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']);
 
   // entries: one row per person — u = device record, on = machines they exist on
@@ -3085,6 +3088,8 @@ async function loadUsersTable(devs) {
   if (all) {
     const rr = await api.get('/roster'); // one request — server queries all machines in parallel
     _cnicMap = rr.cnics || {};
+    _tagMap = rr.tags || {};
+    if (rr.tagList) _tagList = rr.tagList;
     const results = devs.map((d) => {
       const row = rr.ok ? (rr.rosters || []).find((x) => x.device_id === d.id) : null;
       return { d, r: row?.ok ? { ok: true, users: row.users } : { ok: false, error: row?.error || rr.error } };
@@ -3120,6 +3125,7 @@ async function loadUsersTable(devs) {
     const r = await api.get(`/devices/${_usersDevId}/users`);
     if (!r.ok) { holder.innerHTML = `<div class="empty">Couldn't reach ${esc(srcDev.name)}: ${esc(r.error || 'error')}</div>`; return; }
     _cnicMap = r.cnics || {};
+    if (!_tagList.length) { try { const tr = await api.get('/devices/tags'); if (tr?.ok) _tagList = tr.tags; } catch {} }
     entries = r.users
       .map((u) => ({ u, on: [srcDev] }))
       .sort((a, b) =>
@@ -3160,6 +3166,7 @@ async function loadUsersTable(devs) {
     const roomList = tenantRooms.map((d) => 'room ' + d.code).join(', ');
     const cardStr = Array.isArray(u.cards) ? u.cards.join(' ') : (u.cardNo || '');
     const cnic = _cnicMap[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`] || '';
+    const tag = _tagMap[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`] || '';
 
     let roomCell;
     if (!tenantRooms.length) roomCell = '<small class="hint">—</small>';
@@ -3187,7 +3194,7 @@ async function loadUsersTable(devs) {
 
     // 1. Table Row
     rows.push(`
-      <tr class="clickable-row" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}" title="View full profile">
+      <tr class="clickable-row" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-tag="${esc(tag)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}" title="View full profile">
         <td style="text-align:center; width:36px;"><input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}"></td>
         <td>${copyableBadge(u.employeeNo)}</td>
         <td>
@@ -3198,6 +3205,9 @@ async function loadUsersTable(devs) {
             </div>
           </div>
         </td>
+        ${showCnic ? `<td class="nowrap">${tag
+          ? `<button class="tag-badge" data-tag-edit="${i}" title="Click to change tag">${esc(tag)}</button>`
+          : `<button class="btn sm tag-missing" data-tag-edit="${i}" title="No tag — click to set">+ Tag</button>`}</td>` : ''}
         ${showCnic ? `<td class="nowrap">${cnic
           ? `<small class="hint mono">${esc(cnic)}</small>`
           : `<button class="btn sm cnic-missing" data-cnic-edit="${i}" title="CNIC missing — click to add">⚠ Add CNIC</button>`}</td>` : ''}
@@ -3214,7 +3224,7 @@ async function loadUsersTable(devs) {
 
     // 2. Card View Item
     cards.push(`
-      <div class="user-card" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}">
+      <div class="user-card" data-rowidx="${i}" data-emp="${esc(u.employeeNo)}" data-name="${esc(u.name || '')}" data-room="${esc(roomList)}" data-cardno="${esc(cardStr)}" data-tag="${esc(tag)}" data-hascard="${hasCard(u) ? '1' : '0'}" data-hasbio="${hasBiometric(u) ? '1' : '0'}" data-expired="${expired ? '1' : '0'}">
         <div class="user-card-head">
           <div class="user-card-id-block">
             <input type="checkbox" class="custom-cb user-row-cb" data-cbidx="${i}">
@@ -3287,8 +3297,13 @@ async function loadUsersTable(devs) {
       <button class="filter-chip ${_userActiveFilter === 'biometric' ? 'active' : ''}" data-ufilter="biometric">Biometrics Enrolled <span class="chip-count">${countBiometric}</span></button>
       <button class="filter-chip ${_userActiveFilter === 'nocreds' ? 'active' : ''}" data-ufilter="nocreds">No Credentials <span class="chip-count">${countNoCreds}</span></button>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;padding:0 2px;">
       <span class="hint tabular-nums" id="userMatchCount" style="font-size:12px;">Showing ${countAll} of ${countAll} members</span>
+      ${showCnic && _tagList.length ? `<select id="userTagFilter" class="tag-filter-select">
+        <option value="all">All tags</option>
+        ${_tagList.map((t) => `<option value="${esc(t.name)}" ${_userTagFilter === t.name ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+        <option value="__none" ${_userTagFilter === '__none' ? 'selected' : ''}>— Untagged —</option>
+      </select>` : ''}
     </div>
   `;
 
@@ -3315,6 +3330,7 @@ async function loadUsersTable(devs) {
             <th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th>
             <th id="u_sortEmp" style="cursor:pointer;user-select:none" title="Click to sort by employee # — click again to reverse, once more for the grouped order">Emp #${_userSortMode === 'emp' ? ' ↑' : _userSortMode === 'emp-desc' ? ' ↓' : ''}</th>
             <th>Name</th>
+            ${showCnic ? '<th>Tag</th>' : ''}
             ${showCnic ? '<th>CNIC</th>' : ''}
             <th>Room</th>
             <th>Role</th>
@@ -3377,6 +3393,12 @@ async function loadUsersTable(devs) {
       if (q) {
         const match = emp.includes(q) || nm.includes(q) || rm.includes(q) || cardno.includes(q);
         if (!match) return false;
+      }
+
+      if (_userTagFilter && _userTagFilter !== 'all') {
+        const t = el.dataset.tag || '';
+        if (_userTagFilter === '__none') { if (t) return false; }
+        else if (t !== _userTagFilter) return false;
       }
 
       if (filter === 'active') return !expired;
@@ -3527,6 +3549,7 @@ async function loadUsersTable(devs) {
       applyUserFilters();
     });
   });
+  $('#userTagFilter')?.addEventListener('change', (e) => { _userTagFilter = e.target.value || 'all'; applyUserFilters(); });
 
   // Central-truth check: machines are compared in the background and any
   // credential disagreement (cards/fingerprints/faces) is flagged here.
@@ -3608,6 +3631,7 @@ async function loadUsersTable(devs) {
     ]);
   }));
   holder.querySelectorAll('[data-cnic-edit]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); editCnicModal(entries[Number(b.dataset.cnicEdit)], devs); }));
+  holder.querySelectorAll('[data-tag-edit]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); editTagModal(entries[Number(b.dataset.tagEdit)], devs); }));
   holder.querySelectorAll('[data-cards]').forEach((b) => b.addEventListener('click', (ev) => { ev.preventDefault(); userCardsModal(entries[Number(b.dataset.cards)], devs); }));
   // The whole credentials cell (including the 'differs' badge and padding)
   // opens the credentials manager — not the profile.
@@ -4925,6 +4949,11 @@ function addUserModal(srcDev, devs, checkAll = false) {
           <div class="field-help">Optional — typed in, no tap needed. Can also be tagged later.</div>
         </div>
       </div>
+      <div class="field">
+        <label for="au_tag">Job tag</label>
+        <select id="au_tag"><option value="">— no tag —</option>${_tagList.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select>
+        <div class="field-help">Optional — e.g. Office Boy, Janitor. Manage tags from the Users table.</div>
+      </div>
     </div>
 
     <div class="form-section">
@@ -5021,6 +5050,17 @@ function addUserModal(srcDev, devs, checkAll = false) {
   });
   refreshFpOptions();
 
+  // Populate the tag dropdown if it wasn't already loaded (Users page unvisited).
+  if (!_tagList.length) {
+    api.get('/devices/tags').then((tr) => {
+      if (tr?.ok && tr.tags.length) {
+        _tagList = tr.tags;
+        const sel = $('#au_tag');
+        if (sel) sel.innerHTML = `<option value="">— no tag —</option>` + _tagList.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+      }
+    }).catch(() => {});
+  }
+
   $('#au_cancel').addEventListener('click', closeModal);
   // CNIC: digits only — anything else (dashes included) is stripped as typed.
   $('#au_cnic')?.addEventListener('input', () => {
@@ -5041,6 +5081,7 @@ function addUserModal(srcDev, devs, checkAll = false) {
       role: $('#au_role').value,
       card_no: $('#au_card').value.trim() || undefined,
       cnic,
+      tag_id: $('#au_tag')?.value || undefined,
       valid_begin: fromLocalInput($('#au_begin').value),
       valid_end: fromLocalInput($('#au_end').value),
     };
@@ -5396,6 +5437,56 @@ function assignCardModal(card, devs) {
       : `Card ${card.card_no} attached to ${info.name} (#${info.employeeNo}) on ${targets.length} machine${targets.length === 1 ? '' : 's'}`,
       fails.length ? 'err' : 'ok');
     if (current === 'cards') cards();
+  });
+}
+
+// Quick tag editor from the Users table (admin). Pick from the managed list,
+// clear it, or add a new tag on the fly. Keyed by employee # + name.
+function editTagModal(entry, devs) {
+  const { u } = entry;
+  const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+  const current = _tagMap[key] || '';
+  const opts = _tagList.map((t) => `<option value="${t.id}" ${t.name === current ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  openModal(`
+    <h2>Tag — ${esc(u.name || 'User ' + u.employeeNo)} <small class="hint">#${esc(u.employeeNo)}</small></h2>
+    <div class="field">
+      <label for="tg_sel">Job tag</label>
+      <select id="tg_sel"><option value="">— no tag —</option>${opts}</select>
+      <div class="field-help">Pick from the managed list, or add a new tag below.</div>
+    </div>
+    <div class="field">
+      <label for="tg_new">Add a new tag</label>
+      <div style="display:flex;gap:8px">
+        <input id="tg_new" placeholder="e.g. Security" maxlength="48" style="flex:1">
+        <button class="btn" id="tg_add" type="button">Add</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="tg_cancel">Cancel</button>
+      <button class="btn primary" id="tg_save">Save tag</button>
+    </div>`);
+  $('#tg_cancel').addEventListener('click', closeModal);
+  $('#tg_add').addEventListener('click', async () => {
+    const name = $('#tg_new').value.trim();
+    if (!name) return;
+    const r = await api.post('/devices/tags', { name });
+    if (!r?.ok) { if (!r?.__auth) toast(r?.error || 'Failed', 'err'); return; }
+    if (!_tagList.some((t) => t.id === r.id)) _tagList.push({ id: r.id, name: r.name });
+    _tagList.sort((a, b) => a.name.localeCompare(b.name));
+    const sel = $('#tg_sel');
+    sel.innerHTML = `<option value="">— no tag —</option>` + _tagList.map((t) => `<option value="${t.id}" ${t.id === r.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+    $('#tg_new').value = '';
+    toast(`Tag “${r.name}” added`, 'ok');
+  });
+  $('#tg_save').addEventListener('click', async () => {
+    const tagId = $('#tg_sel').value || null;
+    const r = await api.post(`/devices/users/${encodeURIComponent(u.employeeNo)}/tag`, { name: u.name || '', tag_id: tagId });
+    if (!r?.ok) { if (!r?.__auth) toast(r?.error || 'Failed', 'err'); return; }
+    const picked = _tagList.find((t) => String(t.id) === String(tagId));
+    if (picked) _tagMap[key] = picked.name; else delete _tagMap[key];
+    closeModal();
+    toast('Tag saved', 'ok');
+    if ($('#u_table')) loadUsersTable(devs);
   });
 }
 

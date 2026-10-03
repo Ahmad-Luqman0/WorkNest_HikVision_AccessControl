@@ -515,25 +515,28 @@ export async function syncUsersTable() {
   }
   // CNIC is entered at creation, not stored on machines — carry it across
   // the rebuild or it would be wiped every 5 minutes.
-  const cnics = new Map();
+  // CNIC and tag are dashboard metadata (not on machines) — carry them across
+  // the rebuild or they would be wiped every 5 minutes.
+  const userMeta = new Map();
   try {
-    for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
-      cnics.set(`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`, { emp: String(r.employee_no), name: String(r.name || '').trim(), cnic: r.cnic });
-  } catch { /* column may not exist yet on first run */ }
+    for (const r of await getRows("SELECT employee_no, name, cnic, tag_id FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL OR tag_id IS NOT NULL"))
+      userMeta.set(`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`, { emp: String(r.employee_no), name: String(r.name || '').trim(), cnic: r.cnic || null, tag_id: r.tag_id || null });
+  } catch { /* columns may not exist yet on first run */ }
   await withTransaction(async (q) => {
     // all-or-nothing: no reader ever sees a half-empty members table
     await q('DELETE FROM dbo.WN_HIK_Users');
     for (const [key, p] of people.entries()) {
-      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count, cnic) VALUES (?,?,?,?,?,?,?)',
-        [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length, cnics.get(key)?.cnic || null]);
+      const m = userMeta.get(key);
+      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, room, role, machines, machine_count, cnic, tag_id) VALUES (?,?,?,?,?,?,?,?)',
+        [p.emp, p.name, p.rooms.join(',') || null, p.admin ? 'admin' : 'user', JSON.stringify(p.machines), p.machines.length, m?.cnic || null, m?.tag_id || null]);
     }
-    // A person with a CNIC who isn't in any roster snapshot yet (just created,
-    // or all their machines are offline) keeps a minimal row so the CNIC is
-    // never lost — it fills out once their roster snapshot catches up.
-    for (const [key, c] of cnics.entries()) {
+    // A person with metadata who isn't in any roster snapshot yet (just
+    // created, or all their machines offline) keeps a minimal row so the
+    // CNIC/tag is never lost — it fills out once their snapshot catches up.
+    for (const [key, c] of userMeta.entries()) {
       if (people.has(key)) continue;
-      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, machines, machine_count, cnic) VALUES (?,?,?,?,?)',
-        [c.emp, c.name, '[]', 0, c.cnic]);
+      await q('INSERT INTO dbo.WN_HIK_Users (employee_no, name, machines, machine_count, cnic, tag_id) VALUES (?,?,?,?,?,?)',
+        [c.emp, c.name, '[]', 0, c.cnic, c.tag_id]);
     }
   });
   return { users: people.size };

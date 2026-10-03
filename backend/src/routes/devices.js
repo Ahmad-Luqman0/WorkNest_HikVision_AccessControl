@@ -394,6 +394,49 @@ devicesRouter.get('/next-employee-no', async (req, res) => {
 // body: { device_ids: [...], employeeNo?, name, role?, valid_begin?, valid_end?, card_no? }
 // Set/correct a member's CNIC in WN_HIK_Users (admin only). Keyed by
 // employee # + name, matching how the members table is built.
+// Job tags: list active tags, add a tag to the managed list, and set/clear a
+// member's tag (all admin only). Tags live in WN_HIK_Users keyed by emp # + name.
+devicesRouter.get('/tags', async (req, res) => {
+  try {
+    const rows = await getRows("SELECT Id, Name FROM dbo.WN_HIK_Tags WHERE Status = 1 ORDER BY Name");
+    res.json({ ok: true, tags: rows.map((t) => ({ id: t.Id, name: t.Name })) });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
+});
+
+devicesRouter.post('/tags', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') return res.status(403).json({ error: 'Only admins can add tags.' });
+  const name = String(req.body?.name || '').trim();
+  if (!name || name.length > 48) return res.status(400).json({ error: 'Tag name required (max 48 chars).' });
+  try {
+    const existing = await getRow('SELECT Id FROM dbo.WN_HIK_Tags WHERE Name = ?', [name]);
+    if (existing) { await run('UPDATE dbo.WN_HIK_Tags SET Status = 1 WHERE Id = ?', [existing.Id]); return res.json({ ok: true, id: existing.Id, name }); }
+    const ins = await getRow('INSERT INTO dbo.WN_HIK_Tags (Name) OUTPUT inserted.Id AS Id VALUES (?)', [name]);
+    res.json({ ok: true, id: ins?.Id, name });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
+});
+
+devicesRouter.post('/users/:employeeNo/tag', async (req, res) => {
+  if ((req.auth?.role || 'user') !== 'admin') return res.status(403).json({ error: 'Only admins can set tags.' });
+  const emp = String(req.params.employeeNo).trim();
+  const name = String(req.body?.name || '').trim();
+  const tagId = req.body?.tag_id == null || req.body.tag_id === '' ? null : Number(req.body.tag_id);
+  if (!name) return res.status(400).json({ error: 'name required' });
+  try {
+    if (tagId != null) {
+      const t = await getRow('SELECT Id FROM dbo.WN_HIK_Tags WHERE Id = ? AND Status = 1', [tagId]);
+      if (!t) return res.status(400).json({ error: 'Unknown tag.' });
+    }
+    await run(
+      `MERGE dbo.WN_HIK_Users AS t USING (SELECT ? AS emp, ? AS nm) s ON t.employee_no=s.emp AND t.name=s.nm
+       WHEN MATCHED THEN UPDATE SET tag_id=?
+       WHEN NOT MATCHED THEN INSERT (employee_no, name, tag_id) VALUES (s.emp, s.nm, ?);`,
+      [emp, name, tagId, tagId]
+    );
+    logAudit(req.auth?.username || 'admin', 'TAG_SET', `User ${emp}`, getClientIp(req), { employeeNo: emp, name, tagId });
+    res.json({ ok: true, tag_id: tagId });
+  } catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
+});
+
 devicesRouter.post('/users/:employeeNo/cnic', async (req, res) => {
   if ((req.auth?.role || 'user') !== 'admin') {
     return res.status(403).json({ error: 'Only admins can edit CNIC.' });
@@ -493,15 +536,16 @@ devicesRouter.post('/users', async (req, res) => {
     }));
     for (const dev of devs) invalidateRoster(dev.id);
     const okCount = results.filter((x) => x.ok).length;
-    // CNIC lives in WN_HIK_Users (members themselves live on the machines).
-    // Upsert so continuation batches are harmless.
-    if (cnic && okCount) {
+    // CNIC + job tag live in WN_HIK_Users (members themselves live on the
+    // machines). Upsert so continuation batches are harmless.
+    const tagId = req.body?.tag_id == null || req.body.tag_id === '' ? null : Number(req.body.tag_id);
+    if ((cnic || tagId != null) && okCount) {
       await run(
         `MERGE dbo.WN_HIK_Users AS t USING (SELECT ? AS emp, ? AS nm) s ON t.employee_no=s.emp AND t.name=s.nm
-         WHEN MATCHED THEN UPDATE SET cnic=?
-         WHEN NOT MATCHED THEN INSERT (employee_no, name, cnic) VALUES (s.emp, s.nm, ?);`,
-        [employeeNo, String(name).trim(), cnic, cnic]
-      ).catch((e) => console.error('[users] cnic save failed:', e.message));
+         WHEN MATCHED THEN UPDATE SET cnic=COALESCE(?, cnic), tag_id=COALESCE(?, tag_id)
+         WHEN NOT MATCHED THEN INSERT (employee_no, name, cnic, tag_id) VALUES (s.emp, s.nm, ?, ?);`,
+        [employeeNo, String(name).trim(), cnic || null, tagId, cnic || null, tagId]
+      ).catch((e) => console.error('[users] cnic/tag save failed:', e.message));
     }
     res.status(okCount ? 200 : 502).json({ ok: okCount > 0, employeeNo, name, results });
   } catch (e) {
