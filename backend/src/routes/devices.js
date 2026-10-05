@@ -402,7 +402,7 @@ devicesRouter.get('/tags', async (req, res) => {
 });
 
 devicesRouter.post('/tags', async (req, res) => {
-  if ((req.auth?.role || 'user') !== 'admin') return res.status(403).json({ error: 'Only admins can add tags.' });
+  // Open to any signed-in dashboard account (reception included).
   const name = String(req.body?.name || '').trim();
   if (!name || name.length > 48) return res.status(400).json({ error: 'Tag name required (max 48 chars).' });
   try {
@@ -414,7 +414,7 @@ devicesRouter.post('/tags', async (req, res) => {
 });
 
 devicesRouter.post('/users/:employeeNo/tag', async (req, res) => {
-  if ((req.auth?.role || 'user') !== 'admin') return res.status(403).json({ error: 'Only admins can set tags.' });
+  // Open to any signed-in dashboard account (reception included).
   const emp = String(req.params.employeeNo).trim();
   const name = String(req.body?.name || '').trim();
   const tagId = req.body?.tag_id == null || req.body.tag_id === '' ? null : Number(req.body.tag_id);

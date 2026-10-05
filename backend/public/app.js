@@ -3077,8 +3077,8 @@ async function loadUsersTable(devs) {
   const holder = $('#u_table');
   if (!holder) return;
   const all = _usersDevId === 'all';
-  const showCnic = true;                  // CNIC visible/editable to every login
-  const showTags = dashRole === 'admin';  // tags stay admin-only
+  const showCnic = true;  // CNIC visible/editable to every login
+  const showTags = true;  // job tags visible/editable to every login
   const cols = ['Emp #', 'Name'];
   if (showTags) cols.push('Tag');
   if (showCnic) cols.push('CNIC');
