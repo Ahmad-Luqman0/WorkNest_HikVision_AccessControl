@@ -3077,10 +3077,13 @@ async function loadUsersTable(devs) {
   const holder = $('#u_table');
   if (!holder) return;
   const all = _usersDevId === 'all';
-  const showCnic = dashRole === 'admin';
-  holder.innerHTML = skeletonTable(showCnic
-    ? ['Emp #', 'Name', 'Tag', 'CNIC', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']
-    : ['Emp #', 'Name', 'Room', 'Role', 'Machines', 'Valid until', 'Credentials', '']);
+  const showCnic = true;                  // CNIC visible/editable to every login
+  const showTags = dashRole === 'admin';  // tags stay admin-only
+  const cols = ['Emp #', 'Name'];
+  if (showTags) cols.push('Tag');
+  if (showCnic) cols.push('CNIC');
+  cols.push('Room', 'Role', 'Machines', 'Valid until', 'Credentials', '');
+  holder.innerHTML = skeletonTable(cols);
 
   // entries: one row per person — u = device record, on = machines they exist on
   let entries = [];
@@ -3205,7 +3208,7 @@ async function loadUsersTable(devs) {
             </div>
           </div>
         </td>
-        ${showCnic ? `<td class="nowrap">${tag
+        ${showTags ? `<td class="nowrap">${tag
           ? `<button class="tag-badge" data-tag-edit="${i}" title="Click to change tag">${esc(tag)}</button>`
           : `<button class="btn sm tag-missing" data-tag-edit="${i}" title="No tag — click to set">+ Tag</button>`}</td>` : ''}
         ${showCnic ? `<td class="nowrap">${cnic
@@ -3299,7 +3302,7 @@ async function loadUsersTable(devs) {
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;padding:0 2px;">
       <span class="hint tabular-nums" id="userMatchCount" style="font-size:12px;">Showing ${countAll} of ${countAll} members</span>
-      ${showCnic && _tagList.length ? `<select id="userTagFilter" class="tag-filter-select">
+      ${showTags && _tagList.length ? `<select id="userTagFilter" class="tag-filter-select">
         <option value="all">All tags</option>
         ${_tagList.map((t) => `<option value="${esc(t.name)}" ${_userTagFilter === t.name ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
         <option value="__none" ${_userTagFilter === '__none' ? 'selected' : ''}>— Untagged —</option>
@@ -3330,7 +3333,7 @@ async function loadUsersTable(devs) {
             <th style="width:36px; text-align:center;"><input type="checkbox" id="userSelectAll" class="custom-cb" title="Select all users"></th>
             <th id="u_sortEmp" style="cursor:pointer;user-select:none" title="Click to sort by employee # — click again to reverse, once more for the grouped order">Emp #${_userSortMode === 'emp' ? ' ↑' : _userSortMode === 'emp-desc' ? ' ↓' : ''}</th>
             <th>Name</th>
-            ${showCnic ? '<th>Tag</th>' : ''}
+            ${showTags ? '<th>Tag</th>' : ''}
             ${showCnic ? '<th>CNIC</th>' : ''}
             <th>Room</th>
             <th>Role</th>

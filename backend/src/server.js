@@ -483,15 +483,13 @@ app.get('/api/roster', async (req, res) => {
       return { device_id: dev.id, ok: false, error: String(e.message || e) };
     }
   }));
-  // CNICs are sensitive — only dashboard admins get them at all.
+  // CNIC is available to every signed-in dashboard account (reception included).
   let cnics;
-  if (isAdmin) {
-    try {
-      cnics = {};
-      for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
-        cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
-    } catch { cnics = undefined; }
-  }
+  try {
+    cnics = {};
+    for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
+      cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
+  } catch { cnics = undefined; }
   // Job tags: a map of person -> tag name, plus the active tag list for pickers.
   let tags, tagList;
   try {

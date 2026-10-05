@@ -290,15 +290,13 @@ devicesRouter.post('/:id/time-sync', async (req, res) => {
 devicesRouter.get('/:id/users', async (req, res) => {
   const dev = await getDeviceById(req.params.id);
   if (!dev) return res.status(404).json({ error: 'not found' });
-  // CNICs are sensitive — only dashboard admins get them at all.
+  // CNIC is available to every signed-in dashboard account (reception included).
   let cnics;
-  if ((req.auth?.role || 'user') === 'admin') {
-    try {
-      cnics = {};
-      for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
-        cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
-    } catch { cnics = undefined; }
-  }
+  try {
+    cnics = {};
+    for (const r of await getRows("SELECT employee_no, name, cnic FROM dbo.WN_HIK_Users WHERE cnic IS NOT NULL AND cnic <> ''"))
+      cnics[`${r.employee_no}||${String(r.name || '').trim().toLowerCase()}`] = r.cnic;
+  } catch { cnics = undefined; }
   try {
     // offline machines serve their last roster snapshot via getRoster
     const users = hideAdmins(req, await getRoster(dev));
@@ -453,9 +451,7 @@ devicesRouter.post('/users/:employeeNo/purge', async (req, res) => {
 });
 
 devicesRouter.post('/users/:employeeNo/cnic', async (req, res) => {
-  if ((req.auth?.role || 'user') !== 'admin') {
-    return res.status(403).json({ error: 'Only admins can edit CNIC.' });
-  }
+  // CNIC data-entry is open to any signed-in dashboard account (reception).
   const emp = String(req.params.employeeNo).trim();
   const name = String(req.body?.name || '').trim();
   const cnic = String(req.body?.cnic || '').trim();
