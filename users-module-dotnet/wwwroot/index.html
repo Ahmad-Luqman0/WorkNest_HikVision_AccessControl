@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkNest Users</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --border: #e5e7eb; --text: #111827;
+    --muted: #6b7280; --accent: #6366f1; --accent-bg: #eef2ff;
+    --green: #059669; --green-bg: #ecfdf5; --red: #dc2626; --red-bg: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 28px; }
+  h1 { font-size: 22px; letter-spacing: -0.02em; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  input, select { padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px;
+    background: var(--card); font: inherit; }
+  input:focus, select:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15); }
+  input[type="search"] { flex: 1; min-width: 220px; }
+  .wrap { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    overflow-x: auto; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted);
+    background: #fafbfc; position: sticky; top: 0; }
+  tbody tr:hover td { background: #f9fafc; }
+  tbody tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11.5px;
+    font-weight: 600; background: #f3f4f6; color: var(--muted); margin: 1px 2px 1px 0; }
+  .badge.admin { background: var(--accent-bg); color: var(--accent); }
+  .badge.ok { background: var(--green-bg); color: var(--green); }
+  .badge.bad { background: var(--red-bg); color: var(--red); }
+  .hint { color: var(--muted); font-size: 12px; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  #count { color: var(--muted); font-size: 13px; align-self: center; }
+</style>
+</head>
+<body>
+<h1>Users</h1>
+<div class="sub">Members across all machines — served by the .NET module from the shared snapshot tables.</div>
+
+<div class="toolbar">
+  <input id="q" type="search" placeholder="Search name, employee #, CNIC, room…">
+  <select id="machine"><option value="all">All machines</option></select>
+  <span id="count"></span>
+</div>
+
+<div class="wrap">
+  <table>
+    <thead><tr>
+      <th>Emp #</th><th>Name</th><th>CNIC</th><th>Room</th><th>Role</th>
+      <th>Machines</th><th>Valid until</th><th>Credentials</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let devices = [], entries = [], cnics = {};
+
+const isRoomDev = (d) => d.code && !String(d.grp || '').trim().toLowerCase().startsWith('entrance');
+
+async function load() {
+  const [devs, roster] = await Promise.all([
+    fetch('/api/devices').then((r) => r.json()),
+    fetch('/api/roster').then((r) => r.json()),
+  ]);
+  devices = devs;
+  cnics = roster.cnics || {};
+
+  const sel = document.getElementById('machine');
+  for (const d of devices) {
+    const o = document.createElement('option');
+    o.value = d.id; o.textContent = d.name;
+    sel.appendChild(o);
+  }
+
+  // merge: one entry per person (employee # + name), with the machines they're on
+  const map = new Map();
+  const byId = new Map(devices.map((d) => [d.id, d]));
+  for (const r of roster.rosters || []) {
+    if (!r.ok) continue;
+    const dev = byId.get(r.device_id);
+    if (!dev) continue;
+    for (const u of r.users || []) {
+      const key = `${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`;
+      if (!map.has(key)) map.set(key, { u, on: [] });
+      map.get(key).on.push(dev);
+    }
+  }
+
+  // order: admins → full access → rooms ascending → the rest
+  const rank = (e) => e.u.localUIRight ? 0 : (devices.length > 1 && e.on.length >= devices.length) ? 1 : 2;
+  const room = (e) => {
+    const nums = e.on.filter(isRoomDev).map((d) => Number(d.code)).filter(Number.isFinite);
+    return nums.length ? Math.min(...nums) : Infinity;
+  };
+  entries = [...map.values()].sort((a, b) =>
+    (rank(a) - rank(b)) || (room(a) - room(b)) ||
+    ((Number(a.u.employeeNo) || 0) - (Number(b.u.employeeNo) || 0)));
+
+  render();
+}
+
+function render() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const machineId = document.getElementById('machine').value;
+  const totalDevs = devices.length;
+
+  const shown = entries.filter((e) => {
+    if (machineId !== 'all' && !e.on.some((d) => String(d.id) === machineId)) return false;
+    if (!q) return true;
+    const cnic = cnics[`${e.u.employeeNo}||${String(e.u.name || '').trim().toLowerCase()}`] || '';
+    const rooms = e.on.filter(isRoomDev).map((d) => 'room ' + d.code).join(' ');
+    return `${e.u.name || ''} ${e.u.employeeNo} ${cnic} ${rooms}`.toLowerCase().includes(q);
+  });
+
+  document.getElementById('count').textContent = `${shown.length} of ${entries.length} members`;
+  const tbody = document.getElementById('rows');
+  if (!shown.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No users match.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = shown.map(({ u, on }) => {
+    const cnic = cnics[`${u.employeeNo}||${String(u.name || '').trim().toLowerCase()}`] || '';
+    const rooms = on.filter(isRoomDev).map((d) => d.code).sort((a, b) => a - b);
+    const roomCell = !rooms.length ? '<span class="hint">—</span>'
+      : rooms.length > 2 ? `<span class="badge admin">room ${esc(rooms[0])}</span><span class="badge admin" title="${esc(rooms.join(', '))}">+${rooms.length - 1} more</span>`
+      : rooms.map((r) => `<span class="badge admin">room ${esc(r)}</span>`).join('');
+    const machines = totalDevs > 1 && on.length >= totalDevs
+      ? `<span class="badge">All machines (${on.length})</span>`
+      : `<span class="badge" title="${esc(on.map((d) => d.name).join(', '))}">${on.length} machine${on.length === 1 ? '' : 's'}</span>`;
+    const end = u.Valid?.endTime ? String(u.Valid.endTime).replace('T', ' ').slice(0, 16) : '—';
+    const blocked = u.Valid?.enable === false;
+    const expired = blocked || (u.Valid?.endTime && new Date(u.Valid.endTime) <= new Date());
+    const creds = [];
+    if (u.numOfCard) creds.push(`${u.numOfCard} card`);
+    if (u.numOfFP) creds.push(`${u.numOfFP} fp`);
+    if (u.numOfFace) creds.push(`${u.numOfFace} face`);
+    return `<tr>
+      <td class="mono">${esc(u.employeeNo)}</td>
+      <td><b>${esc(u.name || '—')}</b></td>
+      <td class="mono">${esc(cnic) || '<span class="hint">—</span>'}</td>
+      <td>${roomCell}</td>
+      <td>${u.localUIRight ? '<span class="badge admin">Admin</span>' : '<span class="badge">User</span>'}</td>
+      <td>${machines}</td>
+      <td>${expired ? '<span class="badge bad">' + (blocked ? 'blocked' : 'expired') + '</span>' : `<span class="hint">${esc(end)}</span>`}</td>
+      <td class="hint">${esc(creds.join(' · ') || 'none')}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('q').addEventListener('input', render);
+document.getElementById('machine').addEventListener('change', render);
+load().catch((e) => {
+  document.getElementById('rows').innerHTML =
+    `<tr><td colspan="8" class="empty">Failed to load: ${esc(e.message)}</td></tr>`;
+});
+</script>
+</body>
+</html>
